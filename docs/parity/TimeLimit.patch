@@ -1,0 +1,40 @@
+--- freerouting/src/main/java/app/freerouting/datastructures/TimeLimit.java	2026-09-27 23:07:28
++++ freerouting-parity/src/main/java/app/freerouting/datastructures/TimeLimit.java	2026-09-28 00:37:53
+@@ -2,11 +2,21 @@
+ 
+ import java.util.Date;
+ 
+-/** Class used to cancel a performance critical algorithm after a time limit is exceeded. */
++/**
++ * Class used to cancel a performance critical algorithm after a time limit is exceeded.
++ *
++ * <p>PARITY BUILD: with -Dfreerouting.parity.disableTimeLimits=true limits never fire; the
++ * first time a limit would have fired, a PARITY_TIME_LIMIT line is printed to stderr so runs can
++ * be flagged as time-sensitive.
++ */
+ public class TimeLimit {
+ 
++  private static final boolean DISABLED =
++      Boolean.getBoolean("freerouting.parity.disableTimeLimits");
++
+   private final long timeStamp;
+   private int timeLimit;
++  private boolean reported;
+ 
+   /** Creates a new instance with a time limit of milliSeconds milliseconds. */
+   public TimeLimit(int milliSeconds) {
+@@ -17,7 +27,13 @@
+   /** Returns true, if the time limit provided in the constructor of this class is exceeded. */
+   public boolean limitExceeded() {
+     long currentTime = new Date().getTime();
+-    return currentTime - this.timeStamp > this.timeLimit;
++    boolean exceeded = currentTime - this.timeStamp > this.timeLimit;
++    if (exceeded && !reported) {
++      reported = true;
++      System.err.println(
++          "PARITY_TIME_LIMIT limit_ms=" + timeLimit + " disabled=" + DISABLED);
++    }
++    return exceeded && !DISABLED;
+   }
+ 
+   /** Multiplies this TimeLimit by factor. */
