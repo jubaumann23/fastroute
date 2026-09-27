@@ -1,0 +1,2 @@
+source scripts/benchmark/fixtures/PCBench/TX5823_TX5823/reference-routed.dsn
+result ERROR

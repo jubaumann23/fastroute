@@ -1,0 +1,38 @@
+(pcb synth_order_placed.dsn
+  (resolution mil 10)
+  (unit mil)
+  (structure
+    (autoroute_settings (fanout off) (autoroute on) (postroute on) (vias on) (via_costs 50) (plane_via_costs 5) (start_ripup_costs 100) (start_pass_no 1) (layer_rule Top (active on) (preferred_direction horizontal) (preferred_direction_trace_costs 1.0) (against_preferred_direction_trace_costs 2.0)))
+    (keepout (rect signal 100 100 200 200))
+    (keepout (rect Bottom 300 100 400 200))
+    (layer Top (type signal))
+    (layer Mid1 (type signal))
+    (layer Mid2 (type jumper))
+    (layer Odd (type foo))
+    (layer Bottom (type signal))
+    (keepout (polygon BottomLayer 0 500 100 600 100 600 200 500 200))
+    (boundary (path signal 0 0 0 5000 0 5000 4000 0 4000 0 0) (rect pcb -10 -10 5010 4010) (path signal 0 1000 1000 2000 1000 2000 2000 1000 2000 1000 1000))
+    (rule (width 10) (clearance 8))
+    (via V1)
+  )
+  (library
+    (image P2 (pin P 1 -50 0) (pin P 2 50 0))
+    (padstack P (shape (rect Top -20 -20 20 20)) (shape (rect Bottom -20 -20 20 20)))
+    (padstack V1 (shape (circle signal 30)))
+  )
+  (placement
+    (place_control (flip_style rotate_first))
+    (component P2 (place U1 1000 1000 back 90) (place U2 3000 3000 front 0))
+  )
+  (network
+    (net A (pins U1-1 U2-1))
+    (net B (pins U1-2 U2-2))
+  )
+  (wiring
+    (via V1 1500 1500 (net A))
+    (wire (path Top 10 1500 1500 2500 1500) (net A))
+    (via V1 2500 1500 (net A))
+    (wire (path Mid1 10 1500 2500 2500 2500 2500 3500) (net B))
+    (via V1 2500 1500 (net A))
+  )
+)

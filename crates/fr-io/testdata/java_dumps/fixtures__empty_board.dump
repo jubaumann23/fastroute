@@ -1,0 +1,16 @@
+source fixtures/empty_board.dsn
+result OK
+layer 0 F.Cu 1
+layer 1 B.Cu 1
+cclass 0 null
+cclass 1 default
+cval 0 0 0 0
+cval 0 1 0 0
+cval 1 0 0 0
+cval 1 1 0 0
+netclass 0 default tcl=1 via_rule=- hw=1500,1500 items=0,1,1,1,1,1 active=1,1 shove=0 pull=1 minlen=0.0 maxlen=0.0 ignored=0
+rules min_hw=100000 max_hw=100 pin_edge=100000.0 angle=FORTYFIVE_DEGREE
+viapadstacks 
+bbox box(1294400,-1080500,1867900,-570500)
+flip 0
+item 1 BoardOutline nets= cl=1 fixed=SYSTEM_FIXED comp=0 shapes=[polygon[1295400,-1079500 1866900,-1079500 1866900,-571500 1295400,-571500]]

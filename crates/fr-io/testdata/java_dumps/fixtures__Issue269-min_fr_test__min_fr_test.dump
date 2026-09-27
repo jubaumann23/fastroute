@@ -1,0 +1,82 @@
+source fixtures/Issue269-min_fr_test/min_fr_test.dsn
+result OK
+layer 0 F.Cu 1
+layer 1 In1.Cu 0
+layer 2 In2.Cu 0
+layer 3 B.Cu 1
+cclass 0 null
+cclass 1 default
+cclass 2 smd
+cval 0 0 0 0 0 0
+cval 0 1 0 0 0 0
+cval 0 2 0 0 0 0
+cval 1 0 0 0 0 0
+cval 1 1 2000 2000 2000 2000
+cval 1 2 2000 2000 2000 2000
+cval 2 0 0 0 0 0
+cval 2 1 2000 2000 2000 2000
+cval 2 2 500 500 500 500
+netclass 0 default tcl=1 via_rule=default hw=1000,1000,1000,1000 items=0,1,1,1,2,1 active=1,0,0,1 shove=0 pull=1 minlen=0.0 maxlen=0.0 ignored=0
+net 1 GND 1 class=default plane=1
+net 2 Net-(J1-Pin_1) 1 class=default plane=0
+viainfo Via[0-3]_600:300_um Via[0-3]_600:300_um cl=1 attach=0
+viarule default Via[0-3]_600:300_um
+viarule default Via[0-3]_600:300_um
+rules min_hw=1000 max_hw=1000 pin_edge=1000.0 angle=FORTYFIVE_DEGREE
+padstack 1 Rect[T]Pad_1000x1000_um attach=0 abs=0 0:box(-5000,-5000,5000,5000) 1:null 2:null 3:null
+padstack 2 Via[0-3]_600:300_um attach=0 abs=0 0:circle(0,0,3000) 1:circle(0,0,3000) 2:circle(0,0,3000) 3:circle(0,0,3000)
+viapadstacks Via[0-3]_600:300_um,Via[0-3]_600:300_um
+package 1 TestPoint:TestPoint_Pad_1.0x1.0mm front=1
+  pin 1 1 0,0 0.0
+  outline 0 oct(-7600,6400,7600,7600,-14849,849,-849,14849) w=120.0 closed=0
+  outline 1 oct(-7600,-7600,-6400,7600,-14849,849,-14849,849) w=120.0 closed=0
+  outline 2 oct(6400,-7600,7600,7600,-849,14849,-849,14849) w=120.0 closed=0
+  outline 3 oct(-7600,-7600,7600,-6400,-849,14849,-14849,849) w=120.0 closed=0
+  outline 4 oct(-10250,-10250,-9750,10250,-20354,354,-20354,354) w=50.0 closed=0
+  outline 5 oct(-10250,9750,10250,10250,-20354,354,-354,20354) w=50.0 closed=0
+  outline 6 oct(-10250,-10250,10250,-9750,-354,20354,-20354,354) w=50.0 closed=0
+  outline 7 oct(9750,-10250,10250,10250,-354,20354,-354,20354) w=50.0 closed=0
+component 1 J4 loc=1629000,-920000 rot=0.0 front=1 pkg=1 fixed=0 pn=Conn_01x01_Pin
+component 2 J8 loc=1710000,-900000 rot=0.0 front=1 pkg=1 fixed=0 pn=Conn_01x01_Pin
+component 3 J7 loc=1590000,-850000 rot=0.0 front=1 pkg=1 fixed=0 pn=Conn_01x01_Pin
+component 4 J1 loc=1550000,-850000 rot=0.0 front=1 pkg=1 fixed=0 pn=Conn_01x01_Pin
+bbox box(1489000,-1011000,1791000,-789000)
+flip 0
+item 1 BoardOutline nets= cl=1 fixed=SYSTEM_FIXED comp=0 shapes=[polygon[1490000,-1010000 1790000,-1010000 1790000,-790000 1490000,-790000]]
+item 2 ConductionArea nets=1 cl=1 fixed=SYSTEM_FIXED comp=0 layer=2 obstacle=0 rel=polygon[1500000,-1000000 1780000,-1000000 1780000,-800000 1500000,-800000] abs=polygon[1500000,-1000000 1780000,-1000000 1780000,-800000 1500000,-800000]
+item 3 Pin nets=1 cl=2 fixed=UNFIXED comp=1 pin=0 first=0 last=0 center=1629000,-920000 shapes=[box(1624000,-925000,1634000,-915000)]
+item 4 ComponentOutline nets= cl=0 fixed=UNFIXED comp=1 front=1 court=1 fab=0 closed=0 rel=oct(-7600,6400,7600,7600,-14849,849,-849,14849) tr=1629000,-920000 rot=0.0 abs=oct(1621400,-913600,1636600,-912400,2534151,2549849,708151,723849)
+item 5 ComponentOutline nets= cl=0 fixed=UNFIXED comp=1 front=1 court=0 fab=0 closed=0 rel=oct(-7600,-7600,-6400,7600,-14849,849,-14849,849) tr=1629000,-920000 rot=0.0 abs=oct(1621400,-927600,1622600,-912400,2534151,2549849,694151,709849)
+item 6 ComponentOutline nets= cl=0 fixed=UNFIXED comp=1 front=1 court=0 fab=0 closed=0 rel=oct(6400,-7600,7600,7600,-849,14849,-849,14849) tr=1629000,-920000 rot=0.0 abs=oct(1635400,-927600,1636600,-912400,2548151,2563849,708151,723849)
+item 7 ComponentOutline nets= cl=0 fixed=UNFIXED comp=1 front=1 court=0 fab=0 closed=0 rel=oct(-7600,-7600,7600,-6400,-849,14849,-14849,849) tr=1629000,-920000 rot=0.0 abs=oct(1621400,-927600,1636600,-926400,2548151,2563849,694151,709849)
+item 8 ComponentOutline nets= cl=0 fixed=UNFIXED comp=1 front=1 court=0 fab=1 closed=0 rel=oct(-10250,-10250,-9750,10250,-20354,354,-20354,354) tr=1629000,-920000 rot=0.0 abs=oct(1618750,-930250,1619250,-909750,2528646,2549354,688646,709354)
+item 9 ComponentOutline nets= cl=0 fixed=UNFIXED comp=1 front=1 court=0 fab=1 closed=0 rel=oct(-10250,9750,10250,10250,-20354,354,-354,20354) tr=1629000,-920000 rot=0.0 abs=oct(1618750,-910250,1639250,-909750,2528646,2549354,708646,729354)
+item 10 ComponentOutline nets= cl=0 fixed=UNFIXED comp=1 front=1 court=0 fab=1 closed=0 rel=oct(-10250,-10250,10250,-9750,-354,20354,-20354,354) tr=1629000,-920000 rot=0.0 abs=oct(1618750,-930250,1639250,-929750,2548646,2569354,688646,709354)
+item 11 ComponentOutline nets= cl=0 fixed=UNFIXED comp=1 front=1 court=0 fab=1 closed=0 rel=oct(9750,-10250,10250,10250,-354,20354,-354,20354) tr=1629000,-920000 rot=0.0 abs=oct(1638750,-930250,1639250,-909750,2548646,2569354,708646,729354)
+item 12 Pin nets=2 cl=2 fixed=UNFIXED comp=2 pin=0 first=0 last=0 center=1710000,-900000 shapes=[box(1705000,-905000,1715000,-895000)]
+item 13 ComponentOutline nets= cl=0 fixed=UNFIXED comp=2 front=1 court=1 fab=0 closed=0 rel=oct(-7600,6400,7600,7600,-14849,849,-849,14849) tr=1710000,-900000 rot=0.0 abs=oct(1702400,-893600,1717600,-892400,2595151,2610849,809151,824849)
+item 14 ComponentOutline nets= cl=0 fixed=UNFIXED comp=2 front=1 court=0 fab=0 closed=0 rel=oct(-7600,-7600,-6400,7600,-14849,849,-14849,849) tr=1710000,-900000 rot=0.0 abs=oct(1702400,-907600,1703600,-892400,2595151,2610849,795151,810849)
+item 15 ComponentOutline nets= cl=0 fixed=UNFIXED comp=2 front=1 court=0 fab=0 closed=0 rel=oct(6400,-7600,7600,7600,-849,14849,-849,14849) tr=1710000,-900000 rot=0.0 abs=oct(1716400,-907600,1717600,-892400,2609151,2624849,809151,824849)
+item 16 ComponentOutline nets= cl=0 fixed=UNFIXED comp=2 front=1 court=0 fab=0 closed=0 rel=oct(-7600,-7600,7600,-6400,-849,14849,-14849,849) tr=1710000,-900000 rot=0.0 abs=oct(1702400,-907600,1717600,-906400,2609151,2624849,795151,810849)
+item 17 ComponentOutline nets= cl=0 fixed=UNFIXED comp=2 front=1 court=0 fab=1 closed=0 rel=oct(-10250,-10250,-9750,10250,-20354,354,-20354,354) tr=1710000,-900000 rot=0.0 abs=oct(1699750,-910250,1700250,-889750,2589646,2610354,789646,810354)
+item 18 ComponentOutline nets= cl=0 fixed=UNFIXED comp=2 front=1 court=0 fab=1 closed=0 rel=oct(-10250,9750,10250,10250,-20354,354,-354,20354) tr=1710000,-900000 rot=0.0 abs=oct(1699750,-890250,1720250,-889750,2589646,2610354,809646,830354)
+item 19 ComponentOutline nets= cl=0 fixed=UNFIXED comp=2 front=1 court=0 fab=1 closed=0 rel=oct(-10250,-10250,10250,-9750,-354,20354,-20354,354) tr=1710000,-900000 rot=0.0 abs=oct(1699750,-910250,1720250,-909750,2609646,2630354,789646,810354)
+item 20 ComponentOutline nets= cl=0 fixed=UNFIXED comp=2 front=1 court=0 fab=1 closed=0 rel=oct(9750,-10250,10250,10250,-354,20354,-354,20354) tr=1710000,-900000 rot=0.0 abs=oct(1719750,-910250,1720250,-889750,2609646,2630354,809646,830354)
+item 21 Pin nets=1 cl=2 fixed=UNFIXED comp=3 pin=0 first=0 last=0 center=1590000,-850000 shapes=[box(1585000,-855000,1595000,-845000)]
+item 22 ComponentOutline nets= cl=0 fixed=UNFIXED comp=3 front=1 court=1 fab=0 closed=0 rel=oct(-7600,6400,7600,7600,-14849,849,-849,14849) tr=1590000,-850000 rot=0.0 abs=oct(1582400,-843600,1597600,-842400,2425151,2440849,739151,754849)
+item 23 ComponentOutline nets= cl=0 fixed=UNFIXED comp=3 front=1 court=0 fab=0 closed=0 rel=oct(-7600,-7600,-6400,7600,-14849,849,-14849,849) tr=1590000,-850000 rot=0.0 abs=oct(1582400,-857600,1583600,-842400,2425151,2440849,725151,740849)
+item 24 ComponentOutline nets= cl=0 fixed=UNFIXED comp=3 front=1 court=0 fab=0 closed=0 rel=oct(6400,-7600,7600,7600,-849,14849,-849,14849) tr=1590000,-850000 rot=0.0 abs=oct(1596400,-857600,1597600,-842400,2439151,2454849,739151,754849)
+item 25 ComponentOutline nets= cl=0 fixed=UNFIXED comp=3 front=1 court=0 fab=0 closed=0 rel=oct(-7600,-7600,7600,-6400,-849,14849,-14849,849) tr=1590000,-850000 rot=0.0 abs=oct(1582400,-857600,1597600,-856400,2439151,2454849,725151,740849)
+item 26 ComponentOutline nets= cl=0 fixed=UNFIXED comp=3 front=1 court=0 fab=1 closed=0 rel=oct(-10250,-10250,-9750,10250,-20354,354,-20354,354) tr=1590000,-850000 rot=0.0 abs=oct(1579750,-860250,1580250,-839750,2419646,2440354,719646,740354)
+item 27 ComponentOutline nets= cl=0 fixed=UNFIXED comp=3 front=1 court=0 fab=1 closed=0 rel=oct(-10250,9750,10250,10250,-20354,354,-354,20354) tr=1590000,-850000 rot=0.0 abs=oct(1579750,-840250,1600250,-839750,2419646,2440354,739646,760354)
+item 28 ComponentOutline nets= cl=0 fixed=UNFIXED comp=3 front=1 court=0 fab=1 closed=0 rel=oct(-10250,-10250,10250,-9750,-354,20354,-20354,354) tr=1590000,-850000 rot=0.0 abs=oct(1579750,-860250,1600250,-859750,2439646,2460354,719646,740354)
+item 29 ComponentOutline nets= cl=0 fixed=UNFIXED comp=3 front=1 court=0 fab=1 closed=0 rel=oct(9750,-10250,10250,10250,-354,20354,-354,20354) tr=1590000,-850000 rot=0.0 abs=oct(1599750,-860250,1600250,-839750,2439646,2460354,739646,760354)
+item 30 Pin nets=2 cl=2 fixed=UNFIXED comp=4 pin=0 first=0 last=0 center=1550000,-850000 shapes=[box(1545000,-855000,1555000,-845000)]
+item 31 ComponentOutline nets= cl=0 fixed=UNFIXED comp=4 front=1 court=1 fab=0 closed=0 rel=oct(-7600,6400,7600,7600,-14849,849,-849,14849) tr=1550000,-850000 rot=0.0 abs=oct(1542400,-843600,1557600,-842400,2385151,2400849,699151,714849)
+item 32 ComponentOutline nets= cl=0 fixed=UNFIXED comp=4 front=1 court=0 fab=0 closed=0 rel=oct(-7600,-7600,-6400,7600,-14849,849,-14849,849) tr=1550000,-850000 rot=0.0 abs=oct(1542400,-857600,1543600,-842400,2385151,2400849,685151,700849)
+item 33 ComponentOutline nets= cl=0 fixed=UNFIXED comp=4 front=1 court=0 fab=0 closed=0 rel=oct(6400,-7600,7600,7600,-849,14849,-849,14849) tr=1550000,-850000 rot=0.0 abs=oct(1556400,-857600,1557600,-842400,2399151,2414849,699151,714849)
+item 34 ComponentOutline nets= cl=0 fixed=UNFIXED comp=4 front=1 court=0 fab=0 closed=0 rel=oct(-7600,-7600,7600,-6400,-849,14849,-14849,849) tr=1550000,-850000 rot=0.0 abs=oct(1542400,-857600,1557600,-856400,2399151,2414849,685151,700849)
+item 35 ComponentOutline nets= cl=0 fixed=UNFIXED comp=4 front=1 court=0 fab=1 closed=0 rel=oct(-10250,-10250,-9750,10250,-20354,354,-20354,354) tr=1550000,-850000 rot=0.0 abs=oct(1539750,-860250,1540250,-839750,2379646,2400354,679646,700354)
+item 36 ComponentOutline nets= cl=0 fixed=UNFIXED comp=4 front=1 court=0 fab=1 closed=0 rel=oct(-10250,9750,10250,10250,-20354,354,-354,20354) tr=1550000,-850000 rot=0.0 abs=oct(1539750,-840250,1560250,-839750,2379646,2400354,699646,720354)
+item 37 ComponentOutline nets= cl=0 fixed=UNFIXED comp=4 front=1 court=0 fab=1 closed=0 rel=oct(-10250,-10250,10250,-9750,-354,20354,-20354,354) tr=1550000,-850000 rot=0.0 abs=oct(1539750,-860250,1560250,-859750,2399646,2420354,679646,700354)
+item 38 ComponentOutline nets= cl=0 fixed=UNFIXED comp=4 front=1 court=0 fab=1 closed=0 rel=oct(9750,-10250,10250,10250,-354,20354,-354,20354) tr=1550000,-850000 rot=0.0 abs=oct(1559750,-860250,1560250,-839750,2399646,2420354,699646,720354)

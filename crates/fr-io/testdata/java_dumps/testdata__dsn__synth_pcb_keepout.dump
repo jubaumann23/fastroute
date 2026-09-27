@@ -1,0 +1,2 @@
+source testdata/dsn/synth_pcb_keepout.dsn
+result ERROR

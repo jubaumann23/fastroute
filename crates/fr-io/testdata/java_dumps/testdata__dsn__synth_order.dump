@@ -1,0 +1,44 @@
+source testdata/dsn/synth_order.dsn
+result OK
+layer 0 Top 1
+layer 1 Mid1 1
+layer 2 Mid2 1
+layer 3 Bottom 1
+cclass 0 null
+cclass 1 default
+cval 0 0 0 0 0 0
+cval 0 1 0 0 0 0
+cval 1 0 0 0 0 0
+cval 1 1 80 80 80 80
+netclass 0 default tcl=1 via_rule=default hw=50,50,50,50 items=0,1,1,1,1,1 active=1,1,1,1 shove=0 pull=1 minlen=0.0 maxlen=0.0 ignored=0
+net 1 A 1 class=default plane=0
+net 2 B 1 class=default plane=0
+viainfo V1 V1 cl=1 attach=0
+viarule default V1
+rules min_hw=50 max_hw=100 pin_edge=50.0 angle=FORTYFIVE_DEGREE
+padstack 1 P attach=1 abs=0 0:box(-200,-200,200,200) 1:null 2:null 3:box(-200,-200,200,200)
+padstack 2 V1 attach=1 abs=0 0:circle(0,0,150) 1:circle(0,0,150) 2:circle(0,0,150) 3:circle(0,0,150)
+viapadstacks V1
+package 1 P2 front=1
+  pin 1 1 -500,0 0.0
+  pin 2 1 500,0 0.0
+bbox box(-1100,-1100,51100,41100)
+flip 1
+item 1 BoardOutline nets= cl=1 fixed=SYSTEM_FIXED comp=0 shapes=[polygon[0,0 50000,0 50000,40000 0,40000]]
+item 2 ObstacleArea nets= cl=0 fixed=SYSTEM_FIXED comp=0 layer=0 name=null rel=polygon[10000,10000 20000,10000 20000,20000 10000,20000] tr=0,0 rot=0.0 side=0 abs=polygon[10000,10000 20000,10000 20000,20000 10000,20000]
+item 3 ObstacleArea nets= cl=0 fixed=SYSTEM_FIXED comp=0 layer=1 name=null rel=polygon[10000,10000 20000,10000 20000,20000 10000,20000] tr=0,0 rot=0.0 side=0 abs=polygon[10000,10000 20000,10000 20000,20000 10000,20000]
+item 4 ObstacleArea nets= cl=0 fixed=SYSTEM_FIXED comp=0 layer=2 name=null rel=polygon[10000,10000 20000,10000 20000,20000 10000,20000] tr=0,0 rot=0.0 side=0 abs=polygon[10000,10000 20000,10000 20000,20000 10000,20000]
+item 5 ObstacleArea nets= cl=0 fixed=SYSTEM_FIXED comp=0 layer=3 name=null rel=polygon[10000,10000 20000,10000 20000,20000 10000,20000] tr=0,0 rot=0.0 side=0 abs=polygon[10000,10000 20000,10000 20000,20000 10000,20000]
+item 6 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=0 name=null rel=box(1000,1000,2000,2000) tr=0,0 rot=0.0 side=0 abs=box(1000,1000,2000,2000)
+item 7 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=1 name=null rel=box(1000,1000,2000,2000) tr=0,0 rot=0.0 side=0 abs=box(1000,1000,2000,2000)
+item 8 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=2 name=null rel=box(1000,1000,2000,2000) tr=0,0 rot=0.0 side=0 abs=box(1000,1000,2000,2000)
+item 9 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=3 name=null rel=box(1000,1000,2000,2000) tr=0,0 rot=0.0 side=0 abs=box(1000,1000,2000,2000)
+item 10 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=0 name=null rel=box(3000,1000,4000,2000) tr=0,0 rot=0.0 side=0 abs=box(3000,1000,4000,2000)
+item 11 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=1 name=null rel=box(3000,1000,4000,2000) tr=0,0 rot=0.0 side=0 abs=box(3000,1000,4000,2000)
+item 12 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=2 name=null rel=box(3000,1000,4000,2000) tr=0,0 rot=0.0 side=0 abs=box(3000,1000,4000,2000)
+item 13 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=3 name=null rel=box(3000,1000,4000,2000) tr=0,0 rot=0.0 side=0 abs=box(3000,1000,4000,2000)
+item 14 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=3 name=null rel=polygon[5000,1000 6000,1000 6000,2000 5000,2000] tr=0,0 rot=0.0 side=0 abs=polygon[5000,1000 6000,1000 6000,2000 5000,2000]
+item 15 Via nets=1 cl=1 fixed=UNFIXED comp=0 padstack=V1 center=15000,15000 attach=0
+item 16 PolylineTrace nets=1 cl=1 fixed=UNFIXED comp=0 layer=0 hw=50 corners=[15000,15000 25000,15000]
+item 17 Via nets=1 cl=1 fixed=UNFIXED comp=0 padstack=V1 center=25000,15000 attach=0
+item 18 PolylineTrace nets=2 cl=1 fixed=UNFIXED comp=0 layer=1 hw=50 corners=[15000,25000 25000,25000 25000,35000]

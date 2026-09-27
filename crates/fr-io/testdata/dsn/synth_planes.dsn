@@ -1,0 +1,26 @@
+(pcb synth_planes.dsn
+  (resolution mm 1000)
+  (unit mm)
+  (structure
+    (layer L1 (type signal))
+    (layer L2 (type signal))
+    (layer L3 (type signal))
+    (layer L4 (type signal))
+    (boundary (rect pcb 0 0 50 40))
+    (via V1)
+  )
+  (placement (component P1 (place J1 10 10 front 0)))
+  (library
+    (image P1 (pin V1 1 0 0))
+    (padstack V1 (shape (circle signal 0.6)))
+  )
+  (network (net GND (pins J1-1)) (net VCC))
+  (wiring
+    (wire (polygon L2 0  0 0  50 0  50 40  0 40) (net GND))
+    (wire (polygon L3 0  0 0  50 0  50 40  0 40) (net VCC) (type fix))
+    (wire (polygon L1 0  0 0  30 0  30 40  0 40) (net VCC))
+    (wire (path L4 0.2  10 10  20 10) (net GND))
+    (wire (polygon L3 0  40 30  45 30  45 35  40 35) (net GND))
+    (wire (polygon L2 0  0 0  20 0  20 20  0 20) (net VCC) (type route))
+  )
+)

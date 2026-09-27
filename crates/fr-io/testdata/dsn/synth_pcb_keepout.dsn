@@ -1,0 +1,9 @@
+(pcb synth_pcb_keepout.dsn
+  (resolution mil 10)
+  (structure
+    (layer Top (type signal))
+    (layer Bottom (type signal))
+    (boundary (rect pcb 0 0 1000 1000))
+    (place_keepout (rect pcb 100 100 200 200))
+  )
+)

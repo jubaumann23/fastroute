@@ -1,0 +1,21 @@
+source fixtures/Issue723-CombineStackOverflow.dsn
+result OK
+layer 0 F.Cu 1
+layer 1 B.Cu 1
+cclass 0 null
+cclass 1 default
+cval 0 0 0 0
+cval 0 1 0 0
+cval 1 0 0 0
+cval 1 1 1524 1524
+netclass 0 default tcl=1 via_rule=default hw=762,762 items=0,1,1,1,1,1 active=1,1 shove=0 pull=1 minlen=0.0 maxlen=0.0 ignored=0
+net 1 GND 1 class=default plane=0
+viainfo Via[0-1]_600:300_um Via[0-1]_600:300_um cl=1 attach=0
+viarule default Via[0-1]_600:300_um
+rules min_hw=762 max_hw=762 pin_edge=762.0 angle=FORTYFIVE_DEGREE
+padstack 1 Via[0-1]_600:300_um attach=0 abs=0 0:circle(0,0,3000) 1:circle(0,0,3000)
+viapadstacks Via[0-1]_600:300_um
+bbox box(1294400,-1080500,1867900,-570500)
+flip 0
+item 1 BoardOutline nets= cl=1 fixed=SYSTEM_FIXED comp=0 shapes=[polygon[1295400,-1079500 1866900,-1079500 1866900,-571500 1295400,-571500]]
+item 4001 PolylineTrace nets=1 cl=1 fixed=UNFIXED comp=0 layer=0 hw=762 corners=[1300000,-1070000 1860000,-1070000 1860000,-1068000 1300000,-1068000 1300000,-1066000 1860000,-1066000 1860000,-1064000 1300000,-1064000 1300000,-1062000 1860000,-1062000 1860000,-1060000 1300000,-1060000 1300000,-1058000 1860000,-1058000 1860000,-1056000 1300000,-1056000 1300000,-1054000 1860000,-1054000 1860000,-1052000 1300000,-1052000 1300000,-1050000 1860000,-1050000 1860000,-1048000 1300000,-1048000 1300000,-1046000 1860000,-1046000 1860000,-1044000 1300000,-1044000 1300000,-1042000 1432000,-1042000]

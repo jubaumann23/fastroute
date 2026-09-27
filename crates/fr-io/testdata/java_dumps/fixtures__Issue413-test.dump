@@ -1,0 +1,75 @@
+source fixtures/Issue413-test.dsn
+result OK
+layer 0 F.Cu 1
+layer 1 B.Cu 1
+cclass 0 null
+cclass 1 default
+cval 0 0 0 0
+cval 0 1 0 0
+cval 1 0 0 0
+cval 1 1 2000 2000
+netclass 0 default tcl=1 via_rule=kicad_default hw=24500,24500 items=0,1,1,1,1,1 active=1,1 shove=0 pull=1 minlen=0.0 maxlen=0.0 ignored=0
+net 1 N0 1 class=default plane=0
+net 2 N3 1 class=default plane=0
+net 3 N2 1 class=default plane=0
+net 4 N1 1 class=default plane=0
+net 5 N4 1 class=default plane=0
+viainfo Via[0-1]_600:300_um Via[0-1]_600:300_um cl=1 attach=0
+viainfo Via[0-1]_600:300_um-kicad_default Via[0-1]_600:300_um cl=1 attach=0
+viarule default Via[0-1]_600:300_um
+viarule kicad_default Via[0-1]_600:300_um-kicad_default
+rules min_hw=24500 max_hw=24500 pin_edge=24500.0 angle=FORTYFIVE_DEGREE
+padstack 1 Rect[T]Pad_5000x5000_um attach=0 abs=0 0:box(-25000,-25000,25000,25000) 1:null
+padstack 2 Via[0-1]_600:300_um attach=0 abs=0 0:circle(0,0,3000) 1:circle(0,0,3000)
+viapadstacks Via[0-1]_600:300_um,Via[0-1]_600:300_um
+package 1 endpoint_footprint front=1
+  pin 1 1 25000,-25000 0.0
+component 1 X8 loc=5600000,-3200000 rot=0.0 front=1 pkg=1 fixed=0 pn=null
+component 2 X3 loc=3000000,-2500000 rot=0.0 front=1 pkg=1 fixed=0 pn=null
+component 3 X7 loc=3600000,-1200000 rot=0.0 front=1 pkg=1 fixed=0 pn=null
+component 4 X2 loc=4800000,-4400000 rot=0.0 front=1 pkg=1 fixed=0 pn=null
+component 5 X1 loc=5000000,-300000 rot=0.0 front=1 pkg=1 fixed=0 pn=null
+component 6 X9 loc=3600000,-3000000 rot=0.0 front=1 pkg=1 fixed=0 pn=null
+component 7 X5 loc=1900000,-5300000 rot=0.0 front=1 pkg=1 fixed=0 pn=null
+component 8 X10 loc=4300000,-2900000 rot=0.0 front=1 pkg=1 fixed=0 pn=null
+component 9 X4 loc=500000,-3800000 rot=0.0 front=1 pkg=1 fixed=0 pn=null
+component 10 X6 loc=200000,-200000 rot=0.0 front=1 pkg=1 fixed=0 pn=null
+bbox box(-3000,-6003000,6003000,3000)
+flip 0
+item 1 BoardOutline nets= cl=1 fixed=SYSTEM_FIXED comp=0 shapes=[polygon[0,-6000000 6000000,-6000000 6000000,0 0,0]]
+item 2 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=0 name=null rel=polygon[2300000,-2960000 2360000,-2960000 2360000,-2900000 2300000,-2900000] tr=0,0 rot=0.0 side=0 abs=polygon[2300000,-2960000 2360000,-2960000 2360000,-2900000 2300000,-2900000]
+item 3 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=0 name=null rel=polygon[4000000,-2860000 4060000,-2860000 4060000,-2800000 4000000,-2800000] tr=0,0 rot=0.0 side=0 abs=polygon[4000000,-2860000 4060000,-2860000 4060000,-2800000 4000000,-2800000]
+item 4 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=0 name=null rel=polygon[3000000,-2760000 3060000,-2760000 3060000,-2700000 3000000,-2700000] tr=0,0 rot=0.0 side=0 abs=polygon[3000000,-2760000 3060000,-2760000 3060000,-2700000 3000000,-2700000]
+item 5 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=0 name=null rel=polygon[4990000,-460000 5050000,-460000 5050000,-400000 4990000,-400000] tr=0,0 rot=0.0 side=0 abs=polygon[4990000,-460000 5050000,-460000 5050000,-400000 4990000,-400000]
+item 6 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=0 name=null rel=polygon[1200000,-3060000 1260000,-3060000 1260000,-3000000 1200000,-3000000] tr=0,0 rot=0.0 side=0 abs=polygon[1200000,-3060000 1260000,-3060000 1260000,-3000000 1200000,-3000000]
+item 7 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=0 name=null rel=polygon[3800000,-3060000 3860000,-3060000 3860000,-3000000 3800000,-3000000] tr=0,0 rot=0.0 side=0 abs=polygon[3800000,-3060000 3860000,-3060000 3860000,-3000000 3800000,-3000000]
+item 8 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=0 name=null rel=polygon[2500000,-2860000 2560000,-2860000 2560000,-2800000 2500000,-2800000] tr=0,0 rot=0.0 side=0 abs=polygon[2500000,-2860000 2560000,-2860000 2560000,-2800000 2500000,-2800000]
+item 9 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=0 name=null rel=polygon[4290000,-3050000 4350000,-3050000 4350000,-2990000 4290000,-2990000] tr=0,0 rot=0.0 side=0 abs=polygon[4290000,-3050000 4350000,-3050000 4350000,-2990000 4290000,-2990000]
+item 10 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=0 name=null rel=polygon[4400000,-2060000 4460000,-2060000 4460000,-2000000 4400000,-2000000] tr=0,0 rot=0.0 side=0 abs=polygon[4400000,-2060000 4460000,-2060000 4460000,-2000000 4400000,-2000000]
+item 11 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=0 name=null rel=polygon[4915000,-2560000 4975000,-2560000 4975000,-2500000 4915000,-2500000] tr=0,0 rot=0.0 side=0 abs=polygon[4915000,-2560000 4975000,-2560000 4975000,-2500000 4915000,-2500000]
+item 12 ObstacleArea nets= cl=1 fixed=SYSTEM_FIXED comp=0 layer=0 name=null rel=polygon[2100000,-2960000 2160000,-2960000 2160000,-2900000 2100000,-2900000] tr=0,0 rot=0.0 side=0 abs=polygon[2100000,-2960000 2160000,-2960000 2160000,-2900000 2100000,-2900000]
+item 13 Pin nets=2 cl=1 fixed=UNFIXED comp=1 pin=0 first=0 last=0 center=5625000,-3225000 shapes=[box(5600000,-3250000,5650000,-3200000)]
+item 14 Pin nets=4 cl=1 fixed=UNFIXED comp=2 pin=0 first=0 last=0 center=3025000,-2525000 shapes=[box(3000000,-2550000,3050000,-2500000)]
+item 15 Pin nets=2 cl=1 fixed=UNFIXED comp=3 pin=0 first=0 last=0 center=3625000,-1225000 shapes=[box(3600000,-1250000,3650000,-1200000)]
+item 16 Pin nets=1 cl=1 fixed=UNFIXED comp=4 pin=0 first=0 last=0 center=4825000,-4425000 shapes=[box(4800000,-4450000,4850000,-4400000)]
+item 17 Pin nets=1 cl=1 fixed=UNFIXED comp=5 pin=0 first=0 last=0 center=5025000,-325000 shapes=[box(5000000,-350000,5050000,-300000)]
+item 18 Pin nets=5 cl=1 fixed=UNFIXED comp=6 pin=0 first=0 last=0 center=3625000,-3025000 shapes=[box(3600000,-3050000,3650000,-3000000)]
+item 19 Pin nets=3 cl=1 fixed=UNFIXED comp=7 pin=0 first=0 last=0 center=1925000,-5325000 shapes=[box(1900000,-5350000,1950000,-5300000)]
+item 20 Pin nets=5 cl=1 fixed=UNFIXED comp=8 pin=0 first=0 last=0 center=4325000,-2925000 shapes=[box(4300000,-2950000,4350000,-2900000)]
+item 21 Pin nets=4 cl=1 fixed=UNFIXED comp=9 pin=0 first=0 last=0 center=525000,-3825000 shapes=[box(500000,-3850000,550000,-3800000)]
+item 22 Pin nets=3 cl=1 fixed=UNFIXED comp=10 pin=0 first=0 last=0 center=225000,-225000 shapes=[box(200000,-250000,250000,-200000)]
+item 23 PolylineTrace nets=3 cl=1 fixed=UNFIXED comp=0 layer=0 hw=24500 corners=[225000,-225000 222958,-227042 222958,-282618]
+item 24 PolylineTrace nets=3 cl=1 fixed=UNFIXED comp=0 layer=1 hw=24500 corners=[222958,-282618 222958,-5120100 252819,-5149961]
+item 25 PolylineTrace nets=3 cl=1 fixed=UNFIXED comp=0 layer=0 hw=24500 corners=[252819,-5149961 1675961,-5149961 1851000,-5325000]
+item 26 PolylineTrace nets=3 cl=1 fixed=SHOVE_FIXED comp=0 layer=0 hw=24500 corners=[1925000,-5325000 1851000,-5325000]
+item 27 PolylineTrace nets=5 cl=1 fixed=UNFIXED comp=0 layer=0 hw=24500 corners=[4325000,-2925000 3799000,-2925000 3699000,-3025000]
+item 28 PolylineTrace nets=5 cl=1 fixed=SHOVE_FIXED comp=0 layer=0 hw=24500 corners=[3625000,-3025000 3699000,-3025000]
+item 29 PolylineTrace nets=1 cl=1 fixed=UNFIXED comp=0 layer=0 hw=24500 corners=[5025000,-325000 3166676,-325000 3119475,-372201]
+item 30 PolylineTrace nets=1 cl=1 fixed=UNFIXED comp=0 layer=1 hw=24500 corners=[3119475,-372201 3119475,-3746494 3776417,-4403436]
+item 31 PolylineTrace nets=1 cl=1 fixed=UNFIXED comp=0 layer=0 hw=24500 corners=[3776417,-4403436 4729436,-4403436 4751000,-4425000]
+item 32 PolylineTrace nets=1 cl=1 fixed=SHOVE_FIXED comp=0 layer=0 hw=24500 corners=[4825000,-4425000 4751000,-4425000]
+item 33 PolylineTrace nets=2 cl=1 fixed=UNFIXED comp=0 layer=0 hw=24500 corners=[5625000,-3225000 5625000,-3112041 3737959,-1225000 3625000,-1225000]
+item 34 Via nets=3 cl=1 fixed=UNFIXED comp=0 padstack=Via[0-1]_600:300_um center=222958,-282618 attach=0
+item 35 Via nets=3 cl=1 fixed=UNFIXED comp=0 padstack=Via[0-1]_600:300_um center=252819,-5149961 attach=0
+item 36 Via nets=1 cl=1 fixed=UNFIXED comp=0 padstack=Via[0-1]_600:300_um center=3119475,-372201 attach=0
+item 37 Via nets=1 cl=1 fixed=UNFIXED comp=0 padstack=Via[0-1]_600:300_um center=3776417,-4403436 attach=0

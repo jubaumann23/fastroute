@@ -1,0 +1,14 @@
+[package]
+name = "fr-io"
+description = "Freerouting I/O: DSN model -> board construction data (porting unit U11)"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+fr-dsn = { path = "../fr-dsn" }
+fr-geom = { path = "../fr-geom" }
+fr-jcompat = { path = "../fr-jcompat" }
+fr-settings = { path = "../fr-settings" }
+fr-engine = { path = "../fr-engine" }
+log = "0.4"

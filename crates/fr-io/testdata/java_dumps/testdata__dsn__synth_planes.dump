@@ -1,0 +1,33 @@
+source testdata/dsn/synth_planes.dsn
+result OK
+layer 0 L1 1
+layer 1 L2 1
+layer 2 L3 1
+layer 3 L4 1
+cclass 0 null
+cclass 1 default
+cval 0 0 0 0 0 0
+cval 0 1 0 0 0 0
+cval 1 0 0 0 0 0
+cval 1 1 0 0 0 0
+netclass 0 default tcl=1 via_rule=default hw=1500,1500,1500,1500 items=0,1,1,1,1,1 active=1,1,1,1 shove=0 pull=1 minlen=0.0 maxlen=0.0 ignored=0
+net 1 GND 1 class=default plane=1
+net 2 VCC 1 class=default plane=1
+viainfo V1 V1 cl=1 attach=0
+viarule default V1
+rules min_hw=100000 max_hw=100 pin_edge=100000.0 angle=FORTYFIVE_DEGREE
+padstack 1 V1 attach=1 abs=0 0:circle(0,0,300) 1:circle(0,0,300) 2:circle(0,0,300) 3:circle(0,0,300)
+viapadstacks V1
+package 1 P1 front=1
+  pin 1 1 0,0 0.0
+component 1 J1 loc=10000,10000 rot=0.0 front=1 pkg=1 fixed=0 pn=null
+bbox box(-1000,-1000,51000,41000)
+flip 0
+item 1 BoardOutline nets= cl=1 fixed=SYSTEM_FIXED comp=0 shapes=[box(0,0,50000,40000)]
+item 2 Pin nets=1 cl=1 fixed=UNFIXED comp=1 pin=0 first=0 last=3 center=10000,10000 shapes=[circle(10000,10000,300)|circle(10000,10000,300)|circle(10000,10000,300)|circle(10000,10000,300)]
+item 3 ConductionArea nets=1 cl=1 fixed=USER_FIXED comp=0 layer=1 obstacle=0 rel=polygon[0,0 50000,0 50000,40000 0,40000] abs=polygon[0,0 50000,0 50000,40000 0,40000]
+item 4 ConductionArea nets=2 cl=1 fixed=SYSTEM_FIXED comp=0 layer=2 obstacle=0 rel=polygon[0,0 50000,0 50000,40000 0,40000] abs=polygon[0,0 50000,0 50000,40000 0,40000]
+item 5 ConductionArea nets=2 cl=1 fixed=USER_FIXED comp=0 layer=0 obstacle=0 rel=polygon[0,0 30000,0 30000,40000 0,40000] abs=polygon[0,0 30000,0 30000,40000 0,40000]
+item 6 PolylineTrace nets=1 cl=1 fixed=UNFIXED comp=0 layer=3 hw=100 corners=[10000,10000 20000,10000]
+item 7 ConductionArea nets=1 cl=1 fixed=UNFIXED comp=0 layer=2 obstacle=0 rel=polygon[40000,30000 45000,30000 45000,35000 40000,35000] abs=polygon[40000,30000 45000,30000 45000,35000 40000,35000]
+item 8 ConductionArea nets=2 cl=1 fixed=USER_FIXED comp=0 layer=1 obstacle=0 rel=polygon[0,0 20000,0 20000,20000 0,20000] abs=polygon[0,0 20000,0 20000,20000 0,20000]

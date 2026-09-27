@@ -1,0 +1,83 @@
+source scripts/benchmark/fixtures/PCBench/autohat-board_inverted-usd-adapter/unrouted.dsn
+result OK
+layer 0 F.Cu 1
+layer 1 B.Cu 1
+cclass 0 null
+cclass 1 default
+cclass 2 smd
+cval 0 0 0 0
+cval 0 1 0 0
+cval 0 2 0 0
+cval 1 0 0 0
+cval 1 1 1524 1524
+cval 1 2 1524 1524
+cval 2 0 0 0
+cval 2 1 1524 1524
+cval 2 2 382 382
+netclass 0 default tcl=1 via_rule=default hw=1250,1250 items=0,1,1,1,2,1 active=1,1 shove=0 pull=1 minlen=0.0 maxlen=0.0 ignored=0
+net 1 /N8 1 class=default plane=0
+net 2 /N7 1 class=default plane=0
+net 3 /N6 1 class=default plane=0
+net 4 /N5 1 class=default plane=0
+net 5 /N4 1 class=default plane=0
+net 6 /N3 1 class=default plane=0
+net 7 /N2 1 class=default plane=0
+net 8 /N1 1 class=default plane=0
+viainfo Via[0-1]_600:400_um Via[0-1]_600:400_um cl=1 attach=0
+viarule default Via[0-1]_600:400_um
+viarule default Via[0-1]_600:400_um
+rules min_hw=1250 max_hw=1250 pin_edge=1250.0 angle=FORTYFIVE_DEGREE
+padstack 1 Oval[A][0,-250]Pad_1500x2000_um attach=0 abs=0 0:oct(-7500,-12500,7500,7500,-10607,15607,-15607,10607) 1:oct(-7500,-12500,7500,7500,-10607,15607,-15607,10607)
+padstack 2 Oval[A][0,250]Pad_1500x2000_um attach=0 abs=0 0:oct(-7500,-7500,7500,12500,-15607,10607,-10607,15607) 1:oct(-7500,-7500,7500,12500,-15607,10607,-10607,15607)
+padstack 3 Rect[T]Pad_800x2900_um attach=0 abs=0 0:box(-4000,-14500,4000,14500) 1:null
+padstack 4 Rect[T]Pad_800x3200_um attach=0 abs=0 0:box(-4000,-16000,4000,16000) 1:null
+padstack 5 Rect[A][0,-250]Pad_1500x2000_um attach=0 abs=0 0:box(-7500,-12500,7500,7500) 1:box(-7500,-12500,7500,7500)
+padstack 6 Via[0-1]_600:400_um attach=0 abs=0 0:circle(0,0,3000) 1:circle(0,0,3000)
+viapadstacks Via[0-1]_600:400_um,Via[0-1]_600:400_um
+package 1 connectors:PSB_IDC_4x2 front=1
+  pin 8 2 38100,12700 0.0
+  pin 7 1 38100,-12700 0.0
+  pin 1 5 -38100,-12700 0.0
+  pin 2 2 -38100,12700 0.0
+  pin 3 1 -12700,-12700 0.0
+  pin 4 2 -12700,12700 0.0
+  pin 5 1 12700,-12700 0.0
+  pin 6 2 12700,12700 0.0
+  outline 0 oct(-51550,31000,51550,32500,-83611,20111,-20111,83611) w=150.0 closed=0
+  outline 1 oct(50050,-32500,51550,32500,17989,83611,17989,83611) w=150.0 closed=0
+  outline 2 oct(-51550,-32500,51550,-31000,-20111,83611,-83611,20111) w=150.0 closed=0
+  outline 3 oct(-51550,-32500,-50050,32500,-83611,-17989,-83611,-17989) w=150.0 closed=0
+package 2 connectors:usd front=1
+  pin 8 3 77000,0 0.0
+  pin 7 3 66000,0 0.0
+  pin 6 4 55000,1500 0.0
+  pin 5 3 44000,0 0.0
+  pin 4 4 33000,1500 0.0
+  pin 3 3 22000,0 0.0
+  pin 2 3 11000,0 0.0
+  pin 1 3 0,0 0.0
+component 1 P1 loc=1498600,-1212850 rot=180.0 front=0 pkg=1 fixed=0 pn=CONN_02X04
+component 2 J1 loc=1473000,-925800 rot=0.0 front=1 pkg=2 fixed=0 pn=usd-plug
+bbox box(1418250,-1251750,1591900,-898499)
+flip 0
+item 1 BoardOutline nets= cl=1 fixed=SYSTEM_FIXED comp=0 shapes=[polygon[1419250,-1250750 1590900,-1250750 1590900,-899499 1419250,-899499]]
+item 2 Pin nets=1 cl=1 fixed=UNFIXED comp=1 pin=0 first=0 last=1 center=1536700,-1225550 shapes=[oct(1529200,-1238050,1544200,-1218050,2751643,2777857,295543,321757)|oct(1529200,-1238050,1544200,-1218050,2751643,2777857,295543,321757)]
+item 3 Pin nets=2 cl=1 fixed=UNFIXED comp=1 pin=1 first=0 last=1 center=1536700,-1200150 shapes=[oct(1529200,-1207650,1544200,-1187650,2721243,2747457,325943,352157)|oct(1529200,-1207650,1544200,-1187650,2721243,2747457,325943,352157)]
+item 4 Pin nets=8 cl=1 fixed=UNFIXED comp=1 pin=2 first=0 last=1 center=1460500,-1200150 shapes=[box(1453000,-1207650,1468000,-1187650)|box(1453000,-1207650,1468000,-1187650)]
+item 5 Pin nets=7 cl=1 fixed=UNFIXED comp=1 pin=3 first=0 last=1 center=1460500,-1225550 shapes=[oct(1453000,-1238050,1468000,-1218050,2675443,2701657,219343,245557)|oct(1453000,-1238050,1468000,-1218050,2675443,2701657,219343,245557)]
+item 6 Pin nets=6 cl=1 fixed=UNFIXED comp=1 pin=4 first=0 last=1 center=1485900,-1200150 shapes=[oct(1478400,-1207650,1493400,-1187650,2670443,2696657,275143,301357)|oct(1478400,-1207650,1493400,-1187650,2670443,2696657,275143,301357)]
+item 7 Pin nets=5 cl=1 fixed=UNFIXED comp=1 pin=5 first=0 last=1 center=1485900,-1225550 shapes=[oct(1478400,-1238050,1493400,-1218050,2700843,2727057,244743,270957)|oct(1478400,-1238050,1493400,-1218050,2700843,2727057,244743,270957)]
+item 8 Pin nets=4 cl=1 fixed=UNFIXED comp=1 pin=6 first=0 last=1 center=1511300,-1200150 shapes=[oct(1503800,-1207650,1518800,-1187650,2695843,2722057,300543,326757)|oct(1503800,-1207650,1518800,-1187650,2695843,2722057,300543,326757)]
+item 9 Pin nets=3 cl=1 fixed=UNFIXED comp=1 pin=7 first=0 last=1 center=1511300,-1225550 shapes=[oct(1503800,-1238050,1518800,-1218050,2726243,2752457,270143,296357)|oct(1503800,-1238050,1518800,-1218050,2726243,2752457,270143,296357)]
+item 10 ComponentOutline nets= cl=0 fixed=UNFIXED comp=1 front=0 court=1 fab=0 closed=0 rel=oct(-51550,31000,51550,32500,-83611,20111,-20111,83611) tr=1498600,-1212850 rot=180.0 abs=oct(1447050,-1245350,1550150,-1243850,2691339,2795061,202139,305861)
+item 11 ComponentOutline nets= cl=0 fixed=UNFIXED comp=1 front=0 court=0 fab=0 closed=0 rel=oct(50050,-32500,51550,32500,17989,83611,17989,83611) tr=1498600,-1212850 rot=180.0 abs=oct(1548650,-1245350,1550150,-1180350,2729439,2795061,303739,369361)
+item 12 ComponentOutline nets= cl=0 fixed=UNFIXED comp=1 front=0 court=0 fab=0 closed=0 rel=oct(-51550,-32500,51550,-31000,-20111,83611,-83611,20111) tr=1498600,-1212850 rot=180.0 abs=oct(1447050,-1181850,1550150,-1180350,2627839,2731561,265639,369361)
+item 13 ComponentOutline nets= cl=0 fixed=UNFIXED comp=1 front=0 court=0 fab=0 closed=0 rel=oct(-51550,-32500,-50050,32500,-83611,-17989,-83611,-17989) tr=1498600,-1212850 rot=180.0 abs=oct(1447050,-1245350,1448550,-1180350,2627839,2693461,202139,267761)
+item 14 Pin nets=1 cl=2 fixed=UNFIXED comp=2 pin=0 first=0 last=0 center=1550000,-925800 shapes=[box(1546000,-940300,1554000,-911300)]
+item 15 Pin nets=2 cl=2 fixed=UNFIXED comp=2 pin=1 first=0 last=0 center=1539000,-925800 shapes=[box(1535000,-940300,1543000,-911300)]
+item 16 Pin nets=3 cl=2 fixed=UNFIXED comp=2 pin=2 first=0 last=0 center=1528000,-924300 shapes=[box(1524000,-940300,1532000,-908300)]
+item 17 Pin nets=4 cl=2 fixed=UNFIXED comp=2 pin=3 first=0 last=0 center=1517000,-925800 shapes=[box(1513000,-940300,1521000,-911300)]
+item 18 Pin nets=5 cl=2 fixed=UNFIXED comp=2 pin=4 first=0 last=0 center=1506000,-924300 shapes=[box(1502000,-940300,1510000,-908300)]
+item 19 Pin nets=6 cl=2 fixed=UNFIXED comp=2 pin=5 first=0 last=0 center=1495000,-925800 shapes=[box(1491000,-940300,1499000,-911300)]
+item 20 Pin nets=7 cl=2 fixed=UNFIXED comp=2 pin=6 first=0 last=0 center=1484000,-925800 shapes=[box(1480000,-940300,1488000,-911300)]
+item 21 Pin nets=8 cl=2 fixed=UNFIXED comp=2 pin=7 first=0 last=0 center=1473000,-925800 shapes=[box(1469000,-940300,1477000,-911300)]
