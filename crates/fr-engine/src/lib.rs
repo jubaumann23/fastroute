@@ -9,6 +9,8 @@
 //!   take `&Board`/`&mut Board` (or the specific parts they need).
 //! * Each module names the Java source it was ported from.
 
+pub mod autoroute;
+pub mod board;
 pub mod datastructures;
 pub mod ids;
 pub mod library;

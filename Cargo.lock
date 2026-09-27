@@ -28,6 +28,7 @@ dependencies = [
  "fr-jcompat",
  "fr-settings",
  "log",
+ "num-bigint",
 ]
 
 [[package]]
