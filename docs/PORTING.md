@@ -9,8 +9,8 @@ in a deterministic mode), then speed-ups that do not change results.
 | Crate | Contents | Status |
 |---|---|---|
 | `fr-dsn` | S-expression lexer, typed DSN model | done (2489/2489 corpus DSNs load) |
-| `fr-geom` | `geometry/planar` port | in progress |
-| `fr-jcompat` | Java semantics helpers: `Random`, `Collections.shuffle`, `TreeMap` (red-black, for non-transitive comparators), `HashMap<Integer>` iteration order, compensated `DoubleStream.sum`, `String.compareTo` (UTF-16), `Math.round/rint` | planned |
+| `fr-geom` | `geometry/planar` port | done (bit-exact vs Java golden data) |
+| `fr-jcompat` | Java semantics helpers: `Random`, `Collections.shuffle`, `TreeMap` (red-black, for non-transitive comparators), `HashMap<Integer>` iteration order, compensated `DoubleStream.sum`, `String.compareTo` (UTF-16), `Math.round/rint` | done (verified vs JDK 25) |
 | `fr-engine` | datastructures, rules, library, board (items, search trees, optimize), autoroute (expansion, maze, path, drill, pipeline), drc, scoring, settings | planned |
 | `fr-io` | DSN model → board builder, post-load overrides, SES writer, SES reader (test infra) | planned |
 | `fastroute` | CLI | skeleton |
@@ -66,8 +66,10 @@ write unrouted SES, diff against Java) → U6 (+SesReader: score Java-routed boa
   (`on_board = false`) until a safe point, because Java holds stale references.
 - **Search trees**: arena per tree; per-tree side table `ItemKey → leaves + shapes`.
   `MinAreaTree.overlaps` sorts results canonically (rooms first, then items by descending
-  id, then shape index), so the tree structure never affects results — Rust may use any
-  spatial index as long as the result set and order match.
+  id, then shape index). **But** `ShapeSearchTree45Degree/90Degree.completeShape` walk the
+  tree themselves and shrink the query while walking, so visiting order changes the rooms
+  produced. The Rust `MinAreaTree` therefore reproduces Java's exact tree shape (verified
+  against the jar); a different spatial index is only allowed behind `overlaps`.
 - **Expansion rooms/doors/drills**: per-connection arena in the `AutorouteEngine`,
   cleared between connections; complete rooms in a separate spatial index merged in front
   of item results. Java `getId()` values used for ordering are reproduced with i32
