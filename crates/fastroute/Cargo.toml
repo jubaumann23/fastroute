@@ -8,3 +8,4 @@ version.workspace = true
 [dependencies]
 fr-dsn = { path = "../fr-dsn" }
 fr-settings = { path = "../fr-settings" }
+fr-io = { path = "../fr-io" }

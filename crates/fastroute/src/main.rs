@@ -73,6 +73,20 @@ fn run() -> Result<(), String> {
         "autorouter max passes: {:?}, optimizer threads: {:?}",
         settings.autorouter.max_passes, settings.optimizer.max_threads
     );
+    let t = Instant::now();
+    let design = fr_io::load_bytes(&data).map_err(|e| format!("{path}: {e:?}"))?;
+    for w in &design.warnings {
+        eprintln!("warning: {w}");
+    }
+    let board = fr_io::build_board(design);
+    eprintln!(
+        "built board in {:.1} ms: {} items ({} pins, {} vias, {} traces)",
+        t.elapsed().as_secs_f64() * 1e3,
+        board.get_items().len(),
+        board.get_pins().len(),
+        board.get_vias().len(),
+        board.get_traces().len(),
+    );
     if args.design_out.is_some() {
         return Err("routing is not implemented yet (board model port in progress)".into());
     }

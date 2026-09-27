@@ -13,6 +13,7 @@ name = "fastroute"
 version = "0.1.0"
 dependencies = [
  "fr-dsn",
+ "fr-io",
  "fr-settings",
 ]
 
