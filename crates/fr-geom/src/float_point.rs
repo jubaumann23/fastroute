@@ -8,6 +8,7 @@ use crate::int_box::IntBox;
 use crate::int_octagon::IntOctagon;
 use crate::int_point::IntPoint;
 use crate::java_compat::{math_rint, math_round_i32, INT_MAX_F64, INT_MIN_F64};
+use crate::jmath;
 use crate::line::Line;
 use crate::side::Side;
 
@@ -79,7 +80,7 @@ impl FloatPoint {
     /// Returns the distance from this point to the zero point.
     #[inline]
     pub fn size(&self) -> f64 {
-        self.size_square().sqrt()
+        jmath::sqrt(self.size_square())
     }
 
     /// Returns the square of the distance from this Point to the Point other.
@@ -93,7 +94,7 @@ impl FloatPoint {
     /// Returns the distance from this point to the point other.
     #[inline]
     pub fn distance(&self, other: &FloatPoint) -> f64 {
-        self.distance_square(other).sqrt()
+        jmath::sqrt(self.distance_square(other))
     }
 
     /// Computes the weighted distance to other.
@@ -107,7 +108,7 @@ impl FloatPoint {
         let mut delta_y = self.y - other.y;
         delta_x *= horizontal_weight;
         delta_y *= vertical_weight;
-        (delta_x * delta_x + delta_y * delta_y).sqrt()
+        jmath::sqrt(delta_x * delta_x + delta_y * delta_y)
     }
 
     /// Rounds the coordinates to an IntPoint (Java `(int) Math.round`).
@@ -208,7 +209,7 @@ impl FloatPoint {
             // the size of the zero point cannot be changed
             return *self;
         }
-        let length = (self.x * self.x + self.y * self.y).sqrt();
+        let length = jmath::sqrt(self.x * self.x + self.y * self.y);
         let new_x = (self.x * new_size) / length;
         let new_y = (self.y * new_size) / length;
         FloatPoint::new(new_x, new_y)
@@ -223,7 +224,7 @@ impl FloatPoint {
             log::warn!("IntPoint.change_length: Points are equal");
             return *to_point;
         }
-        let length = (dx * dx + dy * dy).sqrt();
+        let length = jmath::sqrt(dx * dx + dy * dy);
         let new_x = self.x + (dx * new_length) / length;
         let new_y = self.y + (dy * new_length) / length;
         FloatPoint::new(new_x, new_y)
@@ -255,8 +256,8 @@ impl FloatPoint {
         }
         let dx = self.x - pole.x;
         let dy = self.y - pole.y;
-        let sin_angle = angle.sin();
-        let cos_angle = angle.cos();
+        let sin_angle = jmath::sin(angle);
+        let cos_angle = jmath::cos(angle);
         let new_dx = dx * cos_angle - dy * sin_angle;
         let new_dy = dx * sin_angle + dy * cos_angle;
         FloatPoint::new(pole.x + new_dx, pole.y + new_dy)
@@ -341,7 +342,7 @@ impl FloatPoint {
             // pole is inside the circle.
             return Vec::new();
         }
-        let square_root = discriminant.sqrt();
+        let square_root = jmath::sqrt(discriminant);
 
         let a1 = radius_square * dy;
         let dy1 = (a1 + distance * square_root) / dist_square;

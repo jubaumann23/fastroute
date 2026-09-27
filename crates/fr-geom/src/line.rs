@@ -11,6 +11,7 @@ use crate::int_vector::IntVector;
 use crate::java_compat::{
     big, bigint_double_value, bigint_int_value, bigint_signum, math_round_i32, INT_MAX_F64,
 };
+use crate::jmath;
 use crate::limits::CRIT_INT;
 use crate::point::Point;
 use crate::rational_point::RationalPoint;
@@ -220,7 +221,7 @@ impl Line {
         let dy = this_b.y.wrapping_sub(this_a.y) as f64;
         let det = dy * (point.x - this_a.x as f64) - dx * (point.y - this_a.y as f64);
         // area of the parallelogramm spanned by the 3 points
-        let length = (dx * dx + dy * dy).sqrt();
+        let length = jmath::sqrt(dx * dx + dy * dy);
         det / length
     }
 
@@ -440,7 +441,7 @@ impl Line {
         let v = dir.get_vector().as_int();
         let vxvx = v.x as f64 * v.x as f64;
         let vyvy = v.y as f64 * v.y as f64;
-        let length = (vxvx + vyvy).sqrt();
+        let length = jmath::sqrt(vxvx + vyvy);
         let new_a = if vxvx <= vyvy {
             // translate along the x axis
             let rel_x = math_round_i32((dist * length) / v.y as f64);
@@ -646,7 +647,7 @@ impl Line {
         let dx = ipb.x.wrapping_sub(ipa.x);
         let dy = ipb.y.wrapping_sub(ipa.y);
         let sq = dx.wrapping_mul(dx).wrapping_add(dy.wrapping_mul(dy));
-        (sq as f64).sqrt() as f32
+        jmath::sqrt(sq as f64) as f32
     }
 
     /// FloatLine through the approximated points.

@@ -9,6 +9,7 @@ use crate::int_octagon::IntOctagon;
 use crate::int_point::IntPoint;
 use crate::int_vector::IntVector;
 use crate::java_compat::math_round_i32;
+use crate::jmath;
 use crate::line::Line;
 use crate::point::Point;
 use crate::polyline::Polyline;
@@ -117,7 +118,7 @@ impl Circle {
         let bottom_y = self.center.y - self.radius;
         let top_y = self.center.y + self.radius;
 
-        let sqrt2_minus1 = 2f64.sqrt() - 1.0;
+        let sqrt2_minus1 = jmath::sqrt(2.0) - 1.0;
         let ceil_corner_value = (sqrt2_minus1 * self.radius as f64).ceil() as i32;
         let floor_corner_value = (sqrt2_minus1 * self.radius as f64).floor() as i32;
 
@@ -158,8 +159,8 @@ impl Circle {
                 IntVector::new(self.radius, 0)
             } else {
                 let current_angle = i as f64 * PI / (2.0 * quadrant_division_count as f64);
-                let current_x = (current_angle.sin() * self.radius as f64).ceil() as i32;
-                let current_y = (current_angle.cos() * self.radius as f64).ceil() as i32;
+                let current_x = (jmath::sin(current_angle) * self.radius as f64).ceil() as i32;
+                let current_y = (jmath::cos(current_angle) * self.radius as f64).ceil() as i32;
                 IntVector::new(current_x, current_y)
             };
             let current_a = center.translate_by(&Vector::Int(border_delta));

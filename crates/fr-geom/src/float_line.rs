@@ -3,6 +3,7 @@
 //! Calculations with FloatLines are generally not exact; use `Line` if exactness is needed.
 
 use crate::float_point::{java_min, FloatPoint};
+use crate::jmath;
 use crate::limits::CRIT_INT;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -56,7 +57,7 @@ impl FloatLine {
         let dy = self.b.y - self.a.y;
         let dxdx = dx * dx;
         let dydy = dy * dy;
-        let length = (dxdx + dydy).sqrt();
+        let length = jmath::sqrt(dxdx + dydy);
         let new_a = if dxdx <= dydy {
             // translate along the x axis
             let rel_x = (dist * length) / dy;
@@ -77,7 +78,7 @@ impl FloatLine {
         let dy = self.b.y - self.a.y;
         let det = dy * (point.x - self.a.x) - dx * (point.y - self.a.y);
         // area of the parallelogramm spanned by the 3 points
-        let length = (dx * dx + dy * dy).sqrt();
+        let length = jmath::sqrt(dx * dx + dy * dy);
         det / length
     }
 
@@ -185,7 +186,7 @@ impl FloatLine {
         if dx == 0.0 && dy == 0.0 {
             return *self;
         }
-        let length = (dx * dx + dy * dy).sqrt();
+        let length = jmath::sqrt(dx * dx + dy * dy);
         let effective_offset = java_min(offset, length / 2.0);
         let new_a = FloatPoint::new(
             self.a.x + (dx * effective_offset) / length,

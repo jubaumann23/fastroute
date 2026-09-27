@@ -6,6 +6,7 @@ license.workspace = true
 version.workspace = true
 
 [dependencies]
+libm = "0.2"
 log = "0.4"
 num-bigint = "0.4"
 num-integer = "0.1"

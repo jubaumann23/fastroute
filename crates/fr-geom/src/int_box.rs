@@ -9,6 +9,7 @@ use crate::int_direction::IntDirection;
 use crate::int_octagon::IntOctagon;
 use crate::int_point::IntPoint;
 use crate::java_compat::math_round_i32;
+use crate::jmath;
 use crate::limits::CRIT_INT;
 use crate::line::Line;
 use crate::point::Point;
@@ -247,7 +248,7 @@ impl IntBox {
             let mut delta_y = max_ll_y - min_ur_y;
             delta_x *= horizontal_weight;
             delta_y *= vertical_weight;
-            (delta_x * delta_x + delta_y * delta_y).sqrt()
+            jmath::sqrt(delta_x * delta_x + delta_y * delta_y)
         }
     }
 

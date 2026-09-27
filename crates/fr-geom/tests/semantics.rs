@@ -269,21 +269,15 @@ fn float_point_rounding_uses_java_semantics() {
 }
 
 #[test]
-fn strict_acos_matches_known_java_values() {
+fn jmath_acos_matches_known_java_values() {
     // StrictMath.acos values from OpenJDK 17 (fdlibm), covering all branches
-    assert_eq!(java_compat::strict_acos(0.5).to_bits(), 0x3ff0c152382d7366);
-    assert_eq!(java_compat::strict_acos(-0.3).to_bits(), 0x3ffe0200bbc96ad8);
-    assert_eq!(java_compat::strict_acos(0.99).to_bits(), 0x3fc21df72882bfd8);
-    assert_eq!(
-        java_compat::strict_acos(-0.75).to_bits(),
-        0x400359d26f93b6c3
-    );
-    assert_eq!(
-        java_compat::strict_acos(1e-10).to_bits(),
-        0x3ff921fb543d4de0
-    );
-    assert_eq!(java_compat::strict_acos(1.0), 0.0);
-    assert!(java_compat::strict_acos(1.5).is_nan());
+    assert_eq!(jmath::acos(0.5).to_bits(), 0x3ff0c152382d7366);
+    assert_eq!(jmath::acos(-0.3).to_bits(), 0x3ffe0200bbc96ad8);
+    assert_eq!(jmath::acos(0.99).to_bits(), 0x3fc21df72882bfd8);
+    assert_eq!(jmath::acos(-0.75).to_bits(), 0x400359d26f93b6c3);
+    assert_eq!(jmath::acos(1e-10).to_bits(), 0x3ff921fb543d4de0);
+    assert_eq!(jmath::acos(1.0), 0.0);
+    assert!(jmath::acos(1.5).is_nan());
 }
 
 // ---------------------------------------------------------------------------------------------

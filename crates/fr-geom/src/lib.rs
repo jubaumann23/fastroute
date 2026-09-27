@@ -6,7 +6,8 @@
 //!
 //! * Java `int`/`long`/`double` are `i32`/`i64`/`f64`. `Math.round` is
 //!   [`java_compat::math_round`] (ties toward +infinity), `(int)` casts of doubles are Rust `as`
-//!   casts (both saturate, NaN -> 0). Integer arithmetic on box/octagon coordinates and hash codes
+//!   casts (both saturate, NaN -> 0). All sin/cos/acos/sqrt calls go through [`jmath`]
+//!   (`libm`, i.e. StrictMath/fdlibm semantics). Integer arithmetic on box/octagon coordinates and hash codes
 //!   wraps like Java; elsewhere normal (debug-checked) arithmetic is used.
 //! * `BigInteger` is `num_bigint::BigInt`. The general case of `Line::intersection` uses `i128`,
 //!   which is provably exact there (see the comment in that function).
@@ -47,6 +48,7 @@ pub mod int_point;
 pub mod int_vector;
 pub mod java_compat;
 pub mod java_sort;
+pub mod jmath;
 pub mod limits;
 pub mod line;
 pub mod line_segment;

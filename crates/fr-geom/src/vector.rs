@@ -8,6 +8,7 @@ use crate::float_point::FloatPoint;
 use crate::int_point::IntPoint;
 use crate::int_vector::IntVector;
 use crate::java_compat::{bigint_int_value, bigint_signum};
+use crate::jmath;
 use crate::limits::{crit_int_big, CRIT_INT};
 use crate::point::Point;
 use crate::rational_point::RationalPoint;
@@ -187,7 +188,7 @@ impl Vector {
     /// Returns an approximation of the signed angle between this vector and other
     /// (Java `angleApprox(Vector)`).
     pub fn angle_approx_to(&self, other: &Vector) -> f64 {
-        let mut result = crate::java_compat::strict_acos(self.cos_angle(other));
+        let mut result = jmath::acos(self.cos_angle(other));
         if self.side_of(other) == Side::OnTheLeft {
             result = -result;
         }

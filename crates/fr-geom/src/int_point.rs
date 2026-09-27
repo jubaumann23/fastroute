@@ -8,6 +8,7 @@ use crate::int_box::IntBox;
 use crate::int_octagon::IntOctagon;
 use crate::int_vector::IntVector;
 use crate::java_compat::{big, bigint_int_value, bigint_signum};
+use crate::jmath;
 use crate::line::Line;
 use crate::point::Point;
 use crate::rational_point::RationalPoint;
@@ -172,7 +173,7 @@ impl IntPoint {
 
     #[inline]
     pub fn distance(&self, to_point: &IntPoint) -> f64 {
-        self.distance_square(to_point).sqrt()
+        jmath::sqrt(self.distance_square(to_point))
     }
 
     /// Snaps this point onto the horizontal or vertical line through other.

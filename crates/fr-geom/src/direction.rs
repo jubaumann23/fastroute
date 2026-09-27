@@ -9,6 +9,7 @@ use crate::float_point::FloatPoint;
 use crate::int_direction::IntDirection;
 use crate::int_vector::IntVector;
 use crate::java_compat::math_round_i32;
+use crate::jmath;
 use crate::point::Point;
 use crate::side::Side;
 use crate::signum::Signum;
@@ -61,8 +62,8 @@ impl Direction {
     /// Creates a Direction whose angle with the x-axis is nearly equal to angle.
     pub fn get_instance_approx(angle: f64) -> Direction {
         let scale_factor = 10000.0;
-        let x = math_round_i32(angle.cos() * scale_factor);
-        let y = math_round_i32(angle.sin() * scale_factor);
+        let x = math_round_i32(jmath::cos(angle) * scale_factor);
+        let y = math_round_i32(jmath::sin(angle) * scale_factor);
         Self::get_instance(&Vector::Int(IntVector::new(x, y)))
     }
 
