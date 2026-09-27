@@ -228,11 +228,29 @@ impl<'a> Lexer<'a> {
             match self.src.get(self.pos) {
                 Some(&n) if n == q => buf.push(q),
                 Some(&n) if !is_delim(n) => {
-                    // `"quoted"suffix`
+                    // `"quoted"suffix`; the suffix may itself contain quoted
+                    // segments, e.g. `"J3 -+"-"_VBUS #22"`.
                     let quoted_len = buf.len();
-                    let start = self.pos;
-                    self.skip_bare();
-                    buf.extend_from_slice(&self.src[start..self.pos]);
+                    while let Some(&c) = self.src.get(self.pos) {
+                        if is_delim(c) {
+                            break;
+                        }
+                        self.pos += 1;
+                        if c != q {
+                            buf.push(c);
+                            continue;
+                        }
+                        while let Some(&c) = self.src.get(self.pos) {
+                            self.pos += 1;
+                            if c == q {
+                                break;
+                            }
+                            if c == b'\n' {
+                                self.line += 1;
+                            }
+                            buf.push(c);
+                        }
+                    }
                     let text = Self::text(&buf);
                     // Lossy conversion may change byte lengths; re-derive safely.
                     let quoted_len = text.is_char_boundary(quoted_len).then_some(quoted_len);
@@ -370,6 +388,12 @@ mod tests {
         assert_eq!(a.text, "CR2032-3V-2");
         assert_eq!(a.quoted_len, Some(9));
         assert_eq!(l.args()[1].as_atom().unwrap().text, "J2-2");
+
+        let l = one("(pins \"J3 -+\"-\"_VBUS #22\" X-1)");
+        let a = l.args()[0].as_atom().unwrap();
+        assert_eq!(a.text, "J3 -+-_VBUS #22");
+        assert_eq!(a.quoted_len, Some(5));
+        assert_eq!(l.args().len(), 2);
     }
 
     #[test]
