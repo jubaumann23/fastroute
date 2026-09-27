@@ -1,0 +1,15 @@
+[package]
+name = "fr-jcompat"
+description = "Bit-exact emulations of the Java library behaviour the Freerouting engine depends on"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[features]
+default = ["bigint"]
+# java.math.BigInteger helpers (hashCode, intValue, doubleValue) on top of num-bigint.
+bigint = ["dep:num-bigint", "dep:num-traits"]
+
+[dependencies]
+num-bigint = { version = "0.4", optional = true }
+num-traits = { version = "0.2", optional = true }
