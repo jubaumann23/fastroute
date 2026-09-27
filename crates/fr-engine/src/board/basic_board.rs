@@ -108,6 +108,7 @@ impl BasicBoard {
     /// Java `new BasicBoard(boundingBox, layerStructure, outlineShapes, outlineClClassNo, rules,
     /// communication)`. The library and components are passed in here (Java creates empty ones
     /// that the loader fills). Inserts the outline.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         bounding_box: IntBox,
         layer_structure: LayerStructure,
@@ -1312,10 +1313,8 @@ impl BasicBoard {
             let net_traces = self.net_polyline_traces(net_number);
             for trace in net_traces {
                 if self.item(trace).is_on_board() {
-                    if self.normalize_trace(trace, None) {
-                        something_changed = true;
-                        result = true;
-                    } else if !self.item(trace).is_user_fixed() && self.remove_if_cycle(trace) {
+                    // Java: `if (normalize(null)) {..} else if (!isUserFixed() && removeIfCycle(..)) {..}`
+                    if self.normalize_trace(trace, None) || (!self.item(trace).is_user_fixed() && self.remove_if_cycle(trace)) {
                         something_changed = true;
                         result = true;
                     }
@@ -1363,10 +1362,8 @@ impl BasicBoard {
                 something_changed = false;
                 for &trace in &net_traces {
                     if self.item(trace).is_on_board() {
-                        if self.normalize_trace(trace, None) {
-                            something_changed = true;
-                            result = true;
-                        } else if !self.item(trace).is_user_fixed() && self.remove_if_cycle(trace) {
+                        // Java: `if (normalize(null)) {..} else if (!isUserFixed() && removeIfCycle(..)) {..}`
+                        if self.normalize_trace(trace, None) || (!self.item(trace).is_user_fixed() && self.remove_if_cycle(trace)) {
                             something_changed = true;
                             result = true;
                         }

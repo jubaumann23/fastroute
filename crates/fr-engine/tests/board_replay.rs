@@ -291,7 +291,11 @@ fn fnv(lines: &[String]) -> String {
 // ------------------------------------------------------------------------------------------------
 // replay
 
+type PadstackDef = (String, bool, bool, bool, Vec<Option<ConvexShape>>);
+type ComponentDef = (String, Option<Point>, f64, bool, i32, i32, bool);
+
 struct Setup {
+    variant: JavaVariant,
     layers: Vec<Layer>,
     bbox: IntBox,
     unit: Unit,
@@ -305,14 +309,15 @@ struct Setup {
     cl_rows: Vec<(i32, i32, i32, Vec<i32>)>,
     net_classes: Vec<(String, bool, bool, bool, bool)>,
     nets: Vec<(String, i32, i32, bool)>,
-    padstacks: Vec<(String, bool, bool, bool, Vec<Option<ConvexShape>>)>,
+    padstacks: Vec<PadstackDef>,
     packages: Vec<(String, bool, Vec<PackagePin>)>,
-    components: Vec<(String, Option<Point>, f64, bool, i32, i32, bool)>,
+    components: Vec<ComponentDef>,
 }
 
 impl Setup {
     fn new() -> Self {
         Setup {
+            variant: JavaVariant::Source,
             layers: Vec::new(),
             bbox: IntBox::EMPTY,
             unit: Unit::Mil,
@@ -461,6 +466,9 @@ fn execute(board_opt: &mut Option<BasicBoard>, setup: &mut Setup, full: &mut boo
     if board_opt.is_none() {
         match op {
             "MODE" => *full = t.next() == "full",
+            "VARIANT" => {
+                setup.variant = if t.next() == "jar241" { JavaVariant::Jar241 } else { JavaVariant::Source };
+            }
             "LAYERS" => {
                 let n = t.i32();
                 for _ in 0..n {
@@ -567,8 +575,7 @@ fn execute(board_opt: &mut Option<BasicBoard>, setup: &mut Setup, full: &mut boo
                 let cl = t.i32();
                 let shapes: Vec<PolylineShape> = (0..n).map(|_| t.polyline_shape()).collect();
                 let mut board = setup.build_board(shapes, cl);
-                // the vectors come from the 2.4.1 jar
-                board.java_variant = JavaVariant::Jar241;
+                board.java_variant = setup.variant;
                 *board_opt = Some(board);
             }
             _ => panic!("unexpected setup op {op}"),

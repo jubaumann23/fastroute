@@ -1341,10 +1341,11 @@ impl BasicBoard {
             tree.set_shapes(end_piece, end_shapes);
             end_leaves[0] = tree.insert_item_shape(end_piece, end_id, 0);
             let end_object = TreeObject::Item { key: end_piece, id: end_id };
-            for i in 1..end_len {
-                let from_index = from_entries.len() - end_len + i;
-                end_leaves[i] = from_entries[from_index];
-                if let Some(l) = end_leaves[i] {
+            let from_len = from_entries.len();
+            for (i, end_leaf) in end_leaves.iter_mut().enumerate().skip(1) {
+                let from_index = from_len - end_len + i;
+                *end_leaf = from_entries[from_index];
+                if let Some(l) = *end_leaf {
                     tree.tree.set_leaf_object(l, end_object);
                     tree.tree.set_leaf_shape_index(l, i as i32);
                 }

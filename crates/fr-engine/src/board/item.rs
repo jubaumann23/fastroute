@@ -1312,7 +1312,7 @@ fn is_all_digits(s: &str) -> bool {
 fn is_unicode_decimal_digit(c: char) -> bool {
     // Character.isDigit is true for Unicode category Nd. `char::is_numeric` also covers Nl/No,
     // so restrict to characters that have a decimal digit value in common Nd blocks.
-    matches!(c, '0'..='9')
+    c.is_ascii_digit()
         || ('\u{0660}'..='\u{0669}').contains(&c)
         || ('\u{06F0}'..='\u{06F9}').contains(&c)
         || ('\u{0966}'..='\u{096F}').contains(&c)

@@ -1,10 +1,11 @@
 // Ground-truth generator for fr-engine::board (porting unit U5), using the real Freerouting
-// classes of reference/bin/freerouting-2.4.1.jar.
+// classes of reference/bin/freerouting-parity.jar (built from the reference source; the 2.4.1
+// jar also works and produces vectors for JavaVariant::Jar241).
 //
 // Regenerate (from the workspace root):
 //   J=reference/jdk25/bin; D=crates/fr-engine/testdata/board; F=reference/freerouting/fixtures
-//   $J/javac -cp reference/bin/freerouting-2.4.1.jar -d /tmp/boardgen $D/BoardGen.java
-//   run() { $J/java -cp reference/bin/freerouting-2.4.1.jar:/tmp/boardgen BoardGen "$@"; }
+//   $J/javac -cp reference/bin/freerouting-parity.jar -d /tmp/boardgen $D/BoardGen.java
+//   run() { $J/java -cp reference/bin/freerouting-parity.jar:/tmp/boardgen BoardGen "$@"; }
 //   run $F/Issue313-FastTest.dsn - 45 1 full > $D/issue313.txt
 //   run $F/Issue313-FastTest.dsn $F/Issue313-FastTest.ses 45c 2 brief > $D/issue313_ses_comp.txt
 //   run $F/Issue229-display-8-digit-hc595.dsn - 90 3 brief > $D/issue229_90.txt
@@ -91,6 +92,14 @@ public class BoardGen {
     List<Item> aItems = new ArrayList<>(a.getItems());
     aItems.sort(Comparator.comparingInt(Item::getId));
     op("MODE " + (full ? "full" : "brief"));
+    boolean source;
+    try {
+      BoardOutline.class.getMethod("blocksNets", int[].class);
+      source = true;
+    } catch (NoSuchMethodException e) {
+      source = false;
+    }
+    op("VARIANT " + (source ? "source" : "jar241"));
     emitSetup(a);
 
     // ---- board B

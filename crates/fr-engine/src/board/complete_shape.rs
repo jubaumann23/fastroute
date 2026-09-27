@@ -101,7 +101,7 @@ impl BasicBoard {
                             && ignore_shape.map(|s| s.contains_tile_shape(&intersection)).unwrap_or(false);
                         if !ignore_room {
                             something_changed = true;
-                            new_result.extend(self.restrain_shape_default(&current, &object_shape));
+                            new_result.extend(Self::restrain_shape_default(&current, &object_shape));
                         }
                     }
                     if !something_changed {
@@ -115,7 +115,7 @@ impl BasicBoard {
         divide_large_room(TreeKind::Default, result, &self.bounding_box)
     }
 
-    fn restrain_shape_default(&self, incomplete_room: &IncompleteFreeSpaceExpansionRoom, obstacle_shape: &TileShape) -> Vec<IncompleteFreeSpaceExpansionRoom> {
+    fn restrain_shape_default(incomplete_room: &IncompleteFreeSpaceExpansionRoom, obstacle_shape: &TileShape) -> Vec<IncompleteFreeSpaceExpansionRoom> {
         let mut result = Vec::new();
         // Always convert to Simplex (border lines of length 0 of octagons)
         let obstacle_simplex = TileShape::Simplex(obstacle_shape.to_simplex());
@@ -183,7 +183,7 @@ impl BasicBoard {
         if rest_piece.dimension() >= 2 {
             let rest_contained = shape_to_be_contained.intersection(&opposite_half_plane);
             let rest_room = IncompleteFreeSpaceExpansionRoom::new(Some(rest_piece), layer, Some(rest_contained));
-            result.extend(self.restrain_shape_default(&rest_room, obstacle_shape));
+            result.extend(Self::restrain_shape_default(&rest_room, obstacle_shape));
         }
         result
     }
@@ -261,7 +261,7 @@ impl BasicBoard {
                             }
                         }
                     }
-                    let restrained = self.restrain_shape_45(&current_room, &object_shape);
+                    let restrained = Self::restrain_shape_45(&current_room, &object_shape);
                     new_result.extend(restrained);
                     for tmp in &new_result {
                         new_bounding_shape = new_bounding_shape.union_int_octagon(tmp.shape.as_ref().unwrap().as_int_octagon().unwrap());
@@ -280,7 +280,7 @@ impl BasicBoard {
         result
     }
 
-    fn restrain_shape_45(&self, incomplete_room: &IncompleteFreeSpaceExpansionRoom, obstacle_shape: &IntOctagon) -> Vec<IncompleteFreeSpaceExpansionRoom> {
+    fn restrain_shape_45(incomplete_room: &IncompleteFreeSpaceExpansionRoom, obstacle_shape: &IntOctagon) -> Vec<IncompleteFreeSpaceExpansionRoom> {
         let mut result = Vec::new();
         let Some(contained) = &incomplete_room.contained_shape else {
             return result;
@@ -372,7 +372,7 @@ impl BasicBoard {
             let rest_contained = TileShape::IntOctagon(shape_to_be_contained).intersection(&TileShape::IntOctagon(rest_piece));
             if rest_contained.dimension() >= 0 {
                 let rest_room = IncompleteFreeSpaceExpansionRoom::new(Some(TileShape::IntOctagon(rest_piece)), incomplete_room.layer, Some(rest_contained));
-                result.extend(self.restrain_shape_45(&rest_room, obstacle_shape));
+                result.extend(Self::restrain_shape_45(&rest_room, obstacle_shape));
             }
         }
         result
