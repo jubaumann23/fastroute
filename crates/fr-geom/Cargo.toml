@@ -1,0 +1,12 @@
+[package]
+name = "fr-geom"
+description = "Faithful Rust port of the Freerouting planar geometry package (app.freerouting.geometry.planar)"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+log = "0.4"
+num-bigint = "0.4"
+num-integer = "0.1"
+num-traits = "0.2"

@@ -17,6 +17,16 @@ name = "fr-dsn"
 version = "0.1.0"
 
 [[package]]
+name = "fr-engine"
+version = "0.1.0"
+dependencies = [
+ "fr-geom",
+ "fr-jcompat",
+ "fr-settings",
+ "log",
+]
+
+[[package]]
 name = "fr-geom"
 version = "0.1.0"
 dependencies = [
