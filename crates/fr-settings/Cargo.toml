@@ -1,0 +1,9 @@
+[package]
+name = "fr-settings"
+description = "Router settings of the Freerouting port (unit U10)"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+fr-dsn = { path = "../fr-dsn" }
