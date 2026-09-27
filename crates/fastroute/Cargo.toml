@@ -1,7 +1,10 @@
 [package]
 name = "fastroute"
+description = "Command-line PCB autorouter (Rust port of Freerouting)"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
 
 [dependencies]
+fr-dsn = { path = "../fr-dsn" }
+fr-settings = { path = "../fr-settings" }
