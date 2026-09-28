@@ -5,7 +5,6 @@
 //! `ShapeTraceEntries.nextSubstituteTracePiece`, not yet on the board) are [`Item`] values here;
 //! their tree shapes are calculated on demand like Java does for items outside the trees.
 
-use std::sync::Arc;
 
 use fr_geom::{ConvexShape, Direction, IntBox, LineSegment, TileShape};
 
@@ -24,11 +23,6 @@ use super::tracked::{BorderLines, TLine, TPolyline};
 /// Java `TraceShover` (stateless; the functions take the board).
 pub struct TraceShover;
 
-/// `trace.getTreeShape(defaultTree, index)` of a substitute trace not in the trees.
-pub(crate) fn substitute_tree_shapes(board: &RoutingBoard, trace: &Item) -> Arc<[Option<TileShape>]> {
-    board.calculate_tree_shapes(board.default_tree(), trace)
-}
-
 /// Java `trace.getCompensatedHalfWidth(defaultTree)`.
 pub(crate) fn compensated_half_width(board: &RoutingBoard, trace: &Item) -> i32 {
     let t = trace.trace();
@@ -37,8 +31,13 @@ pub(crate) fn compensated_half_width(board: &RoutingBoard, trace: &Item) -> i32 
 
 /// Java `new ShapeAndEntrySide(substituteTrace, index, orthogonal, inShoveCheck)`.
 pub(crate) fn shape_and_entry_side(board: &RoutingBoard, trace: &Item, index: i32, orthogonal: bool, in_shove_check: bool) -> ShapeAndEntrySide {
-    let shapes = substitute_tree_shapes(board, trace);
-    let tree_shape = shapes[index as usize].clone().expect("ShapeAndEntrySide: tree shape is null");
+    // only shape `index` of `substitute_tree_shapes` (the tree shapes of a trace are computed
+    // independently of each other)
+    let tree = board.default_tree();
+    let t = trace.trace();
+    assert!(index >= 0 && index < t.tile_shape_count(), "ShapeAndEntrySide: shape index out of range");
+    let offset_width = t.half_width + tree.clearance_compensation_value(&board.rules, trace.clearance_class, t.layer);
+    let tree_shape = tree.offset_shape(&t.polyline, offset_width, index).expect("ShapeAndEntrySide: tree shape is null");
     ShapeAndEntrySide::new(&tree_shape, trace.trace().polyline(), compensated_half_width(board, trace), index, orthogonal, in_shove_check)
 }
 

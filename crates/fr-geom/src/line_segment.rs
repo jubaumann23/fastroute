@@ -182,7 +182,7 @@ impl LineSegment {
         }
         // create a perpendicular line at point and check, that the two endpoints of this
         // segment are on different sides of that line.
-        let perpendicular_direction = self.middle.direction_ref().turn_45_degree(2);
+        let perpendicular_direction = self.middle.direction().turn_45_degree(2);
         let perpendicular_line = Line::from_point_direction(point.clone(), perpendicular_direction);
         let start_point_side = perpendicular_line.side_of(&self.start_point());
         let end_point_side = perpendicular_line.side_of(&self.end_point());
@@ -231,7 +231,7 @@ impl LineSegment {
         let new_end_point = self
             .start_point_approx()
             .change_length(&self.end_point_approx(), new_length);
-        let perpendicular_direction = self.middle.direction_ref().turn_45_degree(2);
+        let perpendicular_direction = self.middle.direction().turn_45_degree(2);
         let new_end_line =
             Line::from_point_direction(Point::Int(new_end_point.round()), perpendicular_direction);
         LineSegment::new(self.start.clone(), self.middle.clone(), new_end_line)

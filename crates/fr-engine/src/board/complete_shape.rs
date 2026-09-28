@@ -14,7 +14,7 @@ use crate::datastructures::TreeCursor;
 use crate::ids::NetNo;
 
 use super::basic_board::BasicBoard;
-use super::search_tree::{TreeKind, TreeObject};
+use super::search_tree::{layer_bit, sort_leaves_canonical, TreeKind, TreeObject};
 
 impl BasicBoard {
     /// Java `ShapeSearchTree.completeShape(room, netNumber, ignoreObject, ignoreShape)` of tree
@@ -27,6 +27,15 @@ impl BasicBoard {
         ignore_object: Option<TreeObject>,
         ignore_shape: Option<&TileShape>,
     ) -> Vec<IncompleteFreeSpaceExpansionRoom> {
+        if super::connectivity::verify_caches() {
+            thread_local!(static CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) });
+            if CALLS.with(|c| {
+                c.set(c.get() + 1);
+                c.get() % 256 == 1
+            }) {
+                self.verify_leaf_masks(t);
+            }
+        }
         match self.search_tree(t).kind {
             TreeKind::Default => self.complete_shape_default(t, room, net_number, ignore_object, ignore_shape),
             TreeKind::FortyfiveDegree => self.complete_shape_45(t, room, net_number, ignore_object, ignore_shape),
@@ -75,14 +84,20 @@ impl BasicBoard {
             result.push(IncompleteFreeSpaceExpansionRoom::new(Some(start_shape.clone()), room.layer, Some(contained)));
         }
         // collect in traversal order, then sort (Java sorts with Leaf.compareTo)
-        let mut cursor = TreeCursor::new();
-        cursor.start(&tree.tree);
-        let mut leaves = Vec::new();
-        while let Some(leaf) = cursor.next_leaf(&tree.tree, &bounding_shape) {
-            leaves.push(leaf);
-        }
-        leaves.sort_by(|a, b| tree.tree.compare_leaves(*a, *b, |x, y| x.java_cmp(y)));
         let room_layer = room.layer;
+        // Only leaves on the room layer are processed below: skip the others (leaf masks) and
+        // sort canonically, unless the order would depend on the traversal order.
+        let mut leaves = Vec::new();
+        tree.tree.overlapping_leaves_masked(&bounding_shape, layer_bit(room_layer), &mut Vec::new(), &mut leaves);
+        if !sort_leaves_canonical(&tree.tree, &mut leaves) {
+            let mut cursor = TreeCursor::new();
+            cursor.start(&tree.tree);
+            leaves.clear();
+            while let Some(leaf) = cursor.next_leaf(&tree.tree, &bounding_shape) {
+                leaves.push(leaf);
+            }
+            leaves.sort_by(|a, b| tree.tree.compare_leaves(*a, *b, |x, y| x.java_cmp(y)));
+        }
         for leaf in leaves {
             let l = tree.tree.leaf(leaf).unwrap();
             let object = l.object;
@@ -227,7 +242,8 @@ impl BasicBoard {
         )];
         let mut cursor = TreeCursor::new();
         cursor.start(&tree.tree);
-        while let Some(leaf) = cursor.next_leaf(&tree.tree, &fr_geom::RegularTileShape::IntOctagon(bounding_shape)) {
+        let layer_mask = layer_bit(room_layer);
+        while let Some(leaf) = cursor.next_leaf_masked(&tree.tree, &fr_geom::RegularTileShape::IntOctagon(bounding_shape), layer_mask) {
             let l = tree.tree.leaf(leaf).unwrap();
             let object = l.object;
             let shape_index = l.shape_index_in_object;
@@ -415,7 +431,8 @@ impl BasicBoard {
         )];
         let mut cursor = TreeCursor::new();
         cursor.start(&tree.tree);
-        while let Some(leaf) = cursor.next_leaf(&tree.tree, &fr_geom::RegularTileShape::IntBox(bounding_shape)) {
+        let layer_mask = layer_bit(room_layer);
+        while let Some(leaf) = cursor.next_leaf_masked(&tree.tree, &fr_geom::RegularTileShape::IntBox(bounding_shape), layer_mask) {
             let l = tree.tree.leaf(leaf).unwrap();
             let object = l.object;
             let shape_index = l.shape_index_in_object;

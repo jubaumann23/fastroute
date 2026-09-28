@@ -359,7 +359,8 @@ impl IntBox {
     }
 
     pub fn intersects_simplex(&self, other: &Simplex) -> bool {
-        other.intersects_simplex(&self.to_simplex())
+        // other.intersects(this.toSimplex())
+        other.intersects_int_box(self)
     }
 
     pub fn intersects_circle(&self, other: &Circle) -> bool {
@@ -554,13 +555,17 @@ impl IntBox {
         if self.is_empty() {
             return Simplex::new(Vec::new());
         }
-        let lines = vec![
+        Simplex::new(self.simplex_lines().to_vec())
+    }
+
+    /// The 4 lines of [`Self::to_simplex`] for a non-empty box.
+    pub fn simplex_lines(&self) -> [Line; 4] {
+        [
             Line::get_instance(Point::Int(self.ll), &IntDirection::RIGHT.to_direction()),
             Line::get_instance(Point::Int(self.ur), &IntDirection::UP.to_direction()),
             Line::get_instance(Point::Int(self.ur), &IntDirection::LEFT.to_direction()),
             Line::get_instance(Point::Int(self.ll), &IntDirection::DOWN.to_direction()),
-        ];
-        Simplex::new(lines)
+        ]
     }
 
     /// Checks if this box is contained in other.

@@ -25,6 +25,8 @@ use super::item::{Item, ItemKey};
 struct Slot {
     generation: u32,
     item: Option<Item>,
+    /// Content version of the item (see [`ItemRepository::version`]).
+    version: u64,
 }
 
 /// Ordered map `descending id -> key` (Java `TreeSet<Item>` / the item list order).
@@ -131,6 +133,11 @@ pub struct ItemRepository {
     by_id: HashMap<i32, ItemKey>,
     by_net: HashMap<NetNo, IdOrderedMap>,
     by_component: HashMap<ComponentNo, IdOrderedMap>,
+    /// Content epoch (see [`super::epoch`]): renewed by every `&mut` method.
+    epoch: u64,
+    /// Epoch of the board data outside the items that item properties depend on (components,
+    /// library, rules), renewed by [`Self::touch_global`].
+    global_epoch: u64,
 }
 
 impl ItemRepository {
@@ -138,16 +145,61 @@ impl ItemRepository {
         Self::default()
     }
 
+    /// The content epoch (see [`super::epoch`]).
+    #[inline]
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// The epoch of the board data outside the items (see [`Self::touch_global`]).
+    #[inline]
+    pub fn global_epoch(&self) -> u64 {
+        self.global_epoch
+    }
+
+    /// Called on mutable access to the components, library or rules.
+    pub(crate) fn touch_global(&mut self) {
+        self.touch();
+        self.global_epoch = self.epoch;
+    }
+
+    #[inline]
+    pub(crate) fn touch(&mut self) {
+        self.epoch = super::epoch::next_epoch();
+    }
+
     /// Adds an item to the arena (not to the list) and returns its key.
     pub fn alloc(&mut self, item: Item) -> ItemKey {
+        self.touch();
+        let version = self.epoch;
         if let Some(index) = self.free.pop() {
             let slot = &mut self.slots[index as usize];
             slot.item = Some(item);
+            slot.version = version;
             ItemKey { index, generation: slot.generation }
         } else {
             let index = self.slots.len() as u32;
-            self.slots.push(Slot { generation: 0, item: Some(item) });
+            self.slots.push(Slot { generation: 0, item: Some(item), version });
             ItemKey { index, generation: 0 }
+        }
+    }
+
+    /// Content version of an item: a process-wide unique number (see [`super::epoch`]) renewed
+    /// by every `&mut` access to the item and by changes of its search tree entries, so equal
+    /// versions of a key denote equal item content (also across board clones).
+    #[inline]
+    pub fn version(&self, key: ItemKey) -> u64 {
+        self.slots[key.index as usize].version
+    }
+
+    /// Renews the version of an item (its search tree entries changed).
+    pub(crate) fn touch_item(&mut self, key: ItemKey) {
+        self.touch();
+        let epoch = self.epoch;
+        if let Some(slot) = self.slots.get_mut(key.index as usize) {
+            if slot.generation == key.generation {
+                slot.version = epoch;
+            }
         }
     }
 
@@ -170,8 +222,11 @@ impl ItemRepository {
     /// [`Self::set_nets`]), the indexes would get inconsistent.
     #[inline]
     pub(crate) fn get_mut(&mut self, key: ItemKey) -> &mut Item {
+        self.touch();
+        let epoch = self.epoch;
         let slot = &mut self.slots[key.index as usize];
         assert!(slot.generation == key.generation, "ItemRepository: stale item key");
+        slot.version = epoch;
         slot.item.as_mut().expect("ItemRepository: freed item")
     }
 
@@ -186,6 +241,7 @@ impl ItemRepository {
     /// Java `UndoableObjects.insert`: puts the item into the list (replacing an entry with the
     /// same id, like `ConcurrentSkipListMap.put`).
     pub fn list_insert(&mut self, key: ItemKey) {
+        self.touch();
         let (id, nets, component) = {
             let item = self.get(key);
             (item.id().0, item.net_numbers().to_vec(), item.component_no())
@@ -205,6 +261,7 @@ impl ItemRepository {
     }
 
     fn unindex(&mut self, key: ItemKey, id: i32) {
+        self.touch();
         let (nets, component) = {
             let item = self.get(key);
             (item.net_numbers().to_vec(), item.component_no())
@@ -226,6 +283,7 @@ impl ItemRepository {
     /// Java `UndoableObjects.delete`: removes the entry with the item's id from the list.
     /// Returns false if no such entry exists.
     pub fn list_remove(&mut self, key: ItemKey) -> bool {
+        self.touch();
         let id = self.get(key).id().0;
         let Some(listed) = self.list.remove(&Reverse(id)) else {
             return false;
@@ -247,6 +305,7 @@ impl ItemRepository {
 
     /// Changes the nets of an item, keeping the indexes consistent.
     pub(crate) fn set_nets(&mut self, key: ItemKey, nets: Vec<NetNo>) {
+        self.touch();
         let listed = self.is_listed(key);
         let id = self.get(key).id().0;
         if listed {
@@ -260,6 +319,7 @@ impl ItemRepository {
 
     /// Changes the component of an item, keeping the indexes consistent.
     pub(crate) fn set_component(&mut self, key: ItemKey, component: ComponentNo) {
+        self.touch();
         let listed = self.is_listed(key);
         let id = self.get(key).id().0;
         if listed {
@@ -329,6 +389,7 @@ impl ItemRepository {
     /// items become stale (and their slots are reused). Call only at a point where no removed
     /// item is referenced any more.
     pub fn compact(&mut self) -> Vec<ItemKey> {
+        self.touch();
         let mut freed = Vec::new();
         for (index, slot) in self.slots.iter_mut().enumerate() {
             let Some(item) = &slot.item else { continue };

@@ -6,6 +6,11 @@
 //! explicit stack that visits the contacts in the same order (depth first, contacts in
 //! `TreeSet` order), so deep nets cannot overflow the stack.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+use std::sync::OnceLock;
+
 use fr_geom::{ConvexShape, FloatPoint, Point, TileShape};
 
 use crate::ids::{FixedState, ItemId, LayerNo, NetNo};
@@ -14,6 +19,48 @@ use super::basic_board::BasicBoard;
 use super::item::{Item, ItemKey, ItemKind, StopConnectionOption};
 use super::item_list::ItemSet;
 use super::search_tree::TreeObject;
+
+thread_local! {
+    static CONTACTS: RefCell<ContactsCache> = RefCell::new(ContactsCache::default());
+}
+
+/// Per thread cache of normal contacts for the last few board contents (keyed by the epochs of
+/// the item repository and the default tree).
+#[derive(Default)]
+struct ContactsCache {
+    slots: Vec<((u64, u64), ContactsMap)>,
+}
+
+type ContactsMap = HashMap<ItemKey, Rc<[ItemKey]>>;
+
+const CONTACTS_CACHE_SLOTS: usize = 4;
+
+impl ContactsCache {
+    fn get(&mut self, epochs: (u64, u64), key: ItemKey) -> Option<Rc<[ItemKey]>> {
+        let slot = self.slots.iter().find(|(e, _)| *e == epochs)?;
+        slot.1.get(&key).cloned()
+    }
+
+    fn put(&mut self, epochs: (u64, u64), key: ItemKey, value: Rc<[ItemKey]>) {
+        let pos = match self.slots.iter().position(|(e, _)| *e == epochs) {
+            Some(p) => p,
+            None => {
+                if self.slots.len() >= CONTACTS_CACHE_SLOTS {
+                    self.slots.remove(0);
+                }
+                self.slots.push((epochs, HashMap::new()));
+                self.slots.len() - 1
+            }
+        };
+        self.slots[pos].1.insert(key, value);
+    }
+}
+
+/// `FASTROUTE_VERIFY_CACHES=1`: recompute every cached result and assert that it is unchanged.
+pub(crate) fn verify_caches() -> bool {
+    static V: OnceLock<bool> = OnceLock::new();
+    *V.get_or_init(|| std::env::var_os("FASTROUTE_VERIFY_CACHES").is_some_and(|v| v != "0"))
+}
 
 /// Java `Item.PROTECT_FANOUT_LENGTH`.
 const PROTECT_FANOUT_LENGTH: f64 = 400.0;
@@ -66,6 +113,32 @@ impl BasicBoard {
 
     /// Java `getNormalContacts()` (dispatching on the item class).
     pub fn normal_contacts(&self, key: ItemKey) -> ItemSet {
+        let mut result = ItemSet::new();
+        for &k in self.normal_contacts_keys(key).iter() {
+            result.insert(self.item(k).id(), k);
+        }
+        result
+    }
+
+    /// The keys of [`Self::normal_contacts`] in set order, memoized per board content (see
+    /// [`super::epoch`]): the contacts of an item depend only on the items and the item entries
+    /// of the default search tree.
+    pub fn normal_contacts_keys(&self, key: ItemKey) -> Rc<[ItemKey]> {
+        let epochs = (self.items.epoch(), self.default_tree().item_epoch());
+        if let Some(hit) = CONTACTS.with(|c| c.borrow_mut().get(epochs, key)) {
+            if verify_caches() {
+                let fresh: Vec<ItemKey> = self.normal_contacts_uncached(key).iter().collect();
+                assert_eq!(&fresh[..], &hit[..], "normal contacts cache out of date");
+            }
+            return hit;
+        }
+        let keys: Rc<[ItemKey]> = self.normal_contacts_uncached(key).iter().collect();
+        CONTACTS.with(|c| c.borrow_mut().put(epochs, key, keys.clone()));
+        keys
+    }
+
+    /// Java `getNormalContacts()` computed without the cache.
+    pub fn normal_contacts_uncached(&self, key: ItemKey) -> ItemSet {
         let this = self.item(key);
         match &this.kind {
             ItemKind::Trace(_) => {
@@ -214,7 +287,7 @@ impl BasicBoard {
         }
         result.insert(this.id(), key);
         // iterative version of getConnectedSetRecu
-        let mut stack: Vec<(Vec<ItemKey>, usize)> = vec![(self.normal_contacts(key).iter().collect(), 0)];
+        let mut stack: Vec<(Rc<[ItemKey]>, usize)> = vec![(self.normal_contacts_keys(key), 0)];
         while let Some((contacts, pos)) = stack.last_mut() {
             if *pos >= contacts.len() {
                 stack.pop();
@@ -230,7 +303,7 @@ impl BasicBoard {
                 continue;
             }
             if result.insert(c.id(), contact) {
-                stack.push((self.normal_contacts(contact).iter().collect(), 0));
+                stack.push((self.normal_contacts_keys(contact), 0));
             }
         }
         result

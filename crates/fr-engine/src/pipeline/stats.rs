@@ -4,10 +4,14 @@
 //! on an unchanged board. [`BoardStatistics`] is a pure function of the board content, so the
 //! pipeline keeps the last result keyed by [`board_hash`](super::history::board_hash).
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+
 use fr_settings::RouterSettings;
 
-use crate::board::BasicBoard;
-use crate::drc::DesignRulesChecker;
+use crate::board::connectivity::verify_caches;
+use crate::board::{BasicBoard, ItemKey};
+use crate::drc::NetIncompletes;
 use crate::ids::NetNo;
 use crate::scoring::BoardStatistics;
 
@@ -56,13 +60,77 @@ impl StatsCache {
 }
 
 /// Java `BatchAutorouter.calculateIncompleteCount(board, incompleteNets)`.
+///
+/// The incomplete count of a net (`NetIncompletes.count()`) depends only on the connectable
+/// items of the net (their contacts are items of the same net), so it is memoized per net,
+/// keyed by the keys and content versions of these items (see [`ItemRepository::version`]).
+/// The optimizer counts the incompletes before and after every candidate, on boards that
+/// differ in a few nets only.
+///
+/// [`ItemRepository::version`]: crate::board::ItemRepository::version
 pub fn incomplete_count(board: &BasicBoard, incomplete_nets: Option<&mut std::collections::BTreeSet<NetNo>>) -> i32 {
-    let mut drc = DesignRulesChecker::new();
-    drc.calculate_all_incompletes(board);
-    if let Some(nets) = incomplete_nets {
-        nets.extend(drc.incomplete_net_numbers(board));
+    // the net item lists of `DesignRulesChecker.calculateAllIncompletes`
+    let max_net_no = board.rules.nets.max_net_number().max(0) as usize;
+    let mut net_item_lists: Vec<Vec<ItemKey>> = vec![Vec::new(); max_net_no];
+    for key in board.items.iter() {
+        let item = board.item(key);
+        if item.is_connectable_class() {
+            for &n in item.net_numbers() {
+                if n >= 1 && (n as usize) <= max_net_no {
+                    net_item_lists[n as usize - 1].push(key);
+                }
+            }
+        }
     }
-    drc.get_incomplete_count(board)
+    let global = board.items.global_epoch();
+    let mut total = 0i32;
+    let mut incomplete: Vec<NetNo> = Vec::new();
+    NET_COUNTS.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        for (i, list) in net_item_lists.iter().enumerate() {
+            let net_no = i as NetNo + 1;
+            let key: Vec<(ItemKey, u64)> = list.iter().map(|&k| (k, board.items.version(k))).collect();
+            let entries = memo.entry(net_no).or_default();
+            let cached = entries.iter().find(|e| e.global == global && e.items == key).map(|e| e.count);
+            let count = match cached {
+                Some(c) => {
+                    if verify_caches() {
+                        assert_eq!(c, NetIncompletes::new(board, net_no, list).count(), "net incompletes cache out of date");
+                    }
+                    c
+                }
+                None => {
+                    let c = NetIncompletes::new(board, net_no, list).count();
+                    if entries.len() >= NET_COUNT_SLOTS {
+                        entries.remove(0);
+                    }
+                    entries.push(NetCount { global, items: key, count: c });
+                    c
+                }
+            };
+            total = total.wrapping_add(count);
+            if count > 0 {
+                incomplete.push(net_no);
+            }
+        }
+    });
+    if let Some(nets) = incomplete_nets {
+        nets.extend(incomplete);
+    }
+    total
+}
+
+struct NetCount {
+    global: u64,
+    items: Vec<(ItemKey, u64)>,
+    count: i32,
+}
+
+/// Entries kept per net (the optimizer alternates between the baseline and a candidate).
+const NET_COUNT_SLOTS: usize = 3;
+
+thread_local! {
+    static NET_COUNTS: RefCell<HashMap<NetNo, Vec<NetCount>>> = RefCell::new(HashMap::new());
 }
 
 /// Java `FRLogger.formatScore(score, incomplete, violations)`.

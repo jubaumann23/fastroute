@@ -26,6 +26,16 @@ pub fn sort_by<T: Clone, F: FnMut(&T, &T) -> i32>(v: &mut [T], mut compare_to: F
     v.clone_from_slice(&sorted);
 }
 
+/// Sorts the index array `idx` exactly like [`sort_by`] sorts the elements the indices refer
+/// to: `compare_to(x, y)` compares the elements with indices `x` and `y`. Allocation free for
+/// fewer than 32 elements (binary insertion sort, like Java).
+pub fn sort_indices_by<F: FnMut(usize, usize) -> i32>(idx: &mut [usize], mut compare_to: F) {
+    if idx.len() < 2 {
+        return;
+    }
+    tim_sort(idx, &mut compare_to);
+}
+
 fn tim_sort<C: FnMut(usize, usize) -> i32>(a: &mut [usize], c: &mut C) {
     let hi = a.len();
     let mut lo = 0usize;

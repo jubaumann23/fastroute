@@ -1,5 +1,6 @@
 //! Port of `Line.java`: directed lines in the plane defined by two points.
 
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::OnceLock;
 
 use crate::direction::Direction;
@@ -31,7 +32,61 @@ use num_traits::One;
 pub struct Line {
     pub a: Point,
     pub b: Point,
-    dir: OnceLock<Direction>,
+    dir: DirCache,
+}
+
+/// Lazily computed direction of a line. `IntDirection`s (the normal case) are cached in atomics,
+/// which are much cheaper to initialize and to clone than a `OnceLock`; other directions in a
+/// `OnceLock`.
+#[derive(Default)]
+struct DirCache {
+    /// 1 if `packed` holds the direction.
+    int_set: AtomicU8,
+    /// `IntDirection` x (high 32 bits) and y (low 32 bits).
+    packed: AtomicU64,
+    other: OnceLock<Direction>,
+}
+
+impl DirCache {
+    #[inline]
+    fn with(dir: Direction) -> DirCache {
+        let cache = DirCache::default();
+        cache.store(dir);
+        cache
+    }
+
+    #[inline]
+    fn store(&self, dir: Direction) {
+        match dir {
+            Direction::Int(d) => {
+                self.packed.store(((d.x as u32 as u64) << 32) | d.y as u32 as u64, Ordering::Relaxed);
+                self.int_set.store(1, Ordering::Release);
+            }
+            other => {
+                let _ = self.other.set(other);
+            }
+        }
+    }
+
+    #[inline]
+    fn get(&self) -> Option<Direction> {
+        if self.int_set.load(Ordering::Acquire) == 1 {
+            let p = self.packed.load(Ordering::Relaxed);
+            return Some(Direction::Int(IntDirection::new((p >> 32) as u32 as i32, p as u32 as i32)));
+        }
+        self.other.get().cloned()
+    }
+}
+
+impl Clone for DirCache {
+    #[inline]
+    fn clone(&self) -> DirCache {
+        DirCache {
+            int_set: AtomicU8::new(self.int_set.load(Ordering::Acquire)),
+            packed: AtomicU64::new(self.packed.load(Ordering::Relaxed)),
+            other: self.other.clone(),
+        }
+    }
 }
 
 impl std::fmt::Debug for Line {
@@ -52,7 +107,7 @@ impl Line {
         Line {
             a,
             b,
-            dir: OnceLock::new(),
+            dir: DirCache::default(),
         }
     }
 
@@ -62,7 +117,7 @@ impl Line {
         Line {
             a: Point::Int(a),
             b: Point::Int(b),
-            dir: OnceLock::new(),
+            dir: DirCache::default(),
         }
     }
 
@@ -79,9 +134,7 @@ impl Line {
         if !(a.is_int_point() && b.is_int_point()) {
             log::warn!("Line(a, dir) only implemented for IntPoints till now");
         }
-        let cell = OnceLock::new();
-        let _ = cell.set(dir);
-        Line { a, b, dir: cell }
+        Line { a, b, dir: DirCache::with(dir) }
     }
 
     /// Creates a directed line from a point and a direction (Java `Line.getInstance`; the
@@ -119,22 +172,18 @@ impl Line {
     /// Gets the direction of this directed line.
     #[inline]
     pub fn direction(&self) -> Direction {
-        self.dir
-            .get_or_init(|| Direction::get_instance(&self.b.difference_by(&self.a)))
-            .clone()
-    }
-
-    /// Reference to the cached direction.
-    #[inline]
-    pub fn direction_ref(&self) -> &Direction {
-        self.dir
-            .get_or_init(|| Direction::get_instance(&self.b.difference_by(&self.a)))
+        if let Some(d) = self.dir.get() {
+            return d;
+        }
+        let d = Direction::get_instance(&self.b.difference_by(&self.a));
+        self.dir.store(d.clone());
+        d
     }
 
     /// The direction as IntDirection (Java cast `(IntDirection) line.direction()`).
     #[inline]
     pub fn int_direction(&self) -> IntDirection {
-        self.direction_ref().as_int()
+        self.direction().as_int()
     }
 
     /// Returns ON_THE_LEFT, if this Line is on the left of point, ON_THE_RIGHT, if this Line is
@@ -466,28 +515,28 @@ impl Line {
 
     /// Returns true if the line is axis-parallel.
     pub fn is_orthogonal(&self) -> bool {
-        self.direction_ref().is_orthogonal()
+        self.direction().is_orthogonal()
     }
 
     /// Returns true if this line is diagonal.
     pub fn is_diagonal(&self) -> bool {
-        self.direction_ref().is_diagonal()
+        self.direction().is_diagonal()
     }
 
     /// Returns true if the direction of this line is a multiple of 45 degrees.
     pub fn is_multiple_of_45_degree(&self) -> bool {
-        self.direction_ref().is_multiple_of_45_degree()
+        self.direction().is_multiple_of_45_degree()
     }
 
     /// Checks if this line and other are parallel.
     pub fn is_parallel(&self, other: &Line) -> bool {
-        self.direction_ref().side_of(other.direction_ref()) == Side::Collinear
+        self.direction().side_of(&other.direction()) == Side::Collinear
     }
 
     /// Checks if this line and other are perpendicular.
     pub fn is_perpendicular(&self, other: &Line) -> bool {
-        let v1 = self.direction_ref().get_vector();
-        let v2 = other.direction_ref().get_vector();
+        let v1 = self.direction().get_vector();
+        let v2 = other.direction().get_vector();
         v1.projection(&v2) == Signum::Zero
     }
 
@@ -594,8 +643,8 @@ impl Line {
         if line_side == Side::Collinear {
             return None;
         }
-        let dir1 = self.direction_ref().turn_45_degree(2);
-        let dir2 = self.direction_ref().turn_45_degree(6);
+        let dir1 = self.direction().turn_45_degree(2);
+        let dir2 = self.direction().turn_45_degree(6);
 
         let check_point1 = from_point.translate_by(&dir1.get_vector());
         if self.side_of(&check_point1) != line_side {

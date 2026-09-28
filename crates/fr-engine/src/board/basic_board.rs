@@ -230,16 +230,19 @@ impl BasicBoard {
 
     /// Mutable access to the rules (copy on write if shared with a snapshot).
     pub fn rules_mut(&mut self) -> &mut BoardRules {
+        self.items.touch_global();
         Arc::make_mut(&mut self.rules)
     }
 
     /// Mutable access to the components (copy on write if shared with a snapshot).
     pub fn components_mut(&mut self) -> &mut Components {
+        self.items.touch_global();
         Arc::make_mut(&mut self.components)
     }
 
     /// Mutable access to the library (copy on write if shared with a snapshot).
     pub fn library_mut(&mut self) -> &mut BoardLibrary {
+        self.items.touch_global();
         Arc::make_mut(&mut self.library)
     }
 

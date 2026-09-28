@@ -25,8 +25,14 @@
 //! reproduces that traversal (`ArrayStack` LIFO order: second child popped first).
 
 use std::cmp::Ordering;
+use std::sync::OnceLock;
 
 use fr_geom::{IntBox, RegularTileShape, ShapeBoundingDirections, TileShape};
+
+use super::leaf_grid::{xy_range, LayeredGrid};
+
+/// Minimum number of leaves for building the secondary grid index.
+const GRID_MIN_LEAVES: i32 = 128;
 
 const NONE: u32 = u32::MAX;
 
@@ -54,9 +60,71 @@ enum NodeKind<O> {
 #[derive(Clone, Debug)]
 struct Node<O> {
     bounds: RegularTileShape,
+    /// Leaf: the mask given at insertion (a superset of the layers of the leaf, see
+    /// [`MinAreaTree::insert_shape_masked`]); inner node: the union of the masks of its children.
+    mask: u64,
     parent: u32,
     generation: u32,
     kind: NodeKind<O>,
+}
+
+/// The traversal data of a node: the parameters of its bounding shape (`IntBox`: `ll.x, ll.y,
+/// ur.x, ur.y`; `IntOctagon`: its 8 fields in declaration order), its mask and its children
+/// (`first == NONE` for leaves and free nodes).
+#[derive(Clone, Copy, Debug)]
+struct HotNode {
+    p: [i32; 8],
+    mask: u64,
+    first: u32,
+    second: u32,
+}
+
+/// Whether all stored bounding shapes (leaves and inner nodes) have the same variant. The
+/// search trees always store one variant (given by their bounding directions); then the
+/// traversals use a specialized, branch-light copy of `regular_intersects` on [`HotNode::p`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BoundsKind {
+    None,
+    Box,
+    Octagon,
+    Mixed,
+}
+
+#[inline]
+fn params(s: &RegularTileShape) -> ([i32; 8], BoundsKind) {
+    match s {
+        RegularTileShape::IntBox(b) => ([b.ll.x, b.ll.y, b.ur.x, b.ur.y, 0, 0, 0, 0], BoundsKind::Box),
+        RegularTileShape::IntOctagon(o) => (
+            [
+                o.left_x,
+                o.bottom_y,
+                o.right_x,
+                o.top_y,
+                o.upper_left_diagonal_x,
+                o.lower_right_diagonal_x,
+                o.lower_left_diagonal_x,
+                o.upper_right_diagonal_x,
+            ],
+            BoundsKind::Octagon,
+        ),
+    }
+}
+
+/// `regular_intersects(a, q)` for two octagons given by their parameters
+/// (`IntOctagon::intersects_int_octagon`).
+#[inline(always)]
+fn octagon_params_intersect(a: &[i32; 8], q: &[i32; 8]) -> bool {
+    (a[0].max(q[0]) <= a[2].min(q[2]))
+        & (a[1].max(q[1]) <= a[3].min(q[3]))
+        & (a[6].max(q[6]) <= a[7].min(q[7]))
+        & (a[4].max(q[4]) <= a[5].min(q[5]))
+}
+
+/// `regular_intersects(a, q)` for two boxes given by their parameters
+/// (`q.intersects_int_box(a)`).
+#[inline(always)]
+fn box_params_intersect(a: &[i32; 8], q: &[i32; 8]) -> bool {
+    (a[0] <= q[2]) & (a[1] <= q[3]) & (q[0] <= a[2]) & (q[1] <= a[3])
 }
 
 /// Read access to a leaf.
@@ -86,6 +154,14 @@ pub struct MinAreaTree<O> {
     leaf_count: i32,
     /// Incremented on every structural change; lets [`TreeCursor`] detect misuse in debug builds.
     revision: u64,
+    /// Compact copy of the data the traversals read (bounds parameters, mask, children), kept in
+    /// sync with `nodes` by [`Self::sync_hot`].
+    hot: Vec<HotNode>,
+    /// The variant of all bounding shapes (see [`BoundsKind`]).
+    bounds_kind: BoundsKind,
+    /// Secondary index over the leaves for [`Self::overlapping_leaves_indexed`], built lazily by
+    /// the first query and maintained by insert/remove (dropped when the tree has grown a lot).
+    grid: OnceLock<LayeredGrid>,
 }
 
 /// The abstract Java base class has a single implementation.
@@ -122,6 +198,9 @@ impl<O: Copy> MinAreaTree<O> {
             root: NONE,
             leaf_count: 0,
             revision: 0,
+            hot: Vec::new(),
+            bounds_kind: BoundsKind::None,
+            grid: OnceLock::new(),
         }
     }
 
@@ -148,7 +227,7 @@ impl<O: Copy> MinAreaTree<O> {
     // ----------------------------------------------------------------------------------------
     // arena
 
-    fn alloc(&mut self, bounds: RegularTileShape, parent: u32, kind: NodeKind<O>) -> u32 {
+    fn alloc(&mut self, bounds: RegularTileShape, mask: u64, parent: u32, kind: NodeKind<O>) -> u32 {
         if self.free_head != NONE {
             let idx = self.free_head;
             let node = &mut self.nodes[idx as usize];
@@ -157,14 +236,49 @@ impl<O: Copy> MinAreaTree<O> {
                 _ => unreachable!("free list corrupted"),
             };
             node.bounds = bounds;
+            node.mask = mask;
             node.parent = parent;
             node.kind = kind;
+            self.sync_hot(idx);
             idx
         } else {
             let idx = u32::try_from(self.nodes.len()).expect("MinAreaTree: too many nodes");
             assert!(idx != NONE, "MinAreaTree: too many nodes");
-            self.nodes.push(Node { bounds, parent, generation: 0, kind });
+            self.nodes.push(Node { bounds, mask, parent, generation: 0, kind });
+            self.hot.push(HotNode { p: [0; 8], mask: 0, first: NONE, second: NONE });
+            self.sync_hot(idx);
             idx
+        }
+    }
+
+    /// Copies the traversal data of node `idx` to `hot` and updates `bounds_kind`.
+    #[inline]
+    fn sync_hot(&mut self, idx: u32) {
+        let node = &self.nodes[idx as usize];
+        let (first, second) = match node.kind {
+            NodeKind::Inner { first, second } => (first, second),
+            _ => (NONE, NONE),
+        };
+        if matches!(node.kind, NodeKind::Free { .. }) {
+            self.hot[idx as usize] = HotNode { p: [0; 8], mask: 0, first, second };
+            return;
+        }
+        let (p, kind) = params(&node.bounds);
+        self.hot[idx as usize] = HotNode { p, mask: node.mask, first, second };
+        if self.bounds_kind != kind {
+            self.bounds_kind = if self.bounds_kind == BoundsKind::None { kind } else { BoundsKind::Mixed };
+        }
+    }
+
+    /// The specialized intersection test for `query`, if all bounds and the query have the same
+    /// variant: returns the query parameters and whether they are octagon parameters.
+    #[inline]
+    fn fast_query(&self, query: &RegularTileShape) -> Option<([i32; 8], bool)> {
+        let (q, kind) = params(query);
+        if kind == self.bounds_kind {
+            Some((q, kind == BoundsKind::Octagon))
+        } else {
+            None
         }
     }
 
@@ -173,8 +287,10 @@ impl<O: Copy> MinAreaTree<O> {
         node.generation = node.generation.wrapping_add(1);
         node.parent = NONE;
         node.bounds = RegularTileShape::IntBox(IntBox::EMPTY);
+        node.mask = 0;
         node.kind = NodeKind::Free { next_free: self.free_head };
         self.free_head = idx;
+        self.sync_hot(idx);
     }
 
     #[inline]
@@ -261,16 +377,29 @@ impl<O: Copy> MinAreaTree<O> {
     /// directions of this tree and inserts a new leaf. `None` (with a warning) if the shape has
     /// no bounding shape.
     pub fn insert_shape(&mut self, object: O, shape_index: i32, shape: &TileShape) -> Option<LeafId> {
+        self.insert_shape_masked(object, shape_index, shape, u64::MAX)
+    }
+
+    /// [`Self::insert_shape`] with a mask for the pruned queries ([`TreeCursor::next_leaf_masked`],
+    /// [`Self::overlapping_leaves_masked`]): a query with mask `m` skips the leaves (and whole
+    /// subtrees) whose mask has no bit in common with `m`. It must stay valid while the leaf is
+    /// stored (the search trees use the bit of the layer of the leaf).
+    pub fn insert_shape_masked(&mut self, object: O, shape_index: i32, shape: &TileShape, mask: u64) -> Option<LeafId> {
         let Some(bounding_shape) = shape.bounding_shape(&self.bounding_directions) else {
             log::warn!("ShapeTree.insert: bounding shape of TreeObject is null");
             return None;
         };
-        Some(self.insert_bounds(object, shape_index, bounding_shape))
+        Some(self.insert_bounds_masked(object, shape_index, bounding_shape, mask))
     }
 
     /// Java `new Leaf(object, index, null, boundingShape)` followed by `insert(Leaf)`.
     pub fn insert_bounds(&mut self, object: O, shape_index: i32, bounding_shape: RegularTileShape) -> LeafId {
-        let leaf = self.alloc(bounding_shape, NONE, NodeKind::Leaf { object, shape_index });
+        self.insert_bounds_masked(object, shape_index, bounding_shape, u64::MAX)
+    }
+
+    /// [`Self::insert_bounds`] with a mask (see [`Self::insert_shape_masked`]).
+    pub fn insert_bounds_masked(&mut self, object: O, shape_index: i32, bounding_shape: RegularTileShape, mask: u64) -> LeafId {
+        let leaf = self.alloc(bounding_shape, mask, NONE, NodeKind::Leaf { object, shape_index });
         self.insert_leaf_node(leaf);
         self.leaf_id_of(leaf)
     }
@@ -279,6 +408,13 @@ impl<O: Copy> MinAreaTree<O> {
     fn insert_leaf_node(&mut self, leaf: u32) {
         self.revision += 1;
         self.leaf_count += 1;
+        if let Some(grid) = self.grid.get_mut() {
+            if self.leaf_count > 4 * grid.built_leaf_count.max(GRID_MIN_LEAVES) {
+                self.grid = OnceLock::new();
+            } else {
+                grid.insert(leaf, &self.nodes[leaf as usize].bounds, self.nodes[leaf as usize].mask);
+            }
+        }
 
         // Tree is empty - just insert the new leaf
         if self.root == NONE {
@@ -288,12 +424,14 @@ impl<O: Copy> MinAreaTree<O> {
 
         // Non-empty tree - do a recursive location for leaf replacement
         let leaf_bounds = self.nodes[leaf as usize].bounds;
-        let leaf_to_replace = self.position_locate(&leaf_bounds);
+        let leaf_mask = self.nodes[leaf as usize].mask;
+        let leaf_to_replace = self.position_locate(&leaf_bounds, leaf_mask);
 
         // Construct a new node - whenever a leaf is added so is a new node
         let new_bounds = leaf_bounds.union(&self.nodes[leaf_to_replace as usize].bounds);
+        let new_mask = leaf_mask | self.nodes[leaf_to_replace as usize].mask;
         let current_parent = self.nodes[leaf_to_replace as usize].parent;
-        let new_node = self.alloc(new_bounds, current_parent, NodeKind::Inner { first: leaf_to_replace, second: leaf });
+        let new_node = self.alloc(new_bounds, new_mask, current_parent, NodeKind::Inner { first: leaf_to_replace, second: leaf });
 
         if current_parent != NONE {
             // Replace the pointer from the parent to the leaf with our new node
@@ -304,6 +442,7 @@ impl<O: Copy> MinAreaTree<O> {
                     *second = new_node;
                 }
             }
+            self.sync_hot(current_parent);
         }
         // Update the parent pointers of the old leaf and new leaf to point to new node
         self.nodes[leaf_to_replace as usize].parent = new_node;
@@ -316,7 +455,7 @@ impl<O: Copy> MinAreaTree<O> {
 
     /// Java `MinAreaTree.positionLocate`: descends to the child with the minimal area increase,
     /// enlarging the bounding shapes of the visited inner nodes on the way.
-    fn position_locate(&mut self, leaf_bounds: &RegularTileShape) -> u32 {
+    fn position_locate(&mut self, leaf_bounds: &RegularTileShape, leaf_mask: u64) -> u32 {
         let mut node = self.root;
         loop {
             let (first, second) = match self.nodes[node as usize].kind {
@@ -326,6 +465,8 @@ impl<O: Copy> MinAreaTree<O> {
             };
             let enlarged = leaf_bounds.union(&self.nodes[node as usize].bounds);
             self.nodes[node as usize].bounds = enlarged;
+            self.nodes[node as usize].mask |= leaf_mask;
+            self.sync_hot(node);
 
             // Choose the child, so that the area increase of that child after taking the union
             // with the shape of leafToInsert is minimal.
@@ -364,6 +505,9 @@ impl<O: Copy> MinAreaTree<O> {
         }
         self.revision += 1;
         self.leaf_count -= 1;
+        if let Some(grid) = self.grid.get_mut() {
+            grid.remove(leaf, &self.nodes[leaf as usize].bounds, self.nodes[leaf as usize].mask);
+        }
         self.free(leaf);
         if parent == NONE {
             // tree gets empty
@@ -398,8 +542,25 @@ impl<O: Copy> MinAreaTree<O> {
             } else {
                 log::warn!("MinAreaTree.remove_leaf: grandParent inconsistent");
             }
+            self.sync_hot(grand_parent);
         }
         self.free(parent);
+
+        // recalculate the masks of the ancestors (as long as they change)
+        let mut node_to_recalculate = grand_parent;
+        while node_to_recalculate != NONE {
+            let (first, second) = match self.nodes[node_to_recalculate as usize].kind {
+                NodeKind::Inner { first, second } => (first, second),
+                _ => unreachable!("MinAreaTree: ancestor is not an inner node"),
+            };
+            let new_mask = self.nodes[first as usize].mask | self.nodes[second as usize].mask;
+            if new_mask == self.nodes[node_to_recalculate as usize].mask {
+                break;
+            }
+            self.nodes[node_to_recalculate as usize].mask = new_mask;
+            self.sync_hot(node_to_recalculate);
+            node_to_recalculate = self.nodes[node_to_recalculate as usize].parent;
+        }
 
         // recalculate the bounding shapes of the ancestors
         // as long as it gets smaller after removing leaf
@@ -415,6 +576,7 @@ impl<O: Copy> MinAreaTree<O> {
                 break;
             }
             self.nodes[node_to_recalculate as usize].bounds = new_bounds;
+            self.sync_hot(node_to_recalculate);
             node_to_recalculate = self.nodes[node_to_recalculate as usize].parent;
         }
     }
@@ -464,6 +626,12 @@ impl<O: Copy> MinAreaTree<O> {
             return;
         }
         stack.push(self.root);
+        if let Some((q, oct)) = self.fast_query(shape) {
+            while let Some(n) = if oct { walk::<false, true>(&self.hot, stack, &q, 0) } else { walk::<false, false>(&self.hot, stack, &q, 0) } {
+                out.push(LeafId { index: n, generation: self.nodes[n as usize].generation });
+            }
+            return;
+        }
         while let Some(n) = stack.pop() {
             let node = &self.nodes[n as usize];
             if regular_intersects(&node.bounds, shape) {
@@ -479,11 +647,123 @@ impl<O: Copy> MinAreaTree<O> {
         }
     }
 
+    /// [`Self::overlapping_leaves_unsorted`] restricted to the leaves whose mask intersects
+    /// `mask` (subtrees without such leaves are skipped).
+    pub fn overlapping_leaves_masked(&self, shape: &RegularTileShape, mask: u64, stack: &mut Vec<u32>, out: &mut Vec<LeafId>) {
+        stack.clear();
+        if self.root == NONE {
+            return;
+        }
+        stack.push(self.root);
+        if let Some((q, oct)) = self.fast_query(shape) {
+            while let Some(n) = if oct { walk::<true, true>(&self.hot, stack, &q, mask) } else { walk::<true, false>(&self.hot, stack, &q, mask) } {
+                out.push(LeafId { index: n, generation: self.nodes[n as usize].generation });
+            }
+            return;
+        }
+        while let Some(n) = stack.pop() {
+            let node = &self.nodes[n as usize];
+            if node.mask & mask != 0 && regular_intersects(&node.bounds, shape) {
+                match node.kind {
+                    NodeKind::Leaf { .. } => out.push(LeafId { index: n, generation: node.generation }),
+                    NodeKind::Inner { first, second } => {
+                        stack.push(first);
+                        stack.push(second);
+                    }
+                    NodeKind::Free { .. } => unreachable!(),
+                }
+            }
+        }
+    }
+
+    /// Checks that the mask of every inner node is the union of the masks of its children and
+    /// that `leaf_ok(object, shape_index, mask)` holds for every leaf (for tests and the
+    /// `FASTROUTE_VERIFY_CACHES` mode).
+    pub fn validate_masks(&self, mut leaf_ok: impl FnMut(O, i32, u64) -> bool) -> Result<(), String> {
+        if self.root == NONE {
+            return Ok(());
+        }
+        let mut stack = vec![self.root];
+        while let Some(n) = stack.pop() {
+            let node = &self.nodes[n as usize];
+            match node.kind {
+                NodeKind::Leaf { object, shape_index } => {
+                    if !leaf_ok(object, shape_index, node.mask) {
+                        return Err(format!("leaf {n}: mask {:#x} rejected", node.mask));
+                    }
+                }
+                NodeKind::Inner { first, second } => {
+                    if node.mask != self.nodes[first as usize].mask | self.nodes[second as usize].mask {
+                        return Err(format!("inner node {n}: mask is not the union of the children"));
+                    }
+                    stack.push(first);
+                    stack.push(second);
+                }
+                NodeKind::Free { .. } => return Err(format!("free node {n} reachable")),
+            }
+        }
+        Ok(())
+    }
+
+    /// The mask of a stored leaf.
+    pub fn leaf_mask(&self, id: LeafId) -> u64 {
+        self.nodes[id.index as usize].mask
+    }
+
+    /// The same set of leaves as [`Self::overlapping_leaves_unsorted`] (all leaves whose
+    /// bounding shape intersects `shape`; the bounding shapes of the inner nodes contain those of
+    /// their children, so the traversal reaches every such leaf), in unspecified order, answered
+    /// from the secondary grid index when the tree is large enough.
+    /// Restricted to the leaves whose mask intersects `mask` (`u64::MAX`: all leaves).
+    pub fn overlapping_leaves_indexed(&self, shape: &RegularTileShape, mask: u64, stack: &mut Vec<u32>, out: &mut Vec<LeafId>) {
+        if self.leaf_count < GRID_MIN_LEAVES {
+            self.overlapping_leaves_masked(shape, mask, stack, out);
+            return;
+        }
+        let grid = self.grid.get_or_init(|| self.build_grid());
+        let supported = grid.candidates(shape, mask, |n| {
+            let node = &self.nodes[n as usize];
+            if regular_intersects(&node.bounds, shape) {
+                out.push(LeafId { index: n, generation: node.generation });
+            }
+        });
+        if !supported {
+            self.overlapping_leaves_masked(shape, mask, stack, out);
+        }
+    }
+
+    fn build_grid(&self) -> LayeredGrid {
+        let extent = xy_range(&self.nodes[self.root as usize].bounds);
+        let mut counts = [0i64; 65];
+        for node in &self.nodes {
+            if let NodeKind::Leaf { .. } = node.kind {
+                if node.mask.count_ones() == 1 {
+                    counts[node.mask.trailing_zeros() as usize] += 1;
+                } else {
+                    counts[64] += 1;
+                }
+            }
+        }
+        let mut grid = LayeredGrid::new(extent, &counts, self.leaf_count);
+        for (i, node) in self.nodes.iter().enumerate() {
+            if let NodeKind::Leaf { .. } = node.kind {
+                grid.insert(i as u32, &node.bounds, node.mask);
+            }
+        }
+        grid
+    }
+
     /// Java `Leaf.compareTo`: `object.compareTo(other.object)`, then the shape indices.
     pub fn compare_leaves(&self, a: LeafId, b: LeafId, mut cmp: impl FnMut(&O, &O) -> Ordering) -> Ordering {
         let (oa, ia) = self.payload(a);
         let (ob, ib) = self.payload(b);
         leaf_order(&oa, ia, &ob, ib, &mut cmp)
+    }
+
+    /// The object and shape index of a leaf known to be stored (unchecked generation).
+    #[inline]
+    pub fn leaf_payload(&self, id: LeafId) -> (O, i32) {
+        self.payload(id)
     }
 
     #[inline]
@@ -632,10 +912,39 @@ impl TreeCursor {
         }
     }
 
+    /// [`Self::next_leaf`] skipping the leaves and subtrees whose mask has no bit in common with
+    /// `mask`. If the caller ignores all such leaves (and they do not change the query), the
+    /// sequence of the other leaves is the same as with [`Self::next_leaf`].
+    pub fn next_leaf_masked<O: Copy>(&mut self, tree: &MinAreaTree<O>, query: &RegularTileShape, mask: u64) -> Option<LeafId> {
+        debug_assert_eq!(self.revision, tree.revision, "MinAreaTree modified during traversal");
+        if let Some((q, oct)) = tree.fast_query(query) {
+            let n = if oct { walk::<true, true>(&tree.hot, &mut self.stack, &q, mask) } else { walk::<true, false>(&tree.hot, &mut self.stack, &q, mask) };
+            return n.map(|n| LeafId { index: n, generation: tree.nodes[n as usize].generation });
+        }
+        while let Some(n) = self.stack.pop() {
+            let node = &tree.nodes[n as usize];
+            if node.mask & mask != 0 && regular_intersects(&node.bounds, query) {
+                match node.kind {
+                    NodeKind::Leaf { .. } => return Some(LeafId { index: n, generation: node.generation }),
+                    NodeKind::Inner { first, second } => {
+                        self.stack.push(first);
+                        self.stack.push(second);
+                    }
+                    NodeKind::Free { .. } => unreachable!(),
+                }
+            }
+        }
+        None
+    }
+
     /// Continues the traversal and returns the next leaf whose bounding shape intersects
     /// `query`, or `None` when the stack is exhausted.
     pub fn next_leaf<O: Copy>(&mut self, tree: &MinAreaTree<O>, query: &RegularTileShape) -> Option<LeafId> {
         debug_assert_eq!(self.revision, tree.revision, "MinAreaTree modified during traversal");
+        if let Some((q, oct)) = tree.fast_query(query) {
+            let n = if oct { walk::<false, true>(&tree.hot, &mut self.stack, &q, 0) } else { walk::<false, false>(&tree.hot, &mut self.stack, &q, 0) };
+            return n.map(|n| LeafId { index: n, generation: tree.nodes[n as usize].generation });
+        }
         while let Some(n) = self.stack.pop() {
             let node = &tree.nodes[n as usize];
             if regular_intersects(&node.bounds, query) {
@@ -651,6 +960,29 @@ impl TreeCursor {
         }
         None
     }
+}
+
+/// One step of the Java `ArrayStack` traversal on the compact node data: pops nodes until a leaf
+/// whose bounds intersect the query `q` is found (inner nodes whose bounds intersect push
+/// `first`, then `second`). `MASKED`: also skip nodes whose mask has no bit in common with
+/// `mask`. `OCT`: octagon (else box) parameters.
+#[inline(always)]
+fn walk<const MASKED: bool, const OCT: bool>(hot: &[HotNode], stack: &mut Vec<u32>, q: &[i32; 8], mask: u64) -> Option<u32> {
+    while let Some(n) = stack.pop() {
+        let h = &hot[n as usize];
+        if MASKED && h.mask & mask == 0 {
+            continue;
+        }
+        let hit = if OCT { octagon_params_intersect(&h.p, q) } else { box_params_intersect(&h.p, q) };
+        if hit {
+            if h.first == NONE {
+                return Some(n);
+            }
+            stack.push(h.first);
+            stack.push(h.second);
+        }
+    }
+    None
 }
 
 #[cfg(test)]

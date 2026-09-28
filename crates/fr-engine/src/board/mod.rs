@@ -25,6 +25,7 @@ pub mod actions;
 pub mod basic_board;
 pub mod complete_shape;
 pub mod connectivity;
+pub(crate) mod epoch;
 pub mod item;
 pub mod item_list;
 pub mod optimize;

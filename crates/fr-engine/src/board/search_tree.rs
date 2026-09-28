@@ -126,6 +126,9 @@ pub struct ShapeSearchTree {
     pub(crate) tree: MinAreaTree<TreeObject>,
     item_info: Vec<Option<ItemTreeInfo>>,
     rooms: HashMap<RoomKey, RoomTreeInfo>,
+    /// Content epoch of the item entries (leaves, shapes, side table; not the rooms), see
+    /// [`super::epoch`].
+    item_epoch: u64,
 }
 
 impl ShapeSearchTree {
@@ -140,12 +143,25 @@ impl ShapeSearchTree {
             tree: MinAreaTree::new(dirs),
             item_info: Vec::new(),
             rooms: HashMap::new(),
+            item_epoch: super::epoch::next_epoch(),
         }
     }
 
     /// Java `boundingDirections`.
     pub fn bounding_directions(&self) -> ShapeBoundingDirections {
         self.tree.bounding_directions()
+    }
+
+    /// The content epoch of the item entries (see [`super::epoch`]).
+    #[inline]
+    pub fn item_epoch(&self) -> u64 {
+        self.item_epoch
+    }
+
+    /// Renews the item entry epoch; called by every method changing item entries.
+    #[inline]
+    pub(crate) fn touch_items(&mut self) {
+        self.item_epoch = super::epoch::next_epoch();
     }
 
     /// The underlying tree (read only).
@@ -191,6 +207,7 @@ impl ShapeSearchTree {
     }
 
     fn info_mut(&mut self, key: ItemKey) -> &mut ItemTreeInfo {
+        self.touch_items();
         let index = key.index as usize;
         if self.item_info.len() <= index {
             self.item_info.resize(index + 1, None);
@@ -223,6 +240,7 @@ impl ShapeSearchTree {
 
     /// Java `clearSearchTreeEntries` for this tree (drops leaves and shapes).
     pub(crate) fn clear_info(&mut self, key: ItemKey) {
+        self.touch_items();
         if let Some(slot) = self.item_info.get_mut(key.index as usize) {
             if matches!(slot, Some(info) if info.generation == key.generation) {
                 *slot = None;
@@ -232,6 +250,7 @@ impl ShapeSearchTree {
 
     /// Java `ItemSearchTreesInfo.clearPrecalculatedTreeShapes` for this tree.
     pub(crate) fn clear_shapes(&mut self, key: ItemKey) {
+        self.touch_items();
         if let Some(Some(info)) = self.item_info.get_mut(key.index as usize) {
             if info.generation == key.generation {
                 info.shapes = None;
@@ -243,7 +262,8 @@ impl ShapeSearchTree {
     /// shape (leaf `None` where the shape or its bounding shape is null) and stores the leaves
     /// and shapes. Items without shapes get no entries (Java returns before
     /// `setSearchTreeEntries`).
-    pub(crate) fn insert_item(&mut self, key: ItemKey, id: i32, shapes: Arc<[Option<TileShape>]>) {
+    pub(crate) fn insert_item(&mut self, key: ItemKey, id: i32, shapes: Arc<[Option<TileShape>]>, masks: &[u64]) {
+        self.touch_items();
         self.set_shapes(key, shapes.clone());
         if shapes.is_empty() {
             return;
@@ -252,7 +272,7 @@ impl ShapeSearchTree {
         let mut leaves = Vec::with_capacity(shapes.len());
         for (i, s) in shapes.iter().enumerate() {
             leaves.push(match s {
-                Some(shape) => self.tree.insert_shape(object, i as i32, shape),
+                Some(shape) => self.tree.insert_shape_masked(object, i as i32, shape, masks[i]),
                 None => None,
             });
         }
@@ -261,14 +281,16 @@ impl ShapeSearchTree {
 
     /// Java `insert(object, index)` for a single shape index of an item (shape taken from the
     /// precalculated shapes).
-    pub(crate) fn insert_item_shape(&mut self, key: ItemKey, id: i32, index: i32) -> Option<LeafId> {
+    pub(crate) fn insert_item_shape(&mut self, key: ItemKey, id: i32, index: i32, mask: u64) -> Option<LeafId> {
+        self.touch_items();
         let shape = self.cached_shapes(key)?.get(index as usize)?.clone()?;
-        self.tree.insert_shape(TreeObject::Item { key, id }, index, &shape)
+        self.tree.insert_shape_masked(TreeObject::Item { key, id }, index, &shape, mask)
     }
 
     /// Removes all leaves of an item from this tree (the side table entry is kept; see
     /// [`Self::clear_info`]).
     pub(crate) fn remove_item_leaves(&mut self, key: ItemKey) {
+        self.touch_items();
         if let Some(leaves) = self.info(key).and_then(|i| i.leaves.clone()) {
             self.tree.remove(&leaves);
         }
@@ -279,7 +301,7 @@ impl ShapeSearchTree {
 
     /// Inserts a complete free space expansion room (Java `tree.insert(room)`). Returns the leaf.
     pub fn insert_room(&mut self, key: RoomKey, id: i32, shape: TileShape, layer: LayerNo) -> Option<LeafId> {
-        let leaf = self.tree.insert_shape(TreeObject::Room { key, id }, 0, &shape);
+        let leaf = self.tree.insert_shape_masked(TreeObject::Room { key, id }, 0, &shape, layer_bit(layer));
         self.rooms.insert(key, RoomTreeInfo { shape, layer, id, leaf });
         leaf
     }
@@ -719,6 +741,30 @@ impl BasicBoard {
         item.shape_layer_with_count(self, index, || self.item_tile_shape_count(item, None))
     }
 
+    /// The mask stored with leaf `index` of an item (see [`MinAreaTree::insert_shape_masked`]):
+    /// the bit of its shape layer; all bits for the board outline (whose shape layer depends on
+    /// the shape count).
+    pub(crate) fn leaf_layer_mask(&self, key: ItemKey, index: i32) -> u64 {
+        let item = self.items.get(key);
+        match item.kind {
+            ItemKind::BoardOutline(_) => u64::MAX,
+            _ => layer_bit(item.shape_layer_with_count(self, index, || unreachable!("board outline"))),
+        }
+    }
+
+    /// Panics unless every leaf mask of tree `t` contains the bit of the current shape layer of
+    /// the leaf and every inner mask is the union of its children (`FASTROUTE_VERIFY_CACHES`).
+    pub(crate) fn verify_leaf_masks(&self, t: usize) {
+        let tree = &self.search_trees.trees[t].tree;
+        if let Err(e) = tree.validate_masks(|object, index, mask| mask & layer_bit(self.object_shape_layer(t, object, index)) != 0) {
+            panic!("leaf masks of tree {t} invalid: {e}");
+        }
+    }
+
+    fn leaf_layer_masks(&self, key: ItemKey, count: usize) -> Vec<u64> {
+        (0..count as i32).map(|i| self.leaf_layer_mask(key, i)).collect()
+    }
+
     /// Java `SearchTreeObject.shapeLayer` of a tree object.
     pub fn object_shape_layer(&self, t: usize, object: TreeObject, index: i32) -> LayerNo {
         match object {
@@ -775,7 +821,8 @@ impl BasicBoard {
         let id = self.items.get(key).id().0;
         for t in 0..self.search_trees.trees.len() {
             let shapes = self.item_tree_shapes(t, key);
-            self.search_trees.trees[t].insert_item(key, id, shapes);
+            let masks = self.leaf_layer_masks(key, shapes.len());
+            self.search_trees.trees[t].insert_item(key, id, shapes, &masks);
         }
         self.items.get_mut(key).on_board = true;
     }
@@ -794,6 +841,7 @@ impl BasicBoard {
 
     /// Java `Item.clearSearchTreeEntries()`: drops the tree info of all trees.
     pub(crate) fn clear_search_tree_entries(&mut self, key: ItemKey) {
+        self.items.touch_item(key);
         for tree in self.search_trees.trees.iter_mut() {
             tree.clear_info(key);
         }
@@ -874,7 +922,8 @@ impl BasicBoard {
         while let Some(key) = self.items.cursor_next(&mut cursor) {
             let id = self.items.get(key).id().0;
             let shapes = self.item_tree_shapes(t, key);
-            self.search_trees.trees[t].insert_item(key, id, shapes);
+            let masks = self.leaf_layer_masks(key, shapes.len());
+            self.search_trees.trees[t].insert_item(key, id, shapes, &masks);
         }
         t
     }
@@ -913,7 +962,38 @@ impl BasicBoard {
     /// The leaves whose bounding shape intersects `bounds`, sorted like Java
     /// `MinAreaTree.overlaps`.
     pub fn tree_overlaps(&self, t: usize, bounds: &RegularTileShape) -> Vec<LeafId> {
-        self.search_trees.trees[t].tree.overlaps_by(bounds, ShapeSearchTree::object_cmp)
+        self.tree_overlaps_on_layer(t, bounds, -1)
+    }
+
+    /// [`Self::tree_overlaps`] for callers that drop all leaves whose shape layer is not `layer`
+    /// (`layer < 0`: no restriction): may omit such leaves (the leaf masks prune them), the other
+    /// leaves are in the same order.
+    pub fn tree_overlaps_on_layer(&self, t: usize, bounds: &RegularTileShape, layer: LayerNo) -> Vec<LeafId> {
+        let tree = &self.search_trees.trees[t].tree;
+        let mask = if layer < 0 { u64::MAX } else { layer_bit(layer) };
+        let mut leaves = Vec::new();
+        let mut stack = Vec::new();
+        tree.overlapping_leaves_indexed(bounds, mask, &mut stack, &mut leaves);
+        if !sort_leaves_canonical(tree, &mut leaves) {
+            // the comparator sort depends on the input order: use the Java traversal
+            leaves.clear();
+            tree.overlapping_leaves_unsorted(bounds, &mut stack, &mut leaves);
+            leaves.sort_by(|a, b| tree.compare_leaves(*a, *b, ShapeSearchTree::object_cmp));
+            return leaves;
+        }
+        if super::connectivity::verify_caches() {
+            let mut expected = Vec::new();
+            tree.overlapping_leaves_unsorted(bounds, &mut stack, &mut expected);
+            expected.sort_by(|a, b| tree.compare_leaves(*a, *b, ShapeSearchTree::object_cmp));
+            for &l in &expected {
+                let (object, index) = tree.leaf_payload(l);
+                let on_layer = layer < 0 || self.object_shape_layer(t, object, index) == layer;
+                assert!(!on_layer || tree.leaf_mask(l) & mask != 0, "tree_overlaps: leaf mask misses its layer");
+            }
+            expected.retain(|&l| tree.leaf_mask(l) & mask != 0);
+            assert_eq!(leaves, expected, "tree_overlaps: indexed result differs from the traversal");
+        }
+        leaves
     }
 
     /// Java `ShapeSearchTree.overlappingTreeEntries(shape, layer, ignoreNetNos, treeEntries)`.
@@ -923,7 +1003,7 @@ impl BasicBoard {
             log::warn!("ShapeSearchTree.overlaps: shape not bounded");
             return;
         };
-        let leaves = self.tree_overlaps(t, &bounds);
+        let leaves = self.tree_overlaps_on_layer(t, &bounds, layer);
         let is_45_degree = matches!(shape, ConvexShape::Tile(TileShape::IntOctagon(_)));
         let query_shape = shape.to_shape();
         for leaf in leaves {
@@ -987,7 +1067,7 @@ impl BasicBoard {
             RegularTileShape::IntBox(b) => RegularTileShape::IntBox(b.offset(max_clearance as f64)),
             RegularTileShape::IntOctagon(o) => RegularTileShape::IntOctagon(o.offset(max_clearance as f64)),
         };
-        let leaves = self.tree_overlaps(t, &offset_bounds);
+        let leaves = self.tree_overlaps_on_layer(t, &offset_bounds, layer);
         // sort the found items by their clearances to clearance_class on layer
         let mut sorted: Vec<(i32, LeafId, TreeObject, i32)> = Vec::new();
         for leaf in leaves {
@@ -1123,6 +1203,7 @@ impl BasicBoard {
     }
 
     fn change_entries_in(&mut self, t: usize, key: ItemKey, new_polyline: &Polyline, keep_at_start_count: i32, keep_at_end_count: i32) {
+        self.items.touch_item(key);
         let (half_width, layer, cl, id) = {
             let item = self.items.get(key);
             let tr = item.trace();
@@ -1147,6 +1228,7 @@ impl BasicBoard {
             new_shapes[i as usize] = old_shapes[i as usize].clone();
         }
         let tree = &mut self.search_trees.trees[t];
+        tree.touch_items();
         for i in keep_at_start_count..old_shape_count - keep_at_end_count {
             if let Some(leaf) = old_entries[i as usize] {
                 tree.tree.remove_leaf(leaf);
@@ -1167,7 +1249,7 @@ impl BasicBoard {
         }
         tree.set_shapes(key, Arc::from(new_shapes));
         for i in keep_at_start_count..new_shape_count - keep_at_end_count {
-            new_leaves[i as usize] = tree.insert_item_shape(key, id, i);
+            new_leaves[i as usize] = tree.insert_item_shape(key, id, i, layer_bit(layer));
         }
         tree.set_leaves(key, new_leaves);
     }
@@ -1180,6 +1262,8 @@ impl BasicBoard {
     }
 
     fn merge_entries_in_front_in(&mut self, t: usize, from: ItemKey, to: ItemKey, joined: &Polyline, from_entry_no: i32, to_entry_no: i32) {
+        self.items.touch_item(from);
+        self.items.touch_item(to);
         let (from_first, from_tile_count) = {
             let f = self.items.get(from);
             (f.first_corner(), f.trace().tile_shape_count())
@@ -1194,6 +1278,7 @@ impl BasicBoard {
         let from_shapes = self.item_tree_shapes(t, from);
         let to_shapes = self.item_tree_shapes(t, to);
         let tree = &mut self.search_trees.trees[t];
+        tree.touch_items();
         let from_entries: Vec<Option<LeafId>> = tree.item_leaves(from).expect("mergeEntriesInFront: no entries").to_vec();
         let to_entries: Vec<Option<LeafId>> = tree.item_leaves(to).expect("mergeEntriesInFront: no entries").to_vec();
         if let Some(l) = from_entries[remove_no as usize] {
@@ -1238,7 +1323,7 @@ impl BasicBoard {
         tree.set_shapes(to, Arc::from(new_shapes));
         for i in 0..link_count {
             let current = from_shape_count_minus_1 as usize + i;
-            new_leaves[current] = tree.insert_item_shape(to, to_id, current as i32);
+            new_leaves[current] = tree.insert_item_shape(to, to_id, current as i32, layer_bit(to_layer));
         }
         tree.set_leaves(to, new_leaves);
     }
@@ -1251,6 +1336,8 @@ impl BasicBoard {
     }
 
     fn merge_entries_at_end_in(&mut self, t: usize, from: ItemKey, to: ItemKey, joined: &Polyline, from_entry_no: i32, to_entry_no: i32) {
+        self.items.touch_item(from);
+        self.items.touch_item(to);
         let (from_last, from_tile_count) = {
             let f = self.items.get(from);
             (f.last_corner(), f.trace().tile_shape_count())
@@ -1263,6 +1350,7 @@ impl BasicBoard {
         let from_shapes = self.item_tree_shapes(t, from);
         let to_shapes = self.item_tree_shapes(t, to);
         let tree = &mut self.search_trees.trees[t];
+        tree.touch_items();
         let from_entries: Vec<Option<LeafId>> = tree.item_leaves(from).expect("mergeEntriesAtEnd: no entries").to_vec();
         let to_entries: Vec<Option<LeafId>> = tree.item_leaves(to).expect("mergeEntriesAtEnd: no entries").to_vec();
         let to_shape_count_minus_1 = to_tile_count - 1;
@@ -1304,7 +1392,7 @@ impl BasicBoard {
         tree.set_shapes(to, Arc::from(new_shapes));
         for i in 0..link_count {
             let current = to_shape_count_minus_1 as usize + i;
-            new_leaves[current] = tree.insert_item_shape(to, to_id, current as i32);
+            new_leaves[current] = tree.insert_item_shape(to, to_id, current as i32, layer_bit(to_layer));
         }
         tree.set_leaves(to, new_leaves);
     }
@@ -1312,6 +1400,9 @@ impl BasicBoard {
     /// Java `SearchTreeManager.reuseEntriesAfterCutout` (all trees): transfers the leaves of
     /// `from` to the start and end pieces after a middle piece was cut out.
     pub(crate) fn reuse_entries_after_cutout(&mut self, from: ItemKey, start_piece: ItemKey, end_piece: ItemKey) {
+        self.items.touch_item(from);
+        self.items.touch_item(start_piece);
+        self.items.touch_item(end_piece);
         for t in 0..self.search_trees.trees.len() {
             let (start_len, start_id) = {
                 let s = self.items.get(start_piece);
@@ -1325,7 +1416,10 @@ impl BasicBoard {
             // them lazily in insert and in later queries; the values are the same).
             let start_shapes = self.item_tree_shapes(t, start_piece);
             let end_shapes = self.item_tree_shapes(t, end_piece);
+            let start_mask = self.leaf_layer_mask(start_piece, start_len as i32 - 1);
+            let end_mask = self.leaf_layer_mask(end_piece, 0);
             let tree = &mut self.search_trees.trees[t];
+            tree.touch_items();
             let mut from_entries: Vec<Option<LeafId>> = tree.item_leaves(from).expect("reuseEntriesAfterCutout: no entries").to_vec();
             let mut start_leaves: Vec<Option<LeafId>> = vec![None; start_len];
             let start_object = TreeObject::Item { key: start_piece, id: start_id };
@@ -1338,10 +1432,10 @@ impl BasicBoard {
                 from_entries[i] = None;
             }
             tree.set_shapes(start_piece, start_shapes);
-            start_leaves[start_len - 1] = tree.insert_item_shape(start_piece, start_id, start_len as i32 - 1);
+            start_leaves[start_len - 1] = tree.insert_item_shape(start_piece, start_id, start_len as i32 - 1, start_mask);
             let mut end_leaves: Vec<Option<LeafId>> = vec![None; end_len];
             tree.set_shapes(end_piece, end_shapes);
-            end_leaves[0] = tree.insert_item_shape(end_piece, end_id, 0);
+            end_leaves[0] = tree.insert_item_shape(end_piece, end_id, 0, end_mask);
             let end_object = TreeObject::Item { key: end_piece, id: end_id };
             let from_len = from_entries.len();
             for (i, end_leaf) in end_leaves.iter_mut().enumerate().skip(1) {
@@ -1361,9 +1455,12 @@ impl BasicBoard {
 
     /// Java `ShapeSearchTree.changeItemShape(item, shapeIndex, newShape)` on tree `t`.
     pub fn change_item_shape(&mut self, t: usize, key: ItemKey, shape_index: i32, new_shape: TileShape) {
+        self.items.touch_item(key);
         let id = self.items.get(key).id().0;
         let old_shapes = self.item_tree_shapes(t, key);
+        let mask = self.leaf_layer_mask(key, shape_index);
         let tree = &mut self.search_trees.trees[t];
+        tree.touch_items();
         let old_entries: Vec<Option<LeafId>> = tree.item_leaves(key).expect("changeItemShape: no entries").to_vec();
         let mut new_leaves: Vec<Option<LeafId>> = vec![None; old_entries.len()];
         let mut new_shapes: Vec<Option<TileShape>> = vec![None; old_entries.len()];
@@ -1379,7 +1476,7 @@ impl BasicBoard {
             }
         }
         tree.set_shapes(key, Arc::from(new_shapes));
-        new_leaves[shape_index as usize] = tree.insert_item_shape(key, id, shape_index);
+        new_leaves[shape_index as usize] = tree.insert_item_shape(key, id, shape_index, mask);
         tree.set_leaves(key, new_leaves);
     }
 
@@ -1455,5 +1552,118 @@ impl ShapeSearchTree {
     /// The Java id of a stored room.
     pub fn room_id(&self, key: RoomKey) -> Option<i32> {
         self.rooms.get(&key).map(|r| r.id)
+    }
+}
+
+/// Sorts leaves (in traversal order) like Java `Collections.sort` with `Leaf.compareTo`
+/// (rooms before items, each by descending id, then by shape index).
+///
+/// Fast path: the comparator is a total preorder equal to the order of the integer key
+/// `(is item, descending id, shape index)` whenever the ids of the rooms (and of the items)
+/// span less than 2^31 (so the subtraction comparators do not overflow) and the shape indices
+/// are non-negative. If the keys are also unique, the comparator is a strict total order on the
+/// leaves and every sort gives the same result, independent of the input order.
+/// Otherwise the comparator sort is used.
+///
+/// Returns false (leaving `leaves` unchanged) if the fast path does not apply; the caller must
+/// then sort the leaves in traversal order with the comparator.
+pub(crate) fn sort_leaves_canonical(tree: &MinAreaTree<TreeObject>, leaves: &mut [LeafId]) -> bool {
+    if leaves.len() < 2 {
+        return true;
+    }
+    let mut keyed: Vec<(u64, LeafId)> = Vec::with_capacity(leaves.len());
+    let (mut room_min, mut room_max, mut item_min, mut item_max) = (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
+    let mut ok = true;
+    for &leaf in leaves.iter() {
+        let (object, shape_index) = tree.leaf_payload(leaf);
+        let (kind_bit, id) = match object {
+            TreeObject::Room { id, .. } => {
+                room_min = room_min.min(id);
+                room_max = room_max.max(id);
+                (0u64, id)
+            }
+            TreeObject::Item { id, .. } => {
+                item_min = item_min.min(id);
+                item_max = item_max.max(id);
+                (1u64, id)
+            }
+        };
+        ok &= shape_index >= 0;
+        // descending id: invert the order preserving unsigned image of the id
+        let id_key = !((id as u32) ^ 0x8000_0000) as u64;
+        keyed.push(((kind_bit << 63) | (id_key << 31) | (shape_index as u32 as u64 & 0x7fff_ffff), leaf));
+    }
+    let span_ok = |min: i32, max: i32| min > max || (max as i64 - min as i64) <= i32::MAX as i64;
+    if !(ok && span_ok(room_min, room_max) && span_ok(item_min, item_max)) {
+        return false;
+    }
+    keyed.sort_unstable_by_key(|e| e.0);
+    if keyed.windows(2).any(|w| w[0].0 == w[1].0) {
+        // equal keys: their relative order would depend on the input order
+        return false;
+    }
+    for (dst, (_, leaf)) in leaves.iter_mut().zip(keyed) {
+        *dst = leaf;
+    }
+    true
+}
+
+/// The leaf mask bit of a layer (all bits for layers outside 0..64, which are never pruned).
+#[inline]
+pub(crate) fn layer_bit(layer: LayerNo) -> u64 {
+    if (0..64).contains(&layer) {
+        1u64 << layer
+    } else {
+        u64::MAX
+    }
+}
+
+#[cfg(test)]
+mod canonical_sort_tests {
+    use super::*;
+    use fr_geom::IntBox;
+    use fr_jcompat::JavaRandom;
+
+    /// `sort_leaves_canonical` gives the stable comparator sort of the traversal order whenever
+    /// it applies, for any input order.
+    #[test]
+    fn canonical_sort_matches_comparator_sort() {
+        let mut r = JavaRandom::new(7);
+        for round in 0..400 {
+            let mut tree: MinAreaTree<TreeObject> = MinAreaTree::new(ShapeBoundingDirections::Orthogonal);
+            let n = 1 + r.next_int_bound(40) as usize;
+            let wide = round % 5 == 0;
+            let mut leaves = Vec::new();
+            for i in 0..n {
+                let id = if wide { r.next_int() } else { r.next_int_bound(50) - 10 };
+                let object = if r.next_boolean() {
+                    TreeObject::Item { key: ItemKey { index: i as u32, generation: 0 }, id }
+                } else {
+                    TreeObject::Room { key: RoomKey(i as u32), id }
+                };
+                // duplicate (object, index) pairs and negative indices must fall back
+                let index = if round % 7 == 0 { r.next_int_bound(3) - 1 } else { r.next_int_bound(3) };
+                leaves.push(tree.insert_bounds(object, index, RegularTileShape::IntBox(IntBox::new(0, 0, 10, 10))));
+            }
+            let mut expected = leaves.clone();
+            if !sort_leaves_canonical(&tree, &mut expected) {
+                // (the comparator may not be a total order here; Rust's sort may panic on it)
+                assert_eq!(expected, leaves, "fallback must leave the input unchanged");
+                continue;
+            }
+            for _ in 0..3 {
+                let mut input = leaves.clone();
+                fr_jcompat::shuffle(&mut input, &mut r);
+                let mut got = input.clone();
+                if sort_leaves_canonical(&tree, &mut got) {
+                    let mut stable = input.clone();
+                    stable.sort_by(|a, b| tree.compare_leaves(*a, *b, ShapeSearchTree::object_cmp));
+                    assert_eq!(got, stable, "round {round}");
+                    assert_eq!(got, expected, "round {round}: order depends on the input order");
+                } else {
+                    assert_eq!(got, input, "fallback must leave the input unchanged");
+                }
+            }
+        }
     }
 }

@@ -302,3 +302,84 @@ fn empty_tree() {
     c.start(&tree);
     assert!(c.next_leaf(&tree, &q).is_none());
 }
+
+/// The secondary index (grid, masks) and the compact traversal against the Java traversal:
+/// `overlapping_leaves_indexed` returns the same set as `overlapping_leaves_unsorted` restricted
+/// to the matching masks, and the masked cursor yields the same sequence as the unmasked cursor
+/// with the non-matching leaves dropped.
+#[test]
+fn indexed_and_masked_queries_match_the_traversal() {
+    for (seed, dirs) in [
+        (11i64, ShapeBoundingDirections::Orthogonal),
+        (12, ShapeBoundingDirections::FortyfiveDegree),
+        (13, ShapeBoundingDirections::FortyfiveDegree),
+    ] {
+        let octagons = dirs == ShapeBoundingDirections::FortyfiveDegree;
+        let mut r = JavaRandom::new(seed);
+        let mut tree: MinAreaTree<i32> = MinAreaTree::new(dirs);
+        let mut live: BTreeMap<i32, Vec<Option<LeafId>>> = BTreeMap::new();
+        let mut next_id = 1;
+        let mut stack = Vec::new();
+        for step in 0..6000 {
+            let op = r.next_int_bound(10);
+            if op < 5 || live.is_empty() {
+                let n = 1 + r.next_int_bound(3);
+                let id = next_id;
+                next_id += 1;
+                let mut entries = Vec::new();
+                for i in 0..n {
+                    // mostly single layer masks, some multi-layer ones and some huge shapes
+                    let mask = match r.next_int_bound(10) {
+                        0 => u64::MAX,
+                        1 => 0b1010,
+                        k => 1u64 << (k % 4),
+                    };
+                    let size = if r.next_int_bound(20) == 0 { 20000 } else { 800 };
+                    let shape = random_shape(&mut r, octagons, 5000, size);
+                    entries.push(tree.insert_shape_masked(id, i, &shape, mask));
+                }
+                live.insert(id, entries);
+            } else if op < 8 {
+                let k = r.next_int_bound(live.len() as i32) as usize;
+                let id = *live.keys().nth(k).unwrap();
+                for leaf in live.remove(&id).unwrap().into_iter().flatten() {
+                    tree.remove_leaf(leaf);
+                }
+            } else {
+                let q = random_shape(&mut r, octagons, 5000, if step % 3 == 0 { 20 } else { 3000 }).bounding_shape(&dirs).unwrap();
+                for mask in [u64::MAX, 1, 2, 4, 8] {
+                    let mut expected = Vec::new();
+                    tree.overlapping_leaves_unsorted(&q, &mut stack, &mut expected);
+                    expected.retain(|l| tree.leaf_mask(*l) & mask != 0);
+                    let mut got = Vec::new();
+                    tree.overlapping_leaves_indexed(&q, mask, &mut stack, &mut got);
+                    let mut masked = Vec::new();
+                    tree.overlapping_leaves_masked(&q, mask, &mut stack, &mut masked);
+                    // the masked traversal keeps the traversal order
+                    assert_eq!(masked, expected);
+                    let key = |l: &LeafId| l.index();
+                    got.sort_by_key(key);
+                    expected.sort_by_key(key);
+                    assert_eq!(got, expected, "seed {seed} step {step} mask {mask:#x}");
+                    // cursor: masked sequence == unmasked sequence without the other leaves
+                    let mut c1 = TreeCursor::new();
+                    c1.start(&tree);
+                    let mut all = Vec::new();
+                    while let Some(l) = c1.next_leaf(&tree, &q) {
+                        all.push(l);
+                    }
+                    all.retain(|l| tree.leaf_mask(*l) & mask != 0);
+                    let mut c2 = TreeCursor::new();
+                    c2.start(&tree);
+                    let mut part = Vec::new();
+                    while let Some(l) = c2.next_leaf_masked(&tree, &q, mask) {
+                        part.push(l);
+                    }
+                    assert_eq!(part, all);
+                }
+            }
+            tree.validate().unwrap();
+            tree.validate_masks(|_, _, m| m != 0).unwrap();
+        }
+    }
+}

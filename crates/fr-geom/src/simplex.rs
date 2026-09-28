@@ -53,6 +53,25 @@ impl Simplex {
         }
     }
 
+    /// `Simplex::new(lines).remove_redundant_lines()` for up to 32 lines, without the
+    /// intermediate simplex.
+    pub fn from_lines_without_redundant<const N: usize>(lines: [Line; N]) -> Simplex {
+        if N == 0 {
+            return Simplex::from_arc(Arc::from(Vec::new()));
+        }
+        with_buffers(N, |_, kept, sides| {
+            let k = redundant_lines_core(N, |i| &lines[i], kept, sides);
+            if k == 0 {
+                return Simplex::empty();
+            }
+            if k == N {
+                return Simplex::from_arc(Arc::from(lines));
+            }
+            let result: Arc<[Line]> = kept[..k].iter().map(|&i| lines[i].clone()).collect();
+            Simplex::from_arc(result)
+        })
+    }
+
     fn from_arc(lines: Arc<[Line]>) -> Simplex {
         Simplex {
             lines,
@@ -126,11 +145,11 @@ impl Simplex {
         }
         let prev_no = if no == 0 { len - 1 } else { no - 1 };
         let prev_dir = self.lines[prev_no as usize]
-            .direction_ref()
+            .direction()
             .get_vector()
             .as_int();
         let current_direction = self.lines[no as usize]
-            .direction_ref()
+            .direction()
             .get_vector()
             .as_int();
         prev_dir.determinant(&current_direction) > 0
@@ -532,6 +551,29 @@ impl Simplex {
         if offset == 0.0 {
             return self.clone();
         }
+        // Small per thread memo keyed by the identity of the line array (the memo holds a clone
+        // of it, so the address cannot be reused while the entry exists) and the offset: the
+        // same tree shapes are enlarged by the same clearances over and over.
+        const SLOTS: usize = 1024;
+        type Entry = Option<(Arc<[Line]>, u64, Simplex)>;
+        thread_local! {
+            static MEMO: std::cell::RefCell<Vec<Entry>> = std::cell::RefCell::new(vec![None; SLOTS]);
+        }
+        let ptr = Arc::as_ptr(&self.lines) as *const Line as usize as u64;
+        let bits = offset.to_bits();
+        let slot = ((ptr ^ bits.rotate_left(17)).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize % SLOTS;
+        if let Some(hit) = MEMO.with(|m| match &m.borrow()[slot] {
+            Some((lines, b, result)) if *b == bits && Arc::ptr_eq(lines, &self.lines) => Some(result.clone()),
+            _ => None,
+        }) {
+            return hit;
+        }
+        let result = self.enlarge_uncached(offset);
+        MEMO.with(|m| m.borrow_mut()[slot] = Some((self.lines.clone(), bits, result.clone())));
+        result
+    }
+
+    fn enlarge_uncached(&self, offset: f64) -> Simplex {
         let offset_simplex = self.offset(offset);
         let bounding_oct = match self.bounding_octagon() {
             Some(o) => o,
@@ -572,11 +614,18 @@ impl Simplex {
         if self.is_empty() || other.is_empty() {
             return Simplex::empty();
         }
-        let mut new_arr: Vec<Line> = Vec::with_capacity(self.lines.len() + other.lines.len());
-        new_arr.extend(self.lines.iter().cloned());
-        new_arr.extend(other.lines.iter().cloned());
-        crate::java_sort::sort_by(&mut new_arr, |a, b| a.compare_to(b));
-        Simplex::new(new_arr).remove_redundant_lines()
+        let a: &[Line] = &self.lines;
+        let b: &[Line] = &other.lines;
+        let n = a.len() + b.len();
+        with_buffers(n, |idx, lines, sides| {
+            let get = |j: usize| -> &Line { if j < a.len() { &a[j] } else { &b[j - a.len()] } };
+            let k = intersection_core(n, &get, idx, lines, sides);
+            if k == 0 {
+                return Simplex::empty();
+            }
+            let result: Arc<[Line]> = lines[..k].iter().map(|&i| get(idx[i]).clone()).collect();
+            Simplex::from_arc(result)
+        })
     }
 
     /// Returns the intersection of this simplex and the TileShape other.
@@ -584,16 +633,28 @@ impl Simplex {
         TileShape::Simplex(self.clone()).intersection(other)
     }
 
+    /// Java `!intersection(other).isEmpty()`, computed without building the intersection.
     pub fn intersects_simplex(&self, other: &Simplex) -> bool {
-        !self.intersection_simplex(other).is_empty()
+        intersection_nonempty(&self.lines, other.lines.len(), |j| &other.lines[j])
     }
 
     pub fn intersects_int_box(&self, b: &IntBox) -> bool {
-        self.intersects_simplex(&b.to_simplex())
+        // Java: intersects(b.toSimplex()); an empty box gives an empty simplex.
+        if b.is_empty() {
+            return false;
+        }
+        let box_lines = b.simplex_lines();
+        intersection_nonempty(&self.lines, 4, |j| &box_lines[j])
     }
 
     pub fn intersects_int_octagon(&self, octagon: &IntOctagon) -> bool {
-        self.intersects_simplex(&octagon.to_simplex())
+        // Java: intersects(octagon.toSimplex()), where toSimplex removes the redundant lines of
+        // the 8 border lines.
+        if octagon.is_empty() || self.is_empty() {
+            return false;
+        }
+        let oct = octagon.to_simplex(); // memoized
+        intersection_nonempty(&self.lines, oct.lines.len(), |j| &oct.lines[j])
     }
 
     pub fn intersects_circle(&self, circle: &Circle) -> bool {
@@ -786,138 +847,28 @@ impl Simplex {
     pub fn remove_redundant_lines(&self) -> Simplex {
         let src = &self.lines;
         let arr_len = src.len();
-        // `lines` holds indices into `src` (Java holds object references)
-        let mut lines: Vec<usize> = Vec::with_capacity(arr_len);
-        // copy the sorted lines while skipping multiple lines
-        lines.push(0);
-        let mut prev = 0usize;
-        for i in 1..arr_len {
-            if !src[i].fast_equals(&src[prev]) {
-                lines.push(i);
-                prev = i;
-            }
+        if arr_len == 0 {
+            return self.clone();
         }
-        let mut new_length: i32 = lines.len() as i32;
-        lines.resize(arr_len, 0);
-
-        // precalculated array, on which side of this line the previous and the next line
-        // do intersect
-        let mut intersection_sides: Vec<Option<Side>> = vec![None; new_length as usize];
-
-        let mut try_again = new_length > 2;
-        let mut index_of_last_removed_line: i32 = new_length;
-        while try_again {
-            try_again = false;
-            let mut prev_ind: i32 = new_length - 1;
-            let mut prev_line = lines[prev_ind as usize];
-            let mut current_line = lines[0];
-            let mut ind: i32 = 0;
-            while ind < new_length {
-                let mut next_ind: i32 = if ind == new_length - 1 { 0 } else { ind + 1 };
-                let next_line = lines[next_ind as usize];
-
-                let mut remove_line = false;
-                let prev_dir = src[prev_line].int_direction();
-                let next_dir = src[next_line].int_direction();
-                let det = prev_dir.determinant(&next_dir);
-                if det != 0.0 {
-                    // prev_line and next_line are not parallel
-                    let side = match intersection_sides[ind as usize] {
-                        Some(s) => s,
-                        None => {
-                            let s = src[current_line]
-                                .side_of_intersection(&src[prev_line], &src[next_line]);
-                            intersection_sides[ind as usize] = Some(s);
-                            s
-                        }
-                    };
-                    if det > 0.0 {
-                        // direction of next_line is bigger than direction of prev_line: if the
-                        // intersection of prev_line and next_line is on the left of current_line,
-                        // current_line does not contribute to the shape of the simplex
-                        remove_line = side != Side::OnTheLeft;
-                    } else if side == Side::OnTheLeft {
-                        // direction of next_line is smaller than direction of prev_line
-                        let current_direction = src[current_line].int_direction();
-                        if prev_dir.determinant(&current_direction) > 0.0 {
-                            // the halfplane defined by current_line does not intersect with the
-                            // simplex defined by prev_line and next_line: the simplex is empty
-                            new_length = 0;
-                            break;
-                        }
-                    }
-                } else {
-                    // prev_line and next_line are parallel
-                    if src[prev_line].side_of(&src[next_line].a) == Side::OnTheLeft {
-                        // the half-planes defined by prev_line and next_line do not intersect
-                        new_length = 0;
-                        break;
-                    }
-                }
-                if remove_line {
-                    try_again = true;
-                    new_length -= 1;
-                    for i in ind..new_length {
-                        lines[i as usize] = lines[i as usize + 1];
-                        intersection_sides[i as usize] = intersection_sides[i as usize + 1];
-                    }
-                    if new_length < 3 {
-                        try_again = false;
-                        break;
-                    }
-                    // reset 3 precalculated intersection sides
-                    if ind == 0 {
-                        prev_ind = new_length - 1;
-                    }
-                    intersection_sides[prev_ind as usize] = None;
-                    next_ind = if ind >= new_length { 0 } else { ind };
-                    intersection_sides[next_ind as usize] = None;
-                    ind -= 1;
-                    index_of_last_removed_line = ind;
-                } else {
-                    prev_line = current_line;
-                    prev_ind = ind;
-                }
-                current_line = next_line;
-                if !try_again && ind >= index_of_last_removed_line {
-                    // tried all lines without removing one
-                    break;
-                }
-                ind += 1;
-            }
-            if new_length == 0 {
-                try_again = false;
-            }
-        }
-
-        if new_length == 2 {
-            let l0 = &src[lines[0]];
-            let l1 = &src[lines[1]];
-            if l0.is_parallel(l1) {
-                if l0.direction_ref() == l1.direction_ref() {
-                    // one of the two remaining lines is redundant
-                    if l1.side_of(&l0.a) == Side::OnTheLeft {
-                        lines[0] = lines[1];
-                    }
-                    new_length -= 1;
-                } else {
-                    // the two remaining lines have opposite direction; the simplex may be empty
-                    if l1.side_of(&l0.a) == Side::OnTheLeft {
-                        new_length = 0;
-                    }
-                }
-            }
-        }
-        if new_length as usize == arr_len {
+        let mut lines_buf = [0usize; SMALL];
+        let mut sides_buf = [None; SMALL];
+        let mut lines_vec;
+        let mut sides_vec;
+        let (lines, sides): (&mut [usize], &mut [Option<Side>]) = if arr_len <= SMALL {
+            (&mut lines_buf[..arr_len], &mut sides_buf[..arr_len])
+        } else {
+            lines_vec = vec![0usize; arr_len];
+            sides_vec = vec![None; arr_len];
+            (&mut lines_vec[..], &mut sides_vec[..])
+        };
+        let new_length = redundant_lines_core(arr_len, |i| &src[i], lines, sides);
+        if new_length == arr_len {
             return self.clone(); // nothing removed
         }
         if new_length == 0 {
             return Simplex::empty();
         }
-        let result: Arc<[Line]> = lines[..new_length as usize]
-            .iter()
-            .map(|&i| src[i].clone())
-            .collect();
+        let result: Arc<[Line]> = lines[..new_length].iter().map(|&i| src[i].clone()).collect();
         Simplex::from_arc(result)
     }
 
@@ -959,7 +910,7 @@ impl Simplex {
         };
         let mut first_projection_dir = IntDirection::NULL;
         let mut second_projection_dir = IntDirection::NULL;
-        let prev_inner_dir = prev_inner_line.direction_ref().opposite().as_int();
+        let prev_inner_dir = prev_inner_line.direction().opposite().as_int();
         let next_inner_dir = current_inner_line.int_direction();
         let outer_len = outer_simplex.lines.len();
         let mut outer_line_no = 0usize;
@@ -1048,6 +999,193 @@ impl Simplex {
             ])
         }
     }
+}
+
+
+/// Calls `f` with index, line and side buffers of length `n` (on the stack for small `n`).
+#[inline]
+fn with_buffers<R>(n: usize, f: impl FnOnce(&mut [usize], &mut [usize], &mut [Option<Side>]) -> R) -> R {
+    if n <= SMALL {
+        let mut idx = [0usize; SMALL];
+        let mut lines = [0usize; SMALL];
+        let mut sides = [None; SMALL];
+        f(&mut idx[..n], &mut lines[..n], &mut sides[..n])
+    } else {
+        let mut idx = vec![0usize; n];
+        let mut lines = vec![0usize; n];
+        let mut sides = vec![None; n];
+        f(&mut idx, &mut lines, &mut sides)
+    }
+}
+
+/// Java `new Simplex(concat).sortLines().removeRedundantLines()` for the `n` lines `get(0..n)`
+/// (the lines of the first simplex followed by the lines of the second): sorts the indices
+/// `idx` with Java's TimSort by `Line.compareTo` and runs the redundancy removal on the sorted
+/// lines. Returns the number of remaining lines; the remaining line `i` is `get(idx[lines[i]])`.
+fn intersection_core<'a>(
+    n: usize,
+    get: &impl Fn(usize) -> &'a Line,
+    idx: &mut [usize],
+    lines: &mut [usize],
+    sides: &mut [Option<Side>],
+) -> usize {
+    for (k, v) in idx.iter_mut().enumerate() {
+        *v = k;
+    }
+    crate::java_sort::sort_indices_by(idx, |x, y| get(x).compare_to(get(y)));
+    let idx: &[usize] = idx;
+    redundant_lines_core(n, |i| get(idx[i]), lines, sides)
+}
+
+/// `!a.intersection(b).isEmpty()` for the non-empty simplex lines `a` and the `b_len` lines
+/// `b(0..b_len)` of the second simplex.
+fn intersection_nonempty<'a>(a: &'a [Line], b_len: usize, b: impl Fn(usize) -> &'a Line) -> bool {
+    if a.is_empty() || b_len == 0 {
+        return false;
+    }
+    let n = a.len() + b_len;
+    with_buffers(n, |idx, lines, sides| {
+        let get = |j: usize| -> &'a Line { if j < a.len() { &a[j] } else { b(j - a.len()) } };
+        intersection_core(n, &get, idx, lines, sides) != 0
+    })
+}
+
+/// Capacity of the stack buffers used for small simplices.
+const SMALL: usize = 32;
+
+/// The algorithm of Java `Simplex.removeRedundantLines` on `arr_len` lines given by `line(i)`
+/// (in the order of the array). Leaves the indices of the remaining lines in
+/// `lines[..result]`; `lines` and `sides` must hold at least `arr_len` entries.
+fn redundant_lines_core<'a, F: Fn(usize) -> &'a Line>(
+    arr_len: usize,
+    line: F,
+    lines: &mut [usize],
+    sides: &mut [Option<Side>],
+) -> usize {
+    // `lines` holds indices (Java holds object references)
+    // copy the sorted lines while skipping multiple lines
+    lines[0] = 0;
+    let mut count = 1usize;
+    let mut prev = 0usize;
+    for i in 1..arr_len {
+        if !line(i).fast_equals(line(prev)) {
+            lines[count] = i;
+            count += 1;
+            prev = i;
+        }
+    }
+    let mut new_length: i32 = count as i32;
+
+    // precalculated array, on which side of this line the previous and the next line
+    // do intersect
+    let intersection_sides = &mut sides[..new_length as usize];
+    intersection_sides.fill(None);
+
+    let mut try_again = new_length > 2;
+    let mut index_of_last_removed_line: i32 = new_length;
+    while try_again {
+        try_again = false;
+        let mut prev_ind: i32 = new_length - 1;
+        let mut prev_line = lines[prev_ind as usize];
+        let mut current_line = lines[0];
+        let mut ind: i32 = 0;
+        while ind < new_length {
+            let mut next_ind: i32 = if ind == new_length - 1 { 0 } else { ind + 1 };
+            let next_line = lines[next_ind as usize];
+
+            let mut remove_line = false;
+            let prev_dir = line(prev_line).int_direction();
+            let next_dir = line(next_line).int_direction();
+            let det = prev_dir.determinant(&next_dir);
+            if det != 0.0 {
+                // prev_line and next_line are not parallel
+                let side = match intersection_sides[ind as usize] {
+                    Some(s) => s,
+                    None => {
+                        let s = line(current_line)
+                            .side_of_intersection(line(prev_line), line(next_line));
+                        intersection_sides[ind as usize] = Some(s);
+                        s
+                    }
+                };
+                if det > 0.0 {
+                    // direction of next_line is bigger than direction of prev_line: if the
+                    // intersection of prev_line and next_line is on the left of current_line,
+                    // current_line does not contribute to the shape of the simplex
+                    remove_line = side != Side::OnTheLeft;
+                } else if side == Side::OnTheLeft {
+                    // direction of next_line is smaller than direction of prev_line
+                    let current_direction = line(current_line).int_direction();
+                    if prev_dir.determinant(&current_direction) > 0.0 {
+                        // the halfplane defined by current_line does not intersect with the
+                        // simplex defined by prev_line and next_line: the simplex is empty
+                        new_length = 0;
+                        break;
+                    }
+                }
+            } else {
+                // prev_line and next_line are parallel
+                if line(prev_line).side_of(&line(next_line).a) == Side::OnTheLeft {
+                    // the half-planes defined by prev_line and next_line do not intersect
+                    new_length = 0;
+                    break;
+                }
+            }
+            if remove_line {
+                try_again = true;
+                new_length -= 1;
+                for i in ind..new_length {
+                    lines[i as usize] = lines[i as usize + 1];
+                    intersection_sides[i as usize] = intersection_sides[i as usize + 1];
+                }
+                if new_length < 3 {
+                    try_again = false;
+                    break;
+                }
+                // reset 3 precalculated intersection sides
+                if ind == 0 {
+                    prev_ind = new_length - 1;
+                }
+                intersection_sides[prev_ind as usize] = None;
+                next_ind = if ind >= new_length { 0 } else { ind };
+                intersection_sides[next_ind as usize] = None;
+                ind -= 1;
+                index_of_last_removed_line = ind;
+            } else {
+                prev_line = current_line;
+                prev_ind = ind;
+            }
+            current_line = next_line;
+            if !try_again && ind >= index_of_last_removed_line {
+                // tried all lines without removing one
+                break;
+            }
+            ind += 1;
+        }
+        if new_length == 0 {
+            try_again = false;
+        }
+    }
+
+    if new_length == 2 {
+        let l0 = &line(lines[0]);
+        let l1 = &line(lines[1]);
+        if l0.is_parallel(l1) {
+            if l0.direction() == l1.direction() {
+                // one of the two remaining lines is redundant
+                if l1.side_of(&l0.a) == Side::OnTheLeft {
+                    lines[0] = lines[1];
+                }
+                new_length -= 1;
+            } else {
+                // the two remaining lines have opposite direction; the simplex may be empty
+                if l1.side_of(&l0.a) == Side::OnTheLeft {
+                    new_length = 0;
+                }
+            }
+        }
+    }
+    new_length as usize
 }
 
 impl crate::polyline_shape::PolylineShapeImpl for Simplex {

@@ -11,6 +11,7 @@ fr-settings = { path = "../fr-settings" }
 fr-io = { path = "../fr-io" }
 fr-engine = { path = "../fr-engine" }
 log = "0.4"
+mimalloc = { version = "0.1", default-features = false }
 
 [dev-dependencies]
 fr-geom = { path = "../fr-geom" }

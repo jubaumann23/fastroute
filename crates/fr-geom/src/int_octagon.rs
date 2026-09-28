@@ -522,8 +522,35 @@ impl IntOctagon {
         if self.is_empty() {
             return Simplex::empty();
         }
-        let lines: Vec<Line> = (0..8).map(|i| self.border_line(i)).collect();
-        Simplex::new(lines).remove_redundant_lines()
+        // Small per thread memo (the conversion is pure; sharing the result is like Java's
+        // memorized simplex).
+        const SLOTS: usize = 256;
+        thread_local! {
+            static MEMO: std::cell::RefCell<Vec<Option<(IntOctagon, Simplex)>>> = std::cell::RefCell::new(vec![None; SLOTS]);
+        }
+        let h = [
+            self.left_x,
+            self.bottom_y,
+            self.right_x,
+            self.top_y,
+            self.upper_left_diagonal_x,
+            self.lower_right_diagonal_x,
+            self.lower_left_diagonal_x,
+            self.upper_right_diagonal_x,
+        ]
+        .iter()
+        .fold(0u64, |h, &v| (h ^ v as u32 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        let slot = (h >> 56) as usize % SLOTS;
+        if let Some(hit) = MEMO.with(|m| match &m.borrow()[slot] {
+            Some((o, simplex)) if o == self => Some(simplex.clone()),
+            _ => None,
+        }) {
+            return hit;
+        }
+        // Java: new Simplex(lines).removeRedundantLines()
+        let result = Simplex::from_lines_without_redundant(std::array::from_fn::<Line, 8, _>(|i| self.border_line(i as i32)));
+        MEMO.with(|m| m.borrow_mut()[slot] = Some((*self, result.clone())));
+        result
     }
 
     pub fn bounding_shape(&self, dirs: &ShapeBoundingDirections) -> RegularTileShape {

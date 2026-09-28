@@ -107,6 +107,8 @@ engine/room churn (arena reuse, cached door shapes); maze `TreeSet` allocation (
 `BigInteger` fallbacks (i128 fast path); O(n²) `ReadSortedRouteItems` (single sort);
 optimizer evaluates all candidates but applies one (parallel evaluation).
 
+Done so far (all result-neutral, with measurements): see `docs/PERFORMANCE.md`.
+
 ## Parity
 
 - **Exact** (target): Java with `optimizer.max_threads=1`, time limits disabled/not firing.
