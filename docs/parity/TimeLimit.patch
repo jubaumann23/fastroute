@@ -1,6 +1,6 @@
 --- freerouting/src/main/java/app/freerouting/datastructures/TimeLimit.java	2026-09-27 23:07:28
-+++ freerouting-parity/src/main/java/app/freerouting/datastructures/TimeLimit.java	2026-09-28 00:37:53
-@@ -2,11 +2,21 @@
++++ freerouting-parity/src/main/java/app/freerouting/datastructures/TimeLimit.java	2026-09-28 08:44:30
+@@ -2,12 +2,42 @@
  
  import java.util.Date;
  
@@ -8,33 +8,62 @@
 +/**
 + * Class used to cancel a performance critical algorithm after a time limit is exceeded.
 + *
-+ * <p>PARITY BUILD: with -Dfreerouting.parity.disableTimeLimits=true limits never fire; the
-+ * first time a limit would have fired, a PARITY_TIME_LIMIT line is printed to stderr so runs can
-+ * be flagged as time-sensitive.
++ * <p>PARITY BUILD. System property {@code freerouting.parity.timeLimitMode}:
++ *
++ * <ul>
++ *   <li>{@code wall} (default): original wall-clock behaviour.
++ *   <li>{@code disabled}: limits never fire (can loop forever on some boards).
++ *   <li>{@code count}: deterministic budget; the limit fires once {@code limitExceeded()} has been
++ *       called more than {@code timeLimit * factor} times on this instance, where factor is {@code
++ *       freerouting.parity.timeLimitFactor} (default 10). The Rust port implements the same rule,
++ *       so both sides stop at the same call.
++ * </ul>
++ *
++ * <p>The legacy flag {@code -Dfreerouting.parity.disableTimeLimits=true} selects {@code count}.
++ * The first time a limit fires (or would have fired in disabled mode) a PARITY_TIME_LIMIT line is
++ * printed to stderr.
 + */
  public class TimeLimit {
  
-+  private static final boolean DISABLED =
-+      Boolean.getBoolean("freerouting.parity.disableTimeLimits");
++  private static final String MODE = mode();
++  private static final long FACTOR = Long.getLong("freerouting.parity.timeLimitFactor", 10L);
 +
    private final long timeStamp;
    private int timeLimit;
++  private long calls;
 +  private boolean reported;
  
++  private static String mode() {
++    String m = System.getProperty("freerouting.parity.timeLimitMode");
++    if (m != null) {
++      return m;
++    }
++    return Boolean.getBoolean("freerouting.parity.disableTimeLimits") ? "count" : "wall";
++  }
++
    /** Creates a new instance with a time limit of milliSeconds milliseconds. */
    public TimeLimit(int milliSeconds) {
-@@ -17,7 +27,13 @@
+     this.timeLimit = milliSeconds;
+@@ -16,8 +46,20 @@
+ 
    /** Returns true, if the time limit provided in the constructor of this class is exceeded. */
    public boolean limitExceeded() {
-     long currentTime = new Date().getTime();
+-    long currentTime = new Date().getTime();
 -    return currentTime - this.timeStamp > this.timeLimit;
-+    boolean exceeded = currentTime - this.timeStamp > this.timeLimit;
++    boolean exceeded;
++    if ("count".equals(MODE)) {
++      ++calls;
++      exceeded = calls > Math.max(0L, (long) timeLimit) * FACTOR;
++    } else {
++      long currentTime = new Date().getTime();
++      exceeded = currentTime - this.timeStamp > this.timeLimit;
++    }
 +    if (exceeded && !reported) {
 +      reported = true;
 +      System.err.println(
-+          "PARITY_TIME_LIMIT limit_ms=" + timeLimit + " disabled=" + DISABLED);
++          "PARITY_TIME_LIMIT mode=" + MODE + " limit_ms=" + timeLimit + " calls=" + calls);
 +    }
-+    return exceeded && !DISABLED;
++    return exceeded && !"disabled".equals(MODE);
    }
  
    /** Multiplies this TimeLimit by factor. */
