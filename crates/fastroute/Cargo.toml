@@ -9,3 +9,8 @@ version.workspace = true
 fr-dsn = { path = "../fr-dsn" }
 fr-settings = { path = "../fr-settings" }
 fr-io = { path = "../fr-io" }
+fr-engine = { path = "../fr-engine" }
+log = "0.4"
+
+[dev-dependencies]
+fr-geom = { path = "../fr-geom" }

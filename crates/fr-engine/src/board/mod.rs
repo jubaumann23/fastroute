@@ -44,7 +44,7 @@ pub use item::{
 };
 pub use item_list::{ItemListCursor, ItemRepository, ItemSet};
 pub use pin_exits::TraceExitRestriction;
-pub use routing_board::{AutorouteAttemptState, ForcedTraceEnd, RoutingBoard, RoutingFailureLog, TimeLimitPolicy};
+pub use routing_board::{AutorouteAttemptState, ForcedTraceEnd, RoutingBoard, RoutingFailureLog, TimeLimitMode, TimeLimitPolicy};
 pub use search_tree::{SearchTreeManager, ShapeSearchTree, TreeEntry, TreeKind, TreeObject, DEFAULT_TREE};
 pub use selection_filter::{ItemSelectionFilter, SelectableChoices};
 pub use shape_trace_entries::ShapeTraceEntries;

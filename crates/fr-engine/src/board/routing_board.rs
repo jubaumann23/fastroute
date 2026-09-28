@@ -127,29 +127,49 @@ impl RoutingFailureLog {
 }
 
 /// How the Java `new TimeLimit(ms)` calls of the board algorithms are created.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimeLimitMode {
+    /// Java wall clock limits.
+    WallClock,
+    /// Limits never fire.
+    Disabled,
+    /// Deterministic call budget of the Java parity build (`limit_ms * factor` calls, see
+    /// [`TimeLimit::Count`]).
+    Count { factor: i64 },
+}
+
+/// How the Java `new TimeLimit(ms)` calls of the board algorithms are created.
 #[derive(Clone, Debug)]
 pub struct TimeLimitPolicy {
-    /// False: all limits are [`TimeLimit::Disabled`] (deterministic parity mode).
-    pub enabled: bool,
-    /// Set when an enabled limit fired (the run is then not comparable with Java).
+    pub mode: TimeLimitMode,
+    /// Set when a limit fired (with wall clock limits the run is then time dependent).
     pub fired: Option<Arc<AtomicBool>>,
 }
 
 impl Default for TimeLimitPolicy {
     fn default() -> Self {
-        TimeLimitPolicy { enabled: true, fired: None }
+        TimeLimitPolicy { mode: TimeLimitMode::WallClock, fired: None }
     }
 }
 
 impl TimeLimitPolicy {
     /// A policy creating only disabled limits.
     pub fn disabled() -> Self {
-        TimeLimitPolicy { enabled: false, fired: None }
+        TimeLimitPolicy { mode: TimeLimitMode::Disabled, fired: None }
+    }
+
+    /// The deterministic count mode of the Java parity build (default factor 10).
+    pub fn count() -> Self {
+        TimeLimitPolicy { mode: TimeLimitMode::Count { factor: crate::datastructures::time_limit::DEFAULT_COUNT_FACTOR }, fired: None }
     }
 
     /// Java `new TimeLimit(milliSeconds)`.
     pub fn make(&self, milli_seconds: i32) -> TimeLimit {
-        let t = TimeLimit::new(milli_seconds, self.enabled);
+        let t = match self.mode {
+            TimeLimitMode::WallClock => TimeLimit::wall_clock(milli_seconds),
+            TimeLimitMode::Disabled => TimeLimit::disabled(milli_seconds),
+            TimeLimitMode::Count { factor } => TimeLimit::count(milli_seconds, factor),
+        };
         match &self.fired {
             Some(f) => t.with_fired_flag(f.clone()),
             None => t,

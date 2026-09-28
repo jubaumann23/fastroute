@@ -2,11 +2,15 @@
 //! the stop requests of `core/StoppableThread.java`.
 //!
 //! A wall-clock limit makes results depend on machine speed. For exact parity runs the engine
-//! uses [`TimeLimit::Disabled`] (never fires), and every limit can carry a "fired" flag
-//! ([`TimeLimit::with_fired_flag`]) so a run in which any limit actually fired can be flagged
-//! as not comparable.
+//! uses [`TimeLimit::Count`], the deterministic budget of the Java parity build
+//! (`docs/parity/TimeLimit.patch`, `-Dfreerouting.parity.timeLimitMode=count`, selected by
+//! `-Dfreerouting.parity.disableTimeLimits=true`): the limit fires once `limitExceeded()` has
+//! been called more than `limit_ms * factor` times on the instance (Java object identity =
+//! the clones of one `TimeLimit` share the counter). [`TimeLimit::Disabled`] never fires (the
+//! replay vectors were generated like that). Every limit can carry a "fired" flag
+//! ([`TimeLimit::with_fired_flag`]) so a run in which any limit actually fired can be flagged.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -26,7 +30,26 @@ pub enum TimeLimit {
         /// Kept so `limit_ms`/`multiply` behave like for a wall clock limit.
         limit_ms: i32,
     },
+    /// Deterministic call budget (Java parity build, count mode): exceeded once
+    /// [`limit_exceeded`](Self::limit_exceeded) has been called more than
+    /// `max(0, limit_ms) * factor` times on this instance or its clones.
+    Count {
+        state: Arc<CountState>,
+        factor: i64,
+        fired: Option<Arc<AtomicBool>>,
+    },
 }
+
+/// The shared state of a [`TimeLimit::Count`] (the Java object's `timeLimit` and `calls`).
+#[derive(Debug)]
+pub struct CountState {
+    limit_ms: AtomicI32,
+    calls: AtomicI64,
+    reported: AtomicBool,
+}
+
+/// The default factor of the count mode (Java `freerouting.parity.timeLimitFactor`).
+pub const DEFAULT_COUNT_FACTOR: i64 = 10;
 
 impl TimeLimit {
     /// Java `new TimeLimit(milliSeconds)`: starts the clock now.
@@ -37,6 +60,19 @@ impl TimeLimit {
     /// A limit that never fires.
     pub fn disabled(milli_seconds: i32) -> Self {
         TimeLimit::Disabled { limit_ms: milli_seconds }
+    }
+
+    /// A deterministic call budget of `milli_seconds * factor` calls.
+    pub fn count(milli_seconds: i32, factor: i64) -> Self {
+        TimeLimit::Count {
+            state: Arc::new(CountState {
+                limit_ms: AtomicI32::new(milli_seconds),
+                calls: AtomicI64::new(0),
+                reported: AtomicBool::new(false),
+            }),
+            factor,
+            fired: None,
+        }
     }
 
     /// Creates a wall clock limit if `enabled`, otherwise a disabled one.
@@ -51,8 +87,9 @@ impl TimeLimit {
     /// Attaches a flag that is set to `true` whenever [`limit_exceeded`](Self::limit_exceeded)
     /// returns true (parity flagging). Several limits may share one flag.
     pub fn with_fired_flag(mut self, flag: Arc<AtomicBool>) -> Self {
-        if let TimeLimit::WallClock { fired, .. } = &mut self {
-            *fired = Some(flag);
+        match &mut self {
+            TimeLimit::WallClock { fired, .. } | TimeLimit::Count { fired, .. } => *fired = Some(flag),
+            TimeLimit::Disabled { .. } => {}
         }
         self
     }
@@ -61,6 +98,15 @@ impl TimeLimit {
     pub fn limit_ms(&self) -> i32 {
         match self {
             TimeLimit::WallClock { limit_ms, .. } | TimeLimit::Disabled { limit_ms } => *limit_ms,
+            TimeLimit::Count { state, .. } => state.limit_ms.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Number of [`limit_exceeded`](Self::limit_exceeded) calls of a count limit (0 otherwise).
+    pub fn calls(&self) -> i64 {
+        match self {
+            TimeLimit::Count { state, .. } => state.calls.load(Ordering::Relaxed),
+            _ => 0,
         }
     }
 
@@ -68,6 +114,20 @@ impl TimeLimit {
     pub fn limit_exceeded(&self) -> bool {
         match self {
             TimeLimit::Disabled { .. } => false,
+            TimeLimit::Count { state, factor, fired } => {
+                let calls = state.calls.fetch_add(1, Ordering::Relaxed) + 1;
+                let limit = state.limit_ms.load(Ordering::Relaxed);
+                let exceeded = calls > (limit.max(0) as i64).wrapping_mul(*factor);
+                if exceeded {
+                    if let Some(flag) = fired {
+                        flag.store(true, Ordering::Relaxed);
+                    }
+                    if !state.reported.swap(true, Ordering::Relaxed) {
+                        log::warn!(target: "parity", "PARITY_TIME_LIMIT mode=count limit_ms={limit} calls={calls}");
+                    }
+                }
+                exceeded
+            }
             TimeLimit::WallClock { start, limit_ms, fired } => {
                 let elapsed_ms = start.elapsed().as_millis().min(i64::MAX as u128) as i64;
                 let exceeded = elapsed_ms > *limit_ms as i64;
@@ -87,21 +147,22 @@ impl TimeLimit {
         if factor <= 0.0 {
             return;
         }
-        let limit = match self {
-            TimeLimit::WallClock { limit_ms, .. } | TimeLimit::Disabled { limit_ms } => limit_ms,
-        };
-        let mut new_limit = factor * *limit as f64;
+        let mut new_limit = factor * self.limit_ms() as f64;
         // Java Math.min propagates NaN; (int) NaN == 0.
         if !new_limit.is_nan() {
             new_limit = new_limit.min(i32::MAX as f64);
         }
-        *limit = new_limit as i32;
+        match self {
+            TimeLimit::WallClock { limit_ms, .. } | TimeLimit::Disabled { limit_ms } => *limit_ms = new_limit as i32,
+            // (shared with the clones, like the Java object)
+            TimeLimit::Count { state, .. } => state.limit_ms.store(new_limit as i32, Ordering::Relaxed),
+        }
     }
 
     /// Time left until the limit fires (`None` for a disabled limit).
     pub fn remaining(&self) -> Option<Duration> {
         match self {
-            TimeLimit::Disabled { .. } => None,
+            TimeLimit::Disabled { .. } | TimeLimit::Count { .. } => None,
             TimeLimit::WallClock { start, limit_ms, .. } => {
                 let limit = Duration::from_millis((*limit_ms).max(0) as u64);
                 Some(limit.saturating_sub(start.elapsed()))
@@ -202,6 +263,32 @@ mod tests {
         let mut t = TimeLimit::disabled(7);
         t.multiply(f64::NAN);
         assert_eq!(t.limit_ms(), 0);
+    }
+
+    #[test]
+    fn count_mode_budget_is_shared_by_clones() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let t = TimeLimit::count(3, 10).with_fired_flag(flag.clone());
+        let c = t.clone();
+        for i in 0..30 {
+            // calls 1..=30 do not exceed 3 * 10
+            let x = if i % 2 == 0 { &t } else { &c };
+            assert!(!x.limit_exceeded());
+        }
+        assert!(!flag.load(Ordering::Relaxed));
+        assert!(c.limit_exceeded()); // call 31
+        assert!(t.limit_exceeded());
+        assert!(flag.load(Ordering::Relaxed));
+        assert_eq!(t.calls(), 32);
+        // independent instance
+        let u = TimeLimit::count(0, 10);
+        assert!(u.limit_exceeded()); // 1 > 0
+        let mut v = TimeLimit::count(1, 10);
+        let w = v.clone();
+        v.multiply(2.0);
+        assert_eq!(w.limit_ms(), 2);
+        let n = TimeLimit::count(-5, 10);
+        assert!(n.limit_exceeded()); // max(0, -5) * 10 = 0
     }
 
     #[test]

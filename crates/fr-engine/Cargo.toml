@@ -10,6 +10,7 @@ fr-geom = { path = "../fr-geom" }
 fr-jcompat = { path = "../fr-jcompat" }
 fr-settings = { path = "../fr-settings" }
 log = "0.4"
+rayon = "1"
 
 [dev-dependencies]
 num-bigint = "0.4"

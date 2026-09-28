@@ -136,3 +136,9 @@ DAC2020_bm01: 154 s wall, 1.96 GB RSS, 1455 GB allocated in total; 8 unrouted, 2
 - Unrouted SES from `fastroute -de x.dsn -do x.ses` is byte-identical to the Java CLI
   (parity build, fanout/router/optimizer disabled) on all 20 benchmark boards; the
   fr-io tests cover 2470 corpus DSNs.
+- U9 pipeline (`fr-engine/src/pipeline`, CLI `fastroute`): `fastroute --parity` (time limits
+  disabled, optimizer `java-compat` = Java with `optimizer.max_threads=1`) writes SES files
+  byte-identical to `scripts/java-parity.sh` with identical per-pass scores; checked with
+  `scripts/parity-route.sh` (see the U9 notes in `fr-engine/src/pipeline/mod.rs`). Default CLI
+  mode: `parallel` optimizer (fresh baseline clone per candidate, deterministic for any thread
+  count, not Java-identical) with wall clock limits.
