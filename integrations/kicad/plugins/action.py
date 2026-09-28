@@ -1,6 +1,7 @@
 """PCB editor action: Tools > External Plugins > fastroute autorouter."""
 
 import json
+import logging
 import threading
 from pathlib import Path
 
@@ -167,6 +168,16 @@ class FastrouteAction(pcbnew.ActionPlugin):
             self.icon_file_name = str(icon)
 
     def Run(self):
+        log = logging.getLogger("fastroute")
+        log.info("run requested")
+        try:
+            self._run()
+        except Exception as exc:
+            log.exception("fastroute plugin failed: %s", exc)
+            wx.MessageBox(f"fastroute plugin error:\n{exc}", "fastroute", wx.OK | wx.ICON_ERROR)
+
+    def _run(self):
+        log = logging.getLogger("fastroute")
         board = pcbnew.GetBoard()
         parent = wx.GetActiveWindow()
         if core.find_binary() is None:
@@ -203,6 +214,10 @@ class FastrouteAction(pcbnew.ActionPlugin):
         progress.Destroy()
         pcbnew.Refresh()
 
+        if result is not None:
+            log.info("result ok=%s message=%s unrouted=%s violations=%s",
+                     result.ok, result.message.splitlines()[0] if result.message else "",
+                     result.unrouted, result.violations)
         if result is None or result.cancelled:
             return
         if not result.ok:

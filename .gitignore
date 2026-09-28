@@ -5,3 +5,4 @@
 __pycache__/
 integrations/kicad/plugins/settings.json
 integrations/kicad/plugins/bin/
+fastroute_plugin.log
