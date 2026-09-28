@@ -1,0 +1,37 @@
+(session "Issue508-SMD-routing-issue-demo.ses"
+  (base_design "Issue508-SMD-routing-issue-demo.dsn")
+  (placement
+    (resolution um 10)
+    (component "MiniQFN-6"
+      (place U1 750000 -450000 front 0)
+    )
+    (component "0603"
+      (place R1 200000 -350000 front 0)
+      (place R2 1300000 -350000 front 0)
+      (place R3 200000 -550000 front 0)
+      (place R4 1300000 -550000 front 0)
+    )
+  )
+  (was_is
+  )
+  (routes 
+    (resolution um 10)
+    (parser
+      (host_cad "freerouting-test")
+      (host_version "1.0")
+    )
+    (library_out 
+      (padstack "Via[0-1]_600:300_um"
+        (shape
+          (circle Top 6000 0 0)
+        )
+        (shape
+          (circle Bottom 6000 0 0)
+        )
+        (attach off)
+      )
+    )
+    (network_out 
+    )
+  )
+)

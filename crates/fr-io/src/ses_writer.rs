@@ -70,7 +70,12 @@ struct Ctx<'b> {
     ct: CoordinateTransform,
 }
 
-fn write_shape_int(file: &mut W<'_>, id: &IdentifierType, layer: &str, s: &DsnShapeCoords) -> io::Result<()> {
+fn write_shape_int(
+    file: &mut W<'_>,
+    id: &IdentifierType,
+    layer: &str,
+    s: &DsnShapeCoords,
+) -> io::Result<()> {
     match s {
         DsnShapeCoords::Rectangle(c) => {
             file.new_line();
@@ -111,7 +116,12 @@ fn write_shape_int(file: &mut W<'_>, id: &IdentifierType, layer: &str, s: &DsnSh
 }
 
 /// `Shape.writeScope` (double coordinates, `Double.toString`).
-fn write_shape(file: &mut W<'_>, id: &IdentifierType, layer: &str, s: &DsnShapeCoords) -> io::Result<()> {
+fn write_shape(
+    file: &mut W<'_>,
+    id: &IdentifierType,
+    layer: &str,
+    s: &DsnShapeCoords,
+) -> io::Result<()> {
     let d = |v: f64| double_to_string(v);
     match s {
         DsnShapeCoords::Rectangle(c) => {
@@ -158,7 +168,11 @@ fn write_fixed_state(file: &mut W<'_>, f: FixedState) -> io::Result<()> {
     }
     file.new_line();
     file.write("(type ")?;
-    file.write(if f == FixedState::SystemFixed { "fix)" } else { "protect)" })
+    file.write(if f == FixedState::SystemFixed {
+        "fix)"
+    } else {
+        "protect)"
+    })
 }
 
 impl Ctx<'_> {
@@ -172,7 +186,12 @@ impl Ctx<'_> {
         file.write(")")
     }
 
-    fn write_session(&self, file: &mut W<'_>, session_name: &str, design_name: &str) -> io::Result<()> {
+    fn write_session(
+        &self,
+        file: &mut W<'_>,
+        session_name: &str,
+        design_name: &str,
+    ) -> io::Result<()> {
         file.start_scope(false);
         file.write("session ")?;
         self.id.write(session_name, file)?;
@@ -214,12 +233,18 @@ impl Ctx<'_> {
                 file.new_line();
                 file.write("(place ")?;
                 self.id.write(&c.name, file)?;
-                let loc = self.ct.board_to_dsn_point(&c.get_location().expect("placed").to_float());
+                let loc = self
+                    .ct
+                    .board_to_dsn_point(&c.get_location().expect("placed").to_float());
                 file.write(" ")?;
                 file.write(&round(loc[0]).to_string())?;
                 file.write(" ")?;
                 file.write(&round(loc[1]).to_string())?;
-                file.write(if c.placed_on_front() { " front " } else { " back " })?;
+                file.write(if c.placed_on_front() {
+                    " front "
+                } else {
+                    " back "
+                })?;
                 file.write(&format_placement_rotation(c.get_rotation_in_degree()))?;
                 if c.position_fixed && !b.communication.host_cad_is_kicad() {
                     file.new_line();
@@ -238,7 +263,9 @@ impl Ctx<'_> {
     fn pin_name(&self, key: ItemKey) -> Option<String> {
         let b = self.board;
         let it = b.item(key);
-        let ItemKind::Pin(p) = &it.kind else { return None };
+        let ItemKind::Pin(p) = &it.kind else {
+            return None;
+        };
         let comp = b.components.get(it.component_no());
         let pkg = b.library.packages.get(comp.get_package());
         let pin = pkg.get_pin(p.pin_index)?;
@@ -250,9 +277,13 @@ impl Ctx<'_> {
         file.start_scope(true);
         file.write("was_is")?;
         for k in b.get_pins() {
-            let ItemKind::Pin(p) = &b.item(k).kind else { continue };
+            let ItemKind::Pin(p) = &b.item(k).kind else {
+                continue;
+            };
             let Some(to) = p.changed_to else { continue };
-            let Some(to_key) = b.get_item(to) else { continue };
+            let Some(to_key) = b.get_item(to) else {
+                continue;
+            };
             file.new_line();
             file.write("(pins ")?;
             for (i, key) in [k, to_key].into_iter().enumerate() {
@@ -315,7 +346,12 @@ impl Ctx<'_> {
                 file.new_line();
                 file.write("(write_resolution ")?;
                 // Java charName.substring(0, 1)
-                let first: String = wr.char_name.encode_utf16().take(1).map(|u| char::from_u32(u as u32).unwrap_or('?')).collect();
+                let first: String = wr
+                    .char_name
+                    .encode_utf16()
+                    .take(1)
+                    .map(|u| char::from_u32(u as u32).unwrap_or('?'))
+                    .collect();
                 file.write(&first)?;
                 file.write(" ")?;
                 file.write(&wr.positive_int.to_string())?;
@@ -332,7 +368,9 @@ impl Ctx<'_> {
         file.write("library_out ")?;
         let mut written: HashSet<String> = HashSet::new();
         for i in 0..b.library.via_padstack_count() {
-            let Some(p) = b.library.get_via_padstack(i) else { continue };
+            let Some(p) = b.library.get_via_padstack(i) else {
+                continue;
+            };
             if !written.insert(p.name.clone()) {
                 continue;
             }
@@ -363,7 +401,10 @@ impl Ctx<'_> {
         for i in first..=last {
             let Some(s) = p.get_shape(i) else { continue };
             let layer = &b.layer_structure.layers[i as usize].name;
-            let coords = self.ct.board_to_dsn_rel_shape(&s.to_shape()).expect("shape");
+            let coords = self
+                .ct
+                .board_to_dsn_rel_shape(&s.to_shape())
+                .expect("shape");
             file.start_scope(true);
             file.write("shape")?;
             write_shape_int(file, &self.id, layer, &coords)?;
@@ -426,14 +467,20 @@ impl Ctx<'_> {
     fn snapped_endpoint(&self, key: ItemKey, start: bool) -> Option<FloatPoint> {
         let b = self.board;
         let wire = b.item(key);
-        let corner = if start { wire.first_corner() } else { wire.last_corner() };
+        let corner = if start {
+            wire.first_corner()
+        } else {
+            wire.last_corner()
+        };
         let corner_f = corner.to_float();
         let contacts = if start {
             b.trace_start_contacts(key)
         } else {
             b.trace_end_contacts(key)
         };
-        let ItemKind::Trace(t) = &wire.kind else { return None };
+        let ItemKind::Trace(t) = &wire.kind else {
+            return None;
+        };
         let layer = t.layer();
         for c in contacts.iter() {
             let d = b.item(c);
@@ -461,7 +508,9 @@ impl Ctx<'_> {
     fn write_wire(&self, key: ItemKey, file: &mut W<'_>) -> io::Result<()> {
         let b = self.board;
         let it = b.item(key);
-        let ItemKind::Trace(t) = &it.kind else { unreachable!() };
+        let ItemKind::Trace(t) = &it.kind else {
+            unreachable!()
+        };
         let layer = &b.layer_structure.layers[t.layer() as usize].name;
         let width = round(self.ct.board_to_dsn((2 * t.half_width()) as f64));
         file.start_scope(true);
@@ -505,8 +554,14 @@ impl Ctx<'_> {
     fn write_via(&self, key: ItemKey, file: &mut W<'_>) -> io::Result<()> {
         let b = self.board;
         let it = b.item(key);
-        let ItemKind::Via(v) = &it.kind else { unreachable!() };
-        let p = b.library.padstacks.get(v.padstack_no()).expect("via padstack");
+        let ItemKind::Via(v) = &it.kind else {
+            unreachable!()
+        };
+        let p = b
+            .library
+            .padstacks
+            .get(v.padstack_no())
+            .expect("via padstack");
         file.start_scope(true);
         file.write("via ")?;
         self.id.write(&p.name, file)?;
@@ -527,14 +582,19 @@ impl Ctx<'_> {
             log::warn!("SesWriter.writeConductionArea: unexpected net count");
             return Ok(());
         }
-        let ItemKind::ConductionArea(c) = &it.kind else { unreachable!() };
+        let ItemKind::ConductionArea(c) = &it.kind else {
+            unreachable!()
+        };
         let area = c.area().get_area(b);
         let layer = &b.layer_structure.layers[c.area().layer() as usize].name;
         let (border, holes): (Shape, Vec<Shape>) = match &*area {
             Area::Shape(s) => (s.clone(), Vec::new()),
             Area::PolylineArea(pa) => (
                 Shape::from(pa.get_border().clone()),
-                pa.get_holes().iter().map(|h| Shape::from(h.clone())).collect(),
+                pa.get_holes()
+                    .iter()
+                    .map(|h| Shape::from(h.clone()))
+                    .collect(),
             ),
         };
         file.start_scope(true);
@@ -566,7 +626,8 @@ pub fn write_ses(board: &BasicBoard, out: &mut dyn Write, design_name: &str) -> 
         .map(|i| i.string_quote.clone())
         .unwrap_or_else(|| "\"".into());
     let id = IdentifierType::new(&reserved, &quote);
-    let scale = board.communication.coordinate_transform.dsn_to_board(1.0) / board.communication.resolution as f64;
+    let scale = board.communication.coordinate_transform.dsn_to_board(1.0)
+        / board.communication.resolution as f64;
     let ctx = Ctx {
         board,
         id,

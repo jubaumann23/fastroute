@@ -114,11 +114,59 @@ fn nets(n: &[i32]) -> String {
 
 /// Everything but the items, with the given `adjustPlaneAutorouteSettings` result applied.
 pub fn dump_header(design: &LoadedDesign, adjustment: Option<&PlaneAdjustment>) -> String {
-    let mut w = String::new();
     let mut rules = design.rules.clone();
     if let Some(adj) = adjustment {
         adj.apply_to_rules(&mut rules);
     }
+    header(&Parts {
+        layer_structure: &design.layer_structure,
+        rules: &rules,
+        library: &design.library,
+        components: &design.components,
+        bounding_box: design.bounding_box,
+        flip: design.flip_style_rotate_first,
+        null_package_keepouts: Some(&design.null_package_keepouts),
+    })
+}
+
+/// Header of a built board (`null` package keepout areas are not known here).
+pub fn dump_board_header(board: &fr_engine::board::BasicBoard) -> String {
+    header(&Parts {
+        layer_structure: &board.layer_structure,
+        rules: &board.rules,
+        library: &board.library,
+        components: &board.components,
+        bounding_box: board.bounding_box,
+        flip: board.components.get_flip_style_rotate_first(),
+        null_package_keepouts: None,
+    })
+}
+
+/// Full dump of a built board (header and items in id order).
+pub fn dump_board(board: &fr_engine::board::BasicBoard) -> String {
+    let mut s = String::from("result OK\n");
+    s.push_str(&dump_board_header(board));
+    for (_, l) in dump_board_items(board) {
+        s.push_str(&l);
+        s.push('\n');
+    }
+    s
+}
+
+struct Parts<'a> {
+    layer_structure: &'a fr_engine::structure::LayerStructure,
+    rules: &'a fr_engine::rules::BoardRules,
+    library: &'a fr_engine::library::BoardLibrary,
+    components: &'a fr_engine::structure::Components,
+    bounding_box: fr_geom::IntBox,
+    flip: bool,
+    null_package_keepouts:
+        Option<&'a std::collections::HashSet<(i32, crate::loader::KeepoutKind, usize)>>,
+}
+
+fn header(design: &Parts<'_>) -> String {
+    let mut w = String::new();
+    let rules = design.rules;
     for (i, l) in design.layer_structure.layers.iter().enumerate() {
         writeln!(w, "layer {i} {} {}", l.name, b(l.is_signal)).unwrap();
     }
@@ -280,7 +328,10 @@ pub fn dump_header(design: &LoadedDesign, adjustment: Option<&PlaneAdjustment>) 
         .enumerate()
         {
             for (i, ko) in list.iter().enumerate() {
-                let a = if design.null_package_keepouts.contains(&(p.id, kind, i)) {
+                let a = if design
+                    .null_package_keepouts
+                    .is_some_and(|n| n.contains(&(p.id, kind, i)))
+                {
                     "null".to_string()
                 } else {
                     area(&ko.area)
@@ -305,7 +356,7 @@ pub fn dump_header(design: &LoadedDesign, adjustment: Option<&PlaneAdjustment>) 
         .unwrap();
     }
     writeln!(w, "bbox {}", tile(&TileShape::IntBox(design.bounding_box))).unwrap();
-    writeln!(w, "flip {}", b(design.flip_style_rotate_first)).unwrap();
+    writeln!(w, "flip {}", b(design.flip)).unwrap();
     w
 }
 

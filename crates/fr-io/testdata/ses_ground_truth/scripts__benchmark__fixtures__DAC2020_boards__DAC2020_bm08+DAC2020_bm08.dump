@@ -1,0 +1,193 @@
+source scripts/benchmark/fixtures/DAC2020_boards/DAC2020_bm08.dsn
+session reference/parity-baseline/DAC2020_bm08.ses
+result OK
+layer 0 Top 1
+layer 1 Bottom 1
+cclass 0 null
+cclass 1 default
+cclass 2 smd
+cval 0 0 0 0
+cval 0 1 0 0
+cval 0 2 0 0
+cval 1 0 0 0
+cval 1 1 2000 2000
+cval 1 2 2000 2000
+cval 2 0 0 0
+cval 2 1 2000 2000
+cval 2 2 500 500
+netclass 0 default tcl=1 via_rule=default hw=1000,1000 items=0,1,1,1,2,1 active=1,1 shove=0 pull=1 minlen=0.0 maxlen=0.0 ignored=0
+net 1 GND 1 class=default plane=0
+net 2 VDD 1 class=default plane=0
+net 3 /SDA 1 class=default plane=0
+net 4 /SCL 1 class=default plane=0
+net 5 Net-(R2-Pad1) 1 class=default plane=0
+net 6 Net-(R1-Pad1) 1 class=default plane=0
+net 7 Net-(U1-Pad14) 1 class=default plane=0
+net 8 Net-(U1-Pad13) 1 class=default plane=0
+net 9 Net-(U1-Pad12) 1 class=default plane=0
+net 10 Net-(U1-Pad11) 1 class=default plane=0
+net 11 Net-(U1-Pad10) 1 class=default plane=0
+net 12 Net-(C1-Pad1) 1 class=default plane=0
+net 13 Net-(C1-Pad2) 1 class=default plane=0
+net 14 Net-(C2-Pad2) 1 class=default plane=0
+net 15 Net-(U1-Pad1) 1 class=default plane=0
+viainfo Via[0-1]_600:300_um Via[0-1]_600:300_um cl=1 attach=0
+viarule default Via[0-1]_600:300_um
+viarule default Via[0-1]_600:300_um
+rules min_hw=1000 max_hw=1000 pin_edge=1000.0 angle=FORTYFIVE_DEGREE
+padstack 1 Oval[A]Pad_3048x1524_um attach=0 abs=0 0:oct(-15240,-7620,15240,7620,-18396,18396,-18396,18396) 1:oct(-15240,-7620,15240,7620,-18396,18396,-18396,18396)
+padstack 2 Rect[T]Pad_290x1208_um attach=0 abs=0 0:box(-1450,-6040,1450,6040) 1:null
+padstack 3 Rect[T]Pad_1300x1500_um attach=0 abs=0 0:box(-6500,-7500,6500,7500) 1:null
+padstack 4 Via[0-1]_600:300_um attach=0 abs=0 0:circle(0,0,3000) 1:circle(0,0,3000)
+viapadstacks Via[0-1]_600:300_um,Via[0-1]_600:300_um
+package 1 imu:LGA-24 front=1
+  pin 1 2 -21290,12500 90.0
+  pin 2 2 -21290,7500 90.0
+  pin 3 2 -21290,2500 90.0
+  pin 4 2 -21290,-2500 90.0
+  pin 5 2 -21290,-7500 90.0
+  pin 6 2 -21290,-12500 90.0
+  pin 7 2 -12500,-21290 180.0
+  pin 8 2 -7500,-21290 180.0
+  pin 9 2 -2500,-21290 180.0
+  pin 10 2 2500,-21290 180.0
+  pin 11 2 7500,-21290 180.0
+  pin 12 2 12500,-21290 180.0
+  pin 13 2 21290,-12500 270.0
+  pin 14 2 21290,-7500 270.0
+  pin 15 2 21290,-2500 270.0
+  pin 16 2 21290,2500 270.0
+  pin 17 2 21290,7500 270.0
+  pin 18 2 21290,12500 270.0
+  pin 19 2 12500,21290 0.0
+  pin 20 2 7500,21290 0.0
+  pin 21 2 2500,21290 0.0
+  pin 22 2 -2500,21290 0.0
+  pin 23 2 -7500,21290 0.0
+  pin 24 2 -12500,21290 0.0
+package 2 imu:C0805 front=1
+  pin 1 3 -9500,0 0.0
+  pin 2 3 9500,0 0.0
+package 3 imu:R0805 front=1
+  pin 1 3 -8500,0 0.0
+  pin 2 3 8500,0 0.0
+package 4 imu:MA04-1 front=1
+  pin 1 1 -38100,0 90.0
+  pin 2 1 -12700,0 90.0
+  pin 3 1 12700,0 90.0
+  pin 4 1 38100,0 90.0
+component 1 U5 loc=1450594,-1052068 rot=270.0 front=1 pkg=1 fixed=0 pn=null
+component 2 U1 loc=1496060,-1008634 rot=270.0 front=1 pkg=2 fixed=0 pn=null
+component 3 U2 loc=1518666,-1008634 rot=270.0 front=1 pkg=2 fixed=0 pn=null
+component 4 U3 loc=1405636,-1052322 rot=90.0 front=1 pkg=2 fixed=0 pn=null
+component 5 U4 loc=1427988,-1006856 rot=180.0 front=1 pkg=2 fixed=0 pn=null
+component 6 U6 loc=1494790,-1086104 rot=270.0 front=1 pkg=3 fixed=0 pn=null
+component 7 U7 loc=1517396,-1085850 rot=270.0 front=1 pkg=3 fixed=0 pn=null
+component 8 U8 loc=1560830,-1049020 rot=90.0 front=1 pkg=4 fixed=0 pn=null
+bbox box(1381520,-1120380,1588500,-979694)
+flip 0
+item 1 BoardOutline nets= cl=1 fixed=SYSTEM_FIXED comp=0 shapes=[polygon[1382520,-1119380 1587500,-1119380 1587500,-980694 1382520,-980694]]
+item 2 Pin nets=15 cl=2 fixed=UNFIXED comp=1 pin=0 first=0 last=0 center=1463094,-1030778 shapes=[box(1461644,-1036818,1464544,-1024738)]
+item 3 Pin nets=1 cl=2 fixed=UNFIXED comp=1 pin=1 first=0 last=0 center=1458094,-1030778 shapes=[box(1456644,-1036818,1459544,-1024738)]
+item 4 Pin nets=1 cl=2 fixed=UNFIXED comp=1 pin=2 first=0 last=0 center=1453094,-1030778 shapes=[box(1451644,-1036818,1454544,-1024738)]
+item 5 Pin nets=1 cl=2 fixed=UNFIXED comp=1 pin=3 first=0 last=0 center=1448094,-1030778 shapes=[box(1446644,-1036818,1449544,-1024738)]
+item 6 Pin nets=1 cl=2 fixed=UNFIXED comp=1 pin=4 first=0 last=0 center=1443094,-1030778 shapes=[box(1441644,-1036818,1444544,-1024738)]
+item 7 Pin nets=1 cl=2 fixed=UNFIXED comp=1 pin=5 first=0 last=0 center=1438094,-1030778 shapes=[box(1436644,-1036818,1439544,-1024738)]
+item 8 Pin nets=14 cl=2 fixed=UNFIXED comp=1 pin=6 first=0 last=0 center=1429304,-1039568 shapes=[box(1423264,-1041018,1435344,-1038118)]
+item 9 Pin nets=13 cl=2 fixed=UNFIXED comp=1 pin=7 first=0 last=0 center=1429304,-1044568 shapes=[box(1423264,-1046018,1435344,-1043118)]
+item 10 Pin nets=12 cl=2 fixed=UNFIXED comp=1 pin=8 first=0 last=0 center=1429304,-1049568 shapes=[box(1423264,-1051018,1435344,-1048118)]
+item 11 Pin nets=11 cl=2 fixed=UNFIXED comp=1 pin=9 first=0 last=0 center=1429304,-1054568 shapes=[box(1423264,-1056018,1435344,-1053118)]
+item 12 Pin nets=10 cl=2 fixed=UNFIXED comp=1 pin=10 first=0 last=0 center=1429304,-1059568 shapes=[box(1423264,-1061018,1435344,-1058118)]
+item 13 Pin nets=9 cl=2 fixed=UNFIXED comp=1 pin=11 first=0 last=0 center=1429304,-1064568 shapes=[box(1423264,-1066018,1435344,-1063118)]
+item 14 Pin nets=8 cl=2 fixed=UNFIXED comp=1 pin=12 first=0 last=0 center=1438094,-1073358 shapes=[box(1436644,-1079398,1439544,-1067318)]
+item 15 Pin nets=7 cl=2 fixed=UNFIXED comp=1 pin=13 first=0 last=0 center=1443094,-1073358 shapes=[box(1441644,-1079398,1444544,-1067318)]
+item 16 Pin nets=2 cl=2 fixed=UNFIXED comp=1 pin=14 first=0 last=0 center=1448094,-1073358 shapes=[box(1446644,-1079398,1449544,-1067318)]
+item 17 Pin nets=2 cl=2 fixed=UNFIXED comp=1 pin=15 first=0 last=0 center=1453094,-1073358 shapes=[box(1451644,-1079398,1454544,-1067318)]
+item 18 Pin nets=2 cl=2 fixed=UNFIXED comp=1 pin=16 first=0 last=0 center=1458094,-1073358 shapes=[box(1456644,-1079398,1459544,-1067318)]
+item 19 Pin nets=2 cl=2 fixed=UNFIXED comp=1 pin=17 first=0 last=0 center=1463094,-1073358 shapes=[box(1461644,-1079398,1464544,-1067318)]
+item 20 Pin nets=6 cl=2 fixed=UNFIXED comp=1 pin=18 first=0 last=0 center=1471884,-1064568 shapes=[box(1465844,-1066018,1477924,-1063118)]
+item 21 Pin nets=5 cl=2 fixed=UNFIXED comp=1 pin=19 first=0 last=0 center=1471884,-1059568 shapes=[box(1465844,-1061018,1477924,-1058118)]
+item 22 Pin nets=4 cl=2 fixed=UNFIXED comp=1 pin=20 first=0 last=0 center=1471884,-1054568 shapes=[box(1465844,-1056018,1477924,-1053118)]
+item 23 Pin nets=1 cl=2 fixed=UNFIXED comp=1 pin=21 first=0 last=0 center=1471884,-1049568 shapes=[box(1465844,-1051018,1477924,-1048118)]
+item 24 Pin nets=1 cl=2 fixed=UNFIXED comp=1 pin=22 first=0 last=0 center=1471884,-1044568 shapes=[box(1465844,-1046018,1477924,-1043118)]
+item 25 Pin nets=3 cl=2 fixed=UNFIXED comp=1 pin=23 first=0 last=0 center=1471884,-1039568 shapes=[box(1465844,-1041018,1477924,-1038118)]
+item 26 Pin nets=2 cl=2 fixed=UNFIXED comp=2 pin=0 first=0 last=0 center=1496060,-999134 shapes=[box(1488560,-1005634,1503560,-992634)]
+item 27 Pin nets=1 cl=2 fixed=UNFIXED comp=2 pin=1 first=0 last=0 center=1496060,-1018134 shapes=[box(1488560,-1024634,1503560,-1011634)]
+item 28 Pin nets=2 cl=2 fixed=UNFIXED comp=3 pin=0 first=0 last=0 center=1518666,-999134 shapes=[box(1511166,-1005634,1526166,-992634)]
+item 29 Pin nets=1 cl=2 fixed=UNFIXED comp=3 pin=1 first=0 last=0 center=1518666,-1018134 shapes=[box(1511166,-1024634,1526166,-1011634)]
+item 30 Pin nets=12 cl=2 fixed=UNFIXED comp=4 pin=0 first=0 last=0 center=1405636,-1061822 shapes=[box(1398136,-1068322,1413136,-1055322)]
+item 31 Pin nets=13 cl=2 fixed=UNFIXED comp=4 pin=1 first=0 last=0 center=1405636,-1042822 shapes=[box(1398136,-1049322,1413136,-1036322)]
+item 32 Pin nets=1 cl=2 fixed=UNFIXED comp=5 pin=0 first=0 last=0 center=1437488,-1006856 shapes=[box(1430988,-1014356,1443988,-999356)]
+item 33 Pin nets=14 cl=2 fixed=UNFIXED comp=5 pin=1 first=0 last=0 center=1418488,-1006856 shapes=[box(1411988,-1014356,1424988,-999356)]
+item 34 Pin nets=6 cl=2 fixed=UNFIXED comp=6 pin=0 first=0 last=0 center=1494790,-1077604 shapes=[box(1487290,-1084104,1502290,-1071104)]
+item 35 Pin nets=2 cl=2 fixed=UNFIXED comp=6 pin=1 first=0 last=0 center=1494790,-1094604 shapes=[box(1487290,-1101104,1502290,-1088104)]
+item 36 Pin nets=5 cl=2 fixed=UNFIXED comp=7 pin=0 first=0 last=0 center=1517396,-1077350 shapes=[box(1509896,-1083850,1524896,-1070850)]
+item 37 Pin nets=2 cl=2 fixed=UNFIXED comp=7 pin=1 first=0 last=0 center=1517396,-1094350 shapes=[box(1509896,-1100850,1524896,-1087850)]
+item 38 Pin nets=2 cl=1 fixed=UNFIXED comp=8 pin=0 first=0 last=1 center=1560830,-1087120 shapes=[oct(1545590,-1094740,1576070,-1079500,2629554,2666346,455314,492106)|oct(1545590,-1094740,1576070,-1079500,2629554,2666346,455314,492106)]
+item 39 Pin nets=4 cl=1 fixed=UNFIXED comp=8 pin=1 first=0 last=1 center=1560830,-1061720 shapes=[oct(1545590,-1069340,1576070,-1054100,2604154,2640946,480714,517506)|oct(1545590,-1069340,1576070,-1054100,2604154,2640946,480714,517506)]
+item 40 Pin nets=3 cl=1 fixed=UNFIXED comp=8 pin=2 first=0 last=1 center=1560830,-1036320 shapes=[oct(1545590,-1043940,1576070,-1028700,2578754,2615546,506114,542906)|oct(1545590,-1043940,1576070,-1028700,2578754,2615546,506114,542906)]
+item 41 Pin nets=1 cl=1 fixed=UNFIXED comp=8 pin=3 first=0 last=1 center=1560830,-1010920 shapes=[oct(1545590,-1018540,1576070,-1003300,2553354,2590146,531514,568306)|oct(1545590,-1018540,1576070,-1003300,2553354,2590146,531514,568306)]
+item 42 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1496060,-1018134 1461681,-1018134 1458094,-1021721]
+item 43 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1560830,-1010920 1542573,-1010920]
+item 44 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1542573,-1010920 1535359,-1018134 1518666,-1018134]
+item 45 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1518666,-1018134 1496060,-1018134]
+item 46 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=750 corners=[1471884,-1044568 1463077,-1044568]
+item 47 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=750 corners=[1453094,-1044020 1462529,-1044020 1463077,-1044568]
+item 48 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1453094,-1030778 1453094,-1044020]
+item 49 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1437488,-1017373 1438094,-1017979 1438094,-1021721]
+item 50 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1437488,-1006856 1437488,-1017373]
+item 51 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1443094,-1021721 1438094,-1021721]
+item 52 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1453094,-1023909 1453094,-1030778]
+item 53 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1448094,-1021721 1450906,-1021721 1453094,-1023909]
+item 54 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1453094,-1023909 1453094,-1021721]
+item 55 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1471884,-1044568 1480941,-1044568]
+item 56 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1471884,-1049568 1480941,-1049568]
+item 57 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1480941,-1049568 1480941,-1044568]
+item 58 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1443094,-1023908 1443094,-1030778]
+item 59 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1448094,-1021721 1445281,-1021721 1443094,-1023908]
+item 60 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1443094,-1023908 1443094,-1021721]
+item 61 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1448094,-1030778 1448094,-1021721]
+item 62 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1458094,-1030778 1458094,-1021721]
+item 63 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1453094,-1021721 1458094,-1021721]
+item 64 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1438094,-1030778 1438094,-1021721]
+item 65 PolylineTrace nets=2 cl=1 fixed=USER_FIXED comp=0 layer=1 hw=1000 corners=[1560830,-1087120 1542573,-1087120]
+item 66 PolylineTrace nets=2 cl=1 fixed=USER_FIXED comp=0 layer=1 hw=1000 corners=[1542573,-1087120 1542573,-1019392 1531096,-1007915]
+item 67 PolylineTrace nets=2 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1531096,-1007915 1529183,-1006002 1529183,-999134]
+item 68 PolylineTrace nets=2 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1518666,-999134 1529183,-999134]
+item 69 Via nets=2 cl=1 fixed=USER_FIXED comp=0 padstack=Via[0-1]_600:300_um center=1531096,-1007915 attach=1
+item 70 PolylineTrace nets=2 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1517396,-1094350 1527913,-1094350]
+item 71 PolylineTrace nets=2 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1560830,-1087120 1535143,-1087120 1527913,-1094350]
+item 72 PolylineTrace nets=2 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1494790,-1094604 1505307,-1094604]
+item 73 PolylineTrace nets=2 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1517396,-1094350 1505561,-1094350 1505307,-1094604]
+item 74 PolylineTrace nets=2 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1518666,-999134 1496060,-999134]
+item 75 PolylineTrace nets=2 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1494790,-1094604 1475283,-1094604 1463094,-1082415]
+item 76 PolylineTrace nets=2 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1458094,-1082415 1463094,-1082415]
+item 77 PolylineTrace nets=2 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1448094,-1073358 1448094,-1082415]
+item 78 PolylineTrace nets=2 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1453094,-1082415 1448094,-1082415]
+item 79 PolylineTrace nets=2 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1458094,-1080227 1458094,-1073358]
+item 80 PolylineTrace nets=2 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1453094,-1082415 1455906,-1082415 1458094,-1080227]
+item 81 PolylineTrace nets=2 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1458094,-1080227 1458094,-1082415]
+item 82 PolylineTrace nets=2 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1453094,-1073358 1453094,-1082415]
+item 83 PolylineTrace nets=2 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1463094,-1073358 1463094,-1082415]
+item 84 PolylineTrace nets=3 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1560830,-1036320 1484189,-1036320 1480941,-1039568]
+item 85 PolylineTrace nets=3 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1471884,-1039568 1480941,-1039568]
+item 86 PolylineTrace nets=4 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=750 corners=[1471884,-1054568 1480691,-1054568]
+item 87 PolylineTrace nets=4 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=750 corners=[1506669,-1055116 1481239,-1055116 1480691,-1054568]
+item 88 PolylineTrace nets=4 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1560830,-1061720 1513273,-1061720 1506669,-1055116]
+item 89 PolylineTrace nets=5 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=750 corners=[1471884,-1059568 1480691,-1059568]
+item 90 PolylineTrace nets=5 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=750 corners=[1488634,-1060116 1481239,-1060116 1480691,-1059568]
+item 91 PolylineTrace nets=5 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1491123,-1062568 1491086,-1062568 1488634,-1060116]
+item 92 PolylineTrace nets=5 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=750 corners=[1517396,-1068102 1496657,-1068102 1491123,-1062568]
+item 93 PolylineTrace nets=5 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1517396,-1077350 1517396,-1068102]
+item 94 PolylineTrace nets=6 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1471884,-1064568 1480941,-1064568]
+item 95 PolylineTrace nets=6 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1494790,-1077604 1484273,-1077604]
+item 96 PolylineTrace nets=6 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1484273,-1077604 1484273,-1067900 1480941,-1064568]
+item 97 PolylineTrace nets=12 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1405636,-1061822 1416153,-1061822]
+item 98 PolylineTrace nets=12 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=750 corners=[1429304,-1049568 1420497,-1049568]
+item 99 PolylineTrace nets=12 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=750 corners=[1417975,-1050116 1419949,-1050116 1420497,-1049568]
+item 100 PolylineTrace nets=12 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1416153,-1061822 1416153,-1051938 1417975,-1050116]
+item 101 PolylineTrace nets=13 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=750 corners=[1429304,-1044568 1420497,-1044568]
+item 102 PolylineTrace nets=13 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=750 corners=[1405636,-1044020 1419949,-1044020 1420497,-1044568]
+item 103 PolylineTrace nets=13 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1405636,-1042822 1405636,-1044020]
+item 104 PolylineTrace nets=14 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1429304,-1039568 1420247,-1039568]
+item 105 PolylineTrace nets=14 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=1000 corners=[1418488,-1006856 1418488,-1037809 1420247,-1039568]

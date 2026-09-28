@@ -36,7 +36,11 @@
 //! 6. `HeadlessBoardManager` post-load processing (router settings, copper-to-edge and hole
 //!    clearance overrides, plane nets/plane-as-obstacle/clearance-tolerance overrides,
 //!    `expandBoundingBoxToIncludeAllItems`, `reduceNetsOfRouteItems`, validations) follows;
-//!    it needs the live board and is not part of this crate.
+//!    it needs the live board; see [`post_load`] ([`post_load::load_from_specctra_dsn`],
+//!    [`post_load::prepare_for_routing`]).
+//!
+//! Session files: [`ses_writer::write_ses`] (Java `SesWriter`, byte-identical) and
+//! [`ses_reader::read_ses`] (Java `SesReader`).
 //!
 //! # Scope order
 //!
@@ -55,7 +59,9 @@ pub mod network;
 pub mod order;
 pub mod part_library;
 pub mod plane;
+pub mod post_load;
 pub mod requests;
+pub mod ses_reader;
 pub mod ses_writer;
 pub mod shapes;
 pub mod structure;

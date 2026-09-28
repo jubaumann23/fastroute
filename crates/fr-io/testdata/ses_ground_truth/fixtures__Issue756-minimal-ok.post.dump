@@ -1,0 +1,24 @@
+source fixtures/Issue756-minimal-ok.dsn
+result OK
+layer 0 F.Cu 1
+layer 1 B.Cu 1
+cclass 0 null
+cclass 1 default
+cclass 2 board_edge
+cval 0 0 0 0
+cval 0 1 0 0
+cval 0 2 0 0
+cval 1 0 0 0
+cval 1 1 1524 1524
+cval 1 2 2500 2500
+cval 2 0 0 0
+cval 2 1 2500 2500
+cval 2 2 2500 2500
+netclass 0 default tcl=1 via_rule=- hw=762,762 items=0,1,1,1,1,1 active=1,1 shove=0 pull=1 minlen=0.0 maxlen=0.0 ignored=0
+net 1 +5V 1 class=default plane=0
+rules min_hw=762 max_hw=762 pin_edge=762.0 angle=FORTYFIVE_DEGREE
+viapadstacks 
+bbox box(899000,-451000,1101000,-349000)
+flip 0
+item 1 BoardOutline nets= cl=2 fixed=SYSTEM_FIXED comp=0 shapes=[polygon[900000,-450000 1100000,-450000 1100000,-350000 900000,-350000]]
+item 2 PolylineTrace nets=1 cl=1 fixed=USER_FIXED comp=0 layer=0 hw=5000 corners=[1005000,-405000 998000,-392000]

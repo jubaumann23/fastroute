@@ -1,0 +1,17 @@
+(session "empty_board.ses"
+  (base_design "empty_board.dsn")
+  (placement
+    (resolution um 10)
+  )
+  (was_is
+  )
+  (routes 
+    (resolution um 10)
+    (parser
+    )
+    (library_out 
+    )
+    (network_out 
+    )
+  )
+)
