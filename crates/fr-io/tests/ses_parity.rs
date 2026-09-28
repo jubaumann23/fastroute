@@ -87,7 +87,13 @@ fn ses_and_post_load_parity() {
         if KNOWN_FR_DSN_DIVERGENCES.contains(&source.as_str()) {
             continue;
         }
-        let src = std::fs::read(repo().join("reference/freerouting").join(&source)).unwrap();
+        // Fixtures live in the (git-ignored) reference checkout.
+        let dsn_path = repo().join("reference/freerouting").join(&source);
+        if !dsn_path.exists() {
+            eprintln!("{source}: skipped (reference checkout not found)");
+            continue;
+        }
+        let src = std::fs::read(dsn_path).unwrap();
         let design_name = Path::new(&source)
             .file_name()
             .unwrap()
