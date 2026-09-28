@@ -1,0 +1,217 @@
+"""PCB editor action: Tools > External Plugins > fastroute autorouter."""
+
+import json
+import threading
+from pathlib import Path
+
+import pcbnew
+import wx
+
+from . import core
+
+SETTINGS_FILE = Path(__file__).resolve().parent / "settings.json"
+
+MODES = [
+    ("fast", "Fast (parallel optimizer)"),
+    ("exact", "Exact (identical to Freerouting's deterministic mode)"),
+    ("quick", "Quick (autorouter only, no optimizer)"),
+]
+
+DEFAULTS = {
+    "mode": "fast",
+    "max_passes": 0,
+    "clear_tracks": False,
+    "route_zone_nets": True,
+    "text_keepouts": True,
+    "respect_min_width": True,
+    "refill_zones": True,
+}
+
+
+def load_settings():
+    try:
+        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        return {**DEFAULTS, **{k: data[k] for k in DEFAULTS if k in data}}
+    except Exception:
+        return dict(DEFAULTS)
+
+
+def save_settings(settings):
+    try:
+        SETTINGS_FILE.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+class SettingsDialog(wx.Dialog):
+    def __init__(self, parent, settings):
+        super().__init__(parent, title="fastroute autorouter")
+        s = settings
+        box = wx.BoxSizer(wx.VERTICAL)
+        grid = wx.FlexGridSizer(0, 2, 8, 8)
+
+        grid.Add(wx.StaticText(self, label="Mode:"), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.mode = wx.Choice(self, choices=[label for _, label in MODES])
+        self.mode.SetSelection([k for k, _ in MODES].index(s["mode"]))
+        grid.Add(self.mode, 1, wx.EXPAND)
+
+        grid.Add(wx.StaticText(self, label="Max. passes (0 = no limit):"), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.passes = wx.SpinCtrl(self, min=0, max=10000, initial=s["max_passes"])
+        grid.Add(self.passes, 1, wx.EXPAND)
+        box.Add(grid, 0, wx.ALL | wx.EXPAND, 12)
+
+        def check(label, key, tip):
+            cb = wx.CheckBox(self, label=label)
+            cb.SetValue(bool(s[key]))
+            cb.SetToolTip(tip)
+            box.Add(cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+            return cb
+
+        self.clear = check(
+            "Remove existing unlocked tracks and vias first", "clear_tracks",
+            "Locked tracks and vias are always kept and routed around.",
+        )
+        self.zone_nets = check(
+            "Route nets of copper zones with tracks", "route_zone_nets",
+            "Recommended. Otherwise pads are assumed to be connected by the zone, "
+            "which the refilled zone may not guarantee.",
+        )
+        self.text_keepouts = check(
+            "Keep tracks away from texts on copper layers", "text_keepouts",
+            "KiCad's Specctra export omits copper texts.",
+        )
+        self.min_width = check(
+            "Respect the board's minimum track width (no neck-down below it)",
+            "respect_min_width",
+            "Board Setup > Constraints > Minimum track width.",
+        )
+        self.refill = check("Refill zones after routing", "refill_zones", "")
+
+        buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
+        self.FindWindowById(wx.ID_OK).SetLabel("Route")
+        box.Add(buttons, 0, wx.ALL | wx.ALIGN_RIGHT, 12)
+        self.SetSizerAndFit(box)
+
+    def values(self):
+        return {
+            "mode": MODES[self.mode.GetSelection()][0],
+            "max_passes": self.passes.GetValue(),
+            "clear_tracks": self.clear.GetValue(),
+            "route_zone_nets": self.zone_nets.GetValue(),
+            "text_keepouts": self.text_keepouts.GetValue(),
+            "respect_min_width": self.min_width.GetValue(),
+            "refill_zones": self.refill.GetValue(),
+        }
+
+
+class ProgressDialog(wx.Dialog):
+    """Shows fastroute's progress lines while the router runs in a thread."""
+
+    def __init__(self, parent, router):
+        super().__init__(parent, title="fastroute: routing...", size=(620, 320),
+                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        self.router = router
+        self.result = None
+        box = wx.BoxSizer(wx.VERTICAL)
+        self.status = wx.StaticText(self, label="Exporting board...")
+        box.Add(self.status, 0, wx.ALL | wx.EXPAND, 10)
+        self.log = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL)
+        box.Add(self.log, 1, wx.LEFT | wx.RIGHT | wx.EXPAND, 10)
+        self.cancel = wx.Button(self, wx.ID_CANCEL, "Stop")
+        self.cancel.Bind(wx.EVT_BUTTON, self.on_cancel)
+        box.Add(self.cancel, 0, wx.ALL | wx.ALIGN_RIGHT, 10)
+        self.SetSizer(box)
+        self.Bind(wx.EVT_CLOSE, self.on_cancel)
+
+    def start(self):
+        """Exports on the GUI thread, routes in a worker, imports on the GUI thread."""
+        failed = self.router.prepare()
+        if failed is not None:
+            self.result = failed
+            return wx.ID_OK
+        threading.Thread(target=self._work, daemon=True).start()
+        self.ShowModal()
+        if self.result is not None:
+            self.result = self.router.finish(self.result)
+        return wx.ID_OK
+
+    def _work(self):
+        def on_line(level, text):
+            wx.CallAfter(self._append, level, text)
+
+        result = self.router.route(on_line)
+        wx.CallAfter(self._done, result)
+
+    def _append(self, level, text):
+        self.log.AppendText(f"{level:5} {text}\n")
+        if "pass #" in text or "stage" in text:
+            self.status.SetLabel(text[:110])
+
+    def _done(self, result):
+        self.result = result
+        self.EndModal(wx.ID_OK)
+
+    def on_cancel(self, _event):
+        self.status.SetLabel("Stopping...")
+        self.router.cancel()
+
+
+class FastrouteAction(pcbnew.ActionPlugin):
+    def defaults(self):
+        self.name = "fastroute autorouter"
+        self.category = "Routing"
+        self.description = "Autoroute the board with fastroute (a fast Rust port of Freerouting)"
+        self.show_toolbar_button = True
+        icon = Path(__file__).resolve().parent / "icon_24x24.png"
+        if icon.is_file():
+            self.icon_file_name = str(icon)
+
+    def Run(self):
+        board = pcbnew.GetBoard()
+        parent = wx.GetActiveWindow()
+        if core.find_binary() is None:
+            wx.MessageBox(
+                "The fastroute executable was not found.\n\nPut it in the plugin's bin/ "
+                "directory, on PATH, or set FASTROUTE_BIN.",
+                "fastroute", wx.OK | wx.ICON_ERROR, parent,
+            )
+            return
+        dialog = SettingsDialog(parent, load_settings())
+        if dialog.ShowModal() != wx.ID_OK:
+            dialog.Destroy()
+            return
+        settings = dialog.values()
+        dialog.Destroy()
+        save_settings(settings)
+
+        if settings["clear_tracks"]:
+            core.remove_tracks(board)
+        min_width = core.min_track_width_nm(board) if settings["respect_min_width"] else 0
+        router = core.Router(
+            board,
+            extra_args=core.mode_args(
+                settings["mode"], settings["max_passes"], neckdown=min_width == 0,
+                min_track_width_nm=min_width,
+            ),
+            refill=settings["refill_zones"],
+            route_zone_nets=settings["route_zone_nets"],
+            text_keepouts=settings["text_keepouts"],
+        )
+        progress = ProgressDialog(parent, router)
+        progress.start()
+        result = progress.result
+        progress.Destroy()
+        pcbnew.Refresh()
+
+        if result is None or result.cancelled:
+            return
+        if not result.ok:
+            wx.MessageBox(result.message, "fastroute", wx.OK | wx.ICON_ERROR, parent)
+            return
+        summary = "Routing finished."
+        if result.unrouted is not None:
+            summary += (
+                f"\n\nUnrouted connections: {result.unrouted}"
+                f"\nClearance violations: {result.violations}"
+            )
+        wx.MessageBox(summary, "fastroute", wx.OK | wx.ICON_INFORMATION, parent)

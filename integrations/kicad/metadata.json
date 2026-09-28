@@ -1,0 +1,22 @@
+{
+  "$schema": "https://go.kicad.org/pcm/schemas/v1",
+  "name": "fastroute",
+  "description": "Fast autorouter: a Rust port of Freerouting",
+  "description_full": "Autoroutes the board with fastroute, a Rust port of the Freerouting autorouter.\nNo Java needed. Typically 3-5x faster than Freerouting with far less memory; the 'exact' mode reproduces Freerouting's deterministic results bit for bit.\nThe plugin also routes nets of copper zones, keeps tracks away from copper texts, respects the board's minimum track width and refills zones afterwards.",
+  "identifier": "com.github.fastroute.kicad-plugin",
+  "type": "plugin",
+  "author": {
+    "name": "fastroute contributors",
+    "contact": {}
+  },
+  "license": "GPL-3.0",
+  "resources": {},
+  "tags": ["autorouter", "routing", "freerouting", "specctra"],
+  "versions": [
+    {
+      "version": "0.1.0",
+      "status": "testing",
+      "kicad_version": "7.0"
+    }
+  ]
+}

@@ -1,3 +1,7 @@
 /target
 /reference
 *.ses.out
+/dist
+__pycache__/
+integrations/kicad/plugins/settings.json
+integrations/kicad/plugins/bin/

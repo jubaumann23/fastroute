@@ -219,6 +219,9 @@ impl FoundConnectionInserter {
             if candidate_half_width <= 0 || candidate_half_width >= base_half_width {
                 continue;
             }
+            if candidate_half_width < ctrl.min_trace_half_width {
+                continue; // fastroute extension: board minimum track width
+            }
             let candidate_ok_point = board.insert_forced_trace_segment(
                 &from_point,
                 target_point,
@@ -282,6 +285,9 @@ impl FoundConnectionInserter {
         let neck_down_halfwidth = board.pin_trace_neckdown_half_width(pin, layer);
         if neck_down_halfwidth >= ctrl.trace_half_width[lu] {
             return NeckDownResult::Null;
+        }
+        if neck_down_halfwidth < ctrl.min_trace_half_width {
+            return NeckDownResult::Null; // fastroute extension: board minimum track width
         }
         let float_from_corner = from_corner.to_float();
         let float_to_corner = to_corner.to_float();

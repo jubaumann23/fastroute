@@ -44,6 +44,9 @@ pub struct AutorouteControl {
     pub trace_costs: Vec<ExpansionCostFactor>,
     pub bend_costs: Vec<f64>,
     pub with_neckdown: bool,
+    /// fastroute extension: neck-down never goes below this half width
+    /// (`router.min_trace_width_um`; 0 = Java behaviour).
+    pub min_trace_half_width: i32,
     /// Defines for each layer, if it may be used for routing.
     pub layer_active: Vec<bool>,
     pub layer_count: i32,
@@ -135,6 +138,7 @@ impl AutorouteControl {
             trace_costs,
             bend_costs,
             with_neckdown: settings.get_automatic_neckdown(),
+            min_trace_half_width: min_trace_half_width(board, settings),
             layer_active,
             layer_count,
             trace_half_width: vec![0; n],
@@ -316,4 +320,21 @@ pub(crate) fn jmin(a: f64, b: f64) -> f64 {
     } else {
         b
     }
+}
+
+/// Board-unit half width for `router.min_trace_width_um` (0 if unset); converted
+/// like the necked-retry width in `router.rs`.
+fn min_trace_half_width(board: &RoutingBoard, settings: &RouterSettings) -> i32 {
+    let um = settings.get_min_trace_width_um();
+    if um <= 0.0 {
+        return 0;
+    }
+    let resolution = board.communication.resolution.max(1);
+    let width = fr_jcompat::math_round(crate::structure::Unit::scale(
+        um * resolution as f64,
+        crate::structure::Unit::Um,
+        board.communication.unit,
+    )) as i32;
+    // Round the half width up so that 2 * half >= the requested width.
+    (width + 1) / 2
 }

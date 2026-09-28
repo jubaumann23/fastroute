@@ -185,6 +185,9 @@ pub struct RouterSettings {
     pub plane_nets: Option<Vec<String>>,
     pub plane_as_obstacle: Option<bool>,
     pub neck_width_um: Option<f64>,
+    /// fastroute extension (not in Freerouting): narrowest trace width the
+    /// router may create by neck-down; 0/unset = no limit (Java behaviour).
+    pub min_trace_width_um: Option<f64>,
     pub strict_drc: Option<bool>,
     /// Java `jobTimeoutString` (JSON `job_timeout`), e.g. "12:00:00".
     pub job_timeout_string: Option<String>,
@@ -420,6 +423,7 @@ impl RouterSettings {
         copy(&mut self.plane_nets, &s.plane_nets, &mut n);
         copy(&mut self.plane_as_obstacle, &s.plane_as_obstacle, &mut n);
         copy(&mut self.neck_width_um, &s.neck_width_um, &mut n);
+        copy(&mut self.min_trace_width_um, &s.min_trace_width_um, &mut n);
         copy(&mut self.strict_drc, &s.strict_drc, &mut n);
         copy(&mut self.job_timeout_string, &s.job_timeout_string, &mut n);
         if let Some(src) = &s.layers {
@@ -502,6 +506,14 @@ impl RouterSettings {
 
     // -----------------------------------------------------------------------
     // Scalar getters / setters with Java fallbacks
+
+    /// fastroute extension, see [`RouterSettings::min_trace_width_um`].
+    pub fn get_min_trace_width_um(&self) -> f64 {
+        match self.min_trace_width_um {
+            Some(v) if v > 0.0 && v.is_finite() => v,
+            _ => 0.0,
+        }
+    }
 
     pub fn get_neck_width_um(&self) -> f64 {
         match self.neck_width_um {
