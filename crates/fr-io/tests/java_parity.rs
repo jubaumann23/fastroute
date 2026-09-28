@@ -103,6 +103,11 @@ fn compare(java: &str, stats: &mut Stats) -> Vec<String> {
     } else {
         root().join(&source)
     };
+    // Real fixtures live in the (git-ignored) reference checkout.
+    if !path.exists() {
+        eprintln!("{source}: skipped ({} not found)", path.display());
+        return problems;
+    }
     let src = std::fs::read(path).expect("dsn");
     let rust = load_bytes(&src);
     let expected = match &rust {
