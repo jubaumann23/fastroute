@@ -168,35 +168,47 @@ class FastrouteAction(pcbnew.ActionPlugin):
             self.icon_file_name = str(icon)
 
     def Run(self):
+        """Shows the options, then routes after Run() has returned.
+
+        KiCad snapshots the board items around Run() to build an undo entry;
+        the session import deletes and recreates all tracks, which would
+        leave that snapshot with dangling pointers (and crash the editor).
+        So all board changes happen in a CallAfter, outside that bracket.
+        """
         log = logging.getLogger("fastroute")
         log.info("run requested")
         try:
-            self._run()
+            parent = wx.GetActiveWindow()
+            if core.find_binary() is None:
+                wx.MessageBox(
+                    "The fastroute executable was not found.\n\nPut it in the plugin's bin/ "
+                    "directory, on PATH, or set FASTROUTE_BIN.",
+                    "fastroute", wx.OK | wx.ICON_ERROR, parent,
+                )
+                return
+            dialog = SettingsDialog(parent, load_settings())
+            ok = dialog.ShowModal() == wx.ID_OK
+            settings = dialog.values()
+            dialog.Destroy()
+            if not ok:
+                return
+            save_settings(settings)
+            wx.CallAfter(self._route, settings)
         except Exception as exc:
             log.exception("fastroute plugin failed: %s", exc)
             wx.MessageBox(f"fastroute plugin error:\n{exc}", "fastroute", wx.OK | wx.ICON_ERROR)
 
-    def _run(self):
+    def _route(self, settings):
         log = logging.getLogger("fastroute")
+        try:
+            self._route_inner(settings, log)
+        except Exception as exc:
+            log.exception("fastroute plugin failed: %s", exc)
+            wx.MessageBox(f"fastroute plugin error:\n{exc}", "fastroute", wx.OK | wx.ICON_ERROR)
+
+    def _route_inner(self, settings, log):
         board = pcbnew.GetBoard()
         parent = wx.GetActiveWindow()
-        if core.find_binary() is None:
-            wx.MessageBox(
-                "The fastroute executable was not found.\n\nPut it in the plugin's bin/ "
-                "directory, on PATH, or set FASTROUTE_BIN.",
-                "fastroute", wx.OK | wx.ICON_ERROR, parent,
-            )
-            return
-        dialog = SettingsDialog(parent, load_settings())
-        if dialog.ShowModal() != wx.ID_OK:
-            dialog.Destroy()
-            return
-        settings = dialog.values()
-        dialog.Destroy()
-        save_settings(settings)
-
-        if settings["clear_tracks"]:
-            core.remove_tracks(board)
         min_width = core.min_track_width_nm(board) if settings["respect_min_width"] else 0
         router = core.Router(
             board,
@@ -207,6 +219,8 @@ class FastrouteAction(pcbnew.ActionPlugin):
             refill=settings["refill_zones"],
             route_zone_nets=settings["route_zone_nets"],
             text_keepouts=settings["text_keepouts"],
+            clear_tracks=settings["clear_tracks"],
+            in_editor=True,
         )
         progress = ProgressDialog(parent, router)
         progress.start()
@@ -223,7 +237,7 @@ class FastrouteAction(pcbnew.ActionPlugin):
         if not result.ok:
             wx.MessageBox(result.message, "fastroute", wx.OK | wx.ICON_ERROR, parent)
             return
-        summary = "Routing finished."
+        summary = "Routing finished. Use File > Save to keep the result."
         if result.unrouted is not None:
             summary += (
                 f"\n\nUnrouted connections: {result.unrouted}"

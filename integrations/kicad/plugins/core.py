@@ -95,8 +95,18 @@ def export_dsn(board, path):
     return bool(ok) and Path(path).is_file()
 
 
-def import_ses(board, path):
-    """Loads a Specctra session into the board. Returns True on success."""
+def import_ses(board, path, in_editor=False):
+    """Loads a Specctra session into the board. Returns True on success.
+
+    The session replaces all tracks and vias. Inside the PCB editor the
+    frame-level import is used, which also updates the editor's state
+    (selection, connectivity, ratsnest).
+    """
+    if in_editor:
+        try:
+            return bool(pcbnew.ImportSpecctraSES(str(path)))
+        except TypeError:
+            pass
     try:
         ok = pcbnew.ImportSpecctraSES(board, str(path))
     except TypeError:  # KiCad 6
@@ -190,6 +200,56 @@ def add_copper_text_keepouts(board, dsn_path):
     return len(keepouts)
 
 
+def _scope_end(text, start):
+    """Index just past the S-expression starting with '(' at `start`."""
+    depth, k, quoted = 0, start, False
+    while k < len(text):
+        c = text[k]
+        if c == '"':
+            quoted = not quoted
+        elif not quoted and c == "(":
+            depth += 1
+        elif not quoted and c == ")":
+            depth -= 1
+            if depth == 0:
+                return k + 1
+        k += 1
+    return len(text)
+
+
+def strip_unlocked_wiring(dsn_path):
+    """Removes unlocked wires and vias from the DSN `(wiring ...)` scope.
+
+    Locked tracks are exported with `(type fix)` (or `protect`) and kept. The
+    router then routes from scratch, and KiCad's session import replaces all
+    tracks and vias with the result, so nothing has to be deleted on the board.
+    Returns the number of removed entries.
+    """
+    text = Path(dsn_path).read_text(encoding="utf-8", errors="replace")
+    w = text.find("(wiring")
+    if w < 0:
+        return 0
+    end = _scope_end(text, w)
+    body_start = w + len("(wiring")
+    out, i, removed = [text[:body_start]], body_start, 0
+    while True:
+        j = text.find("(", i, end - 1)
+        if j < 0:
+            out.append(text[i:end])
+            break
+        k = _scope_end(text, j)
+        entry = text[j:k]
+        keep = not entry.startswith(("(wire", "(via")) or "(type fix)" in entry or "(type protect)" in entry
+        if keep:
+            out.append(text[i:k])
+        else:
+            removed += 1
+        i = k
+    out.append(text[end:])
+    Path(dsn_path).write_text("".join(out), encoding="utf-8")
+    return removed
+
+
 def strip_planes(dsn_path):
     """Removes `(plane ...)` scopes from a DSN file. Returns the number removed.
 
@@ -234,17 +294,6 @@ def min_track_width_nm(board):
         return 0
 
 
-def remove_tracks(board, keep_locked=True):
-    """Deletes tracks and vias (optionally keeping locked ones). Returns the count."""
-    removed = 0
-    for track in list(board.GetTracks()):
-        if keep_locked and track.IsLocked():
-            continue
-        board.Delete(track)
-        removed += 1
-    return removed
-
-
 class RouteResult:
     def __init__(self):
         self.ok = False
@@ -268,8 +317,12 @@ class Router:
         refill=True,
         route_zone_nets=True,
         text_keepouts=True,
+        clear_tracks=False,
+        in_editor=False,
     ):
         self.board = board
+        self.clear_tracks = clear_tracks
+        self.in_editor = in_editor
         self.text_keepouts = text_keepouts
         self.refill = refill
         self.route_zone_nets = route_zone_nets
@@ -313,6 +366,8 @@ class Router:
             result = RouteResult()
             result.message = "KiCad could not export the board as Specctra DSN"
             return result
+        if self.clear_tracks:
+            strip_unlocked_wiring(self._dsn)
         if self.route_zone_nets:
             strip_planes(self._dsn)
         if self.text_keepouts:
@@ -363,7 +418,7 @@ class Router:
         """Imports the routed session into the board (if routing succeeded)."""
         if not result.ok:
             return result
-        if not import_ses(self.board, self._ses):
+        if not import_ses(self.board, self._ses, self.in_editor):
             result.ok = False
             result.message = "KiCad could not import the routed session"
             return result

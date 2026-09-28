@@ -52,10 +52,6 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     board = pcbnew.LoadBoard(str(args.board))
-    if args.clear:
-        n = core.remove_tracks(board)
-        if not args.quiet:
-            print(f"removed {n} tracks/vias", file=sys.stderr)
     if args.work_dir:
         args.work_dir.mkdir(parents=True, exist_ok=True)
 
@@ -72,6 +68,7 @@ def main(argv=None):
         refill=not args.no_refill,
         route_zone_nets=not args.zones_as_planes,
         text_keepouts=not args.no_text_keepouts,
+        clear_tracks=args.clear,
     )
 
     def show(level, text):
