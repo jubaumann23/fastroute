@@ -48,8 +48,13 @@ pub struct AutorouteMaintenance {
     pub removed_rooms: Vec<RoomKey>,
     /// Shapes passed to `invalidateDrillPages`, in call order.
     pub invalidated_drill_shapes: Vec<TileShape>,
-    /// Items whose autoroute info must be cleared (`item.clearAutorouteInfo()`).
+    /// Items whose autoroute info must be cleared (`item.clearAutorouteInfo()` of the hook,
+    /// `Item.clearDerivedData()`, restored items of an undo), recorded while the board holds an
+    /// autoroute engine.
     pub cleared_autoroute_info: Vec<ItemKey>,
+    /// Java `autorouteEngine.maintainDatabase`: the hook is only active if true (the record
+    /// exists whenever the board holds an autoroute engine).
+    pub maintain_database: bool,
 }
 
 /// Java `BasicBoard` (items, search trees and elementary operations).
@@ -1072,6 +1077,9 @@ impl BasicBoard {
         let Some(m) = &self.autoroute_maintenance else {
             return;
         };
+        if !m.maintain_database {
+            return;
+        }
         let Some(t) = self.search_trees.tree_index(m.tree_clearance_class) else {
             return;
         };
@@ -1097,6 +1105,14 @@ impl BasicBoard {
         m.invalidated_drill_shapes.extend(drill_shapes);
         m.removed_rooms.extend(removed);
         m.cleared_autoroute_info.push(key);
+    }
+
+    /// Records that Java would null the autoroute info of the item here (`clearDerivedData`,
+    /// `clearAutorouteInfo`); the autoroute engine drops it (see [`AutorouteMaintenance`]).
+    pub(crate) fn note_autoroute_info_cleared(&mut self, key: ItemKey) {
+        if let Some(m) = &mut self.autoroute_maintenance {
+            m.cleared_autoroute_info.push(key);
+        }
     }
 
     // ------------------------------------------------------------------------------------------

@@ -13,8 +13,8 @@
 //! called by the GUI but ported because it is a thin wrapper of
 //! [`forced_via_inserter::insert`](super::actions::forced_via_inserter::insert).
 //!
-//! The autoroute entry points (`initAutoroute`, `autoroute`, `fanout`, `getAutorouteEngine`) need
-//! the autoroute engine (porting unit U8); they are stubs, see [`RoutingBoard::init_autoroute`].
+//! The autoroute entry points (`initAutoroute`, `autoroute`, `fanout`, `autorouteConnection`) are
+//! implemented in [`crate::autoroute::router`] (porting unit U8).
 //!
 //! Time limits: every limit Java creates with `new TimeLimit(ms)` is created through
 //! [`RoutingBoard::time_limits`] ([`TimeLimitPolicy`]), so a deterministic run can disable them.
@@ -196,6 +196,9 @@ pub struct RoutingBoard {
     shove_failing_layer: LayerNo,
     /// Creation of the Java wall clock time limits.
     pub time_limits: TimeLimitPolicy,
+    /// Java `autorouteEngine` (transient: not copied by `clone`, see
+    /// [`crate::autoroute::router`]).
+    pub autoroute_engine: crate::autoroute::router::EngineSlot,
 }
 
 impl Deref for RoutingBoard {
@@ -238,6 +241,7 @@ impl RoutingBoard {
             shove_failing_obstacle: None,
             shove_failing_layer: -1,
             time_limits: TimeLimitPolicy::default(),
+            autoroute_engine: Default::default(),
         }
     }
 
@@ -631,7 +635,8 @@ impl RoutingBoard {
         if combined_polyline.lines.len() < 3 {
             return ForcedTraceEnd::From(from_corner);
         }
-        let start_shape_no = (combined_polyline.lines.len() - new_polyline.len()) as i32;
+        // (Java int arithmetic: may be negative if the combination shortened the polyline)
+        let start_shape_no = combined_polyline.lines.len() as i32 - new_polyline.len() as i32;
         // calculate the last shapes of combinedPolyline for checking
         let trace_shapes =
             combined_polyline.offset_shapes_range(compensated_half_width, start_shape_no, combined_polyline.lines.len() as i32 - 1);
@@ -812,49 +817,15 @@ impl RoutingBoard {
     }
 
     // ------------------------------------------------------------------------------------------
-    // autoroute entry points (porting unit U8)
+    // autoroute entry points: `initAutoroute`, `autoroute`, `fanout`, `autorouteConnection` are
+    // implemented in `crate::autoroute::router` (porting unit U8).
 
-    /// Java `AutorouteEngine initAutoroute(int netNumber, int traceClearanceClassIndex,
-    /// Stoppable stoppableThread, TimeLimit timeLimit, boolean retainAutorouteDatabase)`.
-    ///
-    /// TODO(U8): create / reuse the autoroute engine (`new AutorouteEngine(this,
-    /// traceClearanceClassIndex, retainAutorouteDatabase)` unless an engine for the same
-    /// compensated clearance class is retained), set [`BasicBoard::autoroute_maintenance`] while
-    /// the engine maintains its database, and call `initConnection(netNumber, stoppableThread,
-    /// timeLimit)`.
-    pub fn init_autoroute(
-        &mut self,
-        _net_number: NetNo,
-        _trace_clearance_class: ClearanceClassNo,
-        _stop: Option<&StopToken>,
-        _time_limit: Option<&TimeLimit>,
-        _retain_autoroute_database: bool,
-    ) {
-        unimplemented!("RoutingBoard.initAutoroute: autoroute engine (U8)")
-    }
-
-    /// Java `AutorouteAttemptResult autoroute(Item item, RouterSettings routerSettings, int
-    /// viaCosts, Stoppable stoppableThread, TimeLimit timeLimit)`.
-    ///
-    /// TODO(U8): `AutorouteControl` + `autorouteConnection`, then on `ROUTED`
-    /// `optChangedArea(new int[] {routeNetNo}, null, routerSettings.tracePullTightAccuracy,
-    /// ctrlSettings.traceCosts, stoppableThread, 1000)` (= [`Self::opt_changed_area`]).
-    pub fn autoroute(&mut self, _item: ItemKey, _via_costs: i32, _stop: Option<&StopToken>, _time_limit: Option<&TimeLimit>) -> AutorouteAttemptState {
-        unimplemented!("RoutingBoard.autoroute: autoroute engine (U8)")
-    }
-
-    /// Java `AutorouteAttemptResult fanout(Pin pin, RouterSettings routerSettings, int ripupCosts,
-    /// Stoppable stoppableThread, TimeLimit timeLimit)`.
-    ///
-    /// TODO(U8): see Java; on `ROUTED` calls [`Self::opt_changed_area`] with the pin net, the
-    /// pull tight accuracy, the trace costs and a 1000 ms limit.
-    pub fn fanout(&mut self, _pin: ItemKey, _ripup_costs: i32, _stop: Option<&StopToken>, _time_limit: Option<&TimeLimit>) -> AutorouteAttemptState {
-        unimplemented!("RoutingBoard.fanout: autoroute engine (U8)")
-    }
-
-    /// Java `finishAutoroute()`: drops the autoroute database. The engine itself is owned by the
-    /// autorouter (U8); the board only stops maintaining it.
+    /// Java `finishAutoroute()`: clears the autoroute database (`autorouteEngine.clear()`) and
+    /// drops the engine.
     pub fn finish_autoroute(&mut self) {
+        if let Some(mut engine) = self.autoroute_engine.take() {
+            engine.clear(self);
+        }
         self.basic.autoroute_maintenance = None;
     }
 
@@ -868,12 +839,16 @@ impl RoutingBoard {
     }
 
     /// Java `clearAllItemTemporaryAutorouteData()`: the item autoroute infos are owned by the
-    /// autoroute engine in the port (nothing to do here).
-    pub fn clear_all_item_temporary_autoroute_data(&mut self) {}
+    /// autoroute engine in the port (cleared there if the board holds an engine).
+    pub fn clear_all_item_temporary_autoroute_data(&mut self) {
+        if let Some(engine) = self.autoroute_engine.0.as_mut() {
+            engine.clear_item_infos();
+        }
+    }
 
     /// Java `isMaintainingAutorouteDatabase()`.
     pub fn is_maintaining_autoroute_database(&self) -> bool {
-        self.basic.autoroute_maintenance.is_some()
+        self.basic.autoroute_maintenance.as_ref().map(|m| m.maintain_database).unwrap_or(false)
     }
 
     // ------------------------------------------------------------------------------------------

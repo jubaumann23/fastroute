@@ -264,6 +264,8 @@ impl BasicBoard {
         for &key in &restored_keys {
             self.clear_search_tree_entries(key);
             self.tree_insert(key);
+            // (Java `currentItem.clearAutorouteInfo()`)
+            self.note_autoroute_info_cleared(key);
             if let Some(nets) = changed_nets.as_deref_mut() {
                 nets.extend(self.item(key).net_numbers().iter().copied());
             }

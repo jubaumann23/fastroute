@@ -805,6 +805,8 @@ impl BasicBoard {
             tree.clear_shapes(key);
         }
         self.items.get_mut(key).clear_derived_data();
+        // (Java also nulls the item's autoroute info)
+        self.note_autoroute_info_cleared(key);
     }
 
     /// Java `SearchTreeManager.setClearanceCompensationUsed(value)`.
