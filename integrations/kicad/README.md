@@ -23,7 +23,7 @@ The plugin finds `fastroute` in this order: `$FASTROUTE_BIN`, the bundled
 | Mode | Fast | *Fast*: parallel optimizer. *Exact*: bit-identical to Freerouting's deterministic mode (single-threaded optimizer). *Quick*: autorouter only. |
 | Max. passes | 0 | Autorouter pass limit (0 = until done/stagnant). |
 | Remove existing tracks | off | Deletes unlocked tracks/vias first; locked ones are kept. |
-| Route zone nets with tracks | on | KiCad exports copper zones as Specctra *planes* covering the zone outline, so the router assumes every pad of the zone's net is connected. The refilled zone leaves clearance around the new tracks and can cut pads off. With this option the planes are removed from the exchange file and those nets are routed too. |
+| Route zone nets with tracks | on | KiCad exports copper zones as Specctra *planes* covering the zone outline, so the router assumes every pad of the zone's net is connected; the refilled zone may cut pads off. Pours are removed and their nets routed with tracks. A power-type layer with a plane covering most of the board stays a plane layer (pads connect through vias); other power-type layers are routed like signal layers. |
 | Keep tracks away from copper texts | on | KiCad's export omits copper texts; each glyph is added as a keepout. |
 | Respect minimum track width | on | Uses *Board Setup → Constraints → Minimum track width*: neck-down stops there, and connections that do not fit are retried with traces of that width. The board's copper-to-edge clearance is passed on as well. |
 | Refill zones | on | Refills all zones after importing the result. |
