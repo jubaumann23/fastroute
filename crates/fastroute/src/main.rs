@@ -59,9 +59,9 @@ fn run() -> Result<(), String> {
         eprintln!("warning: {w}");
     }
     let dsn_settings = DsnFileSettings::from_dsn(&dsn);
-    let settings = headless_merger(&cli, &env, Some(&dsn_settings), None, procs).merge(procs);
+    let mut settings = headless_merger(&cli, &env, Some(&dsn_settings), None, procs).merge(procs);
     eprintln!(
-        "loaded '{}' in {:.1} ms: {} layers, {} components, {} nets, {} wires",
+        "parsed '{}' in {:.1} ms: {} layers, {} components, {} nets, {} wires",
         dsn.name,
         t.elapsed().as_secs_f64() * 1e3,
         dsn.structure.layers.len(),
@@ -69,16 +69,12 @@ fn run() -> Result<(), String> {
         dsn.network.nets.len(),
         dsn.wiring.wires.len(),
     );
-    eprintln!(
-        "autorouter max passes: {:?}, optimizer threads: {:?}",
-        settings.autorouter.max_passes, settings.optimizer.max_threads
-    );
+
+    // HeadlessBoardManager.loadFromSpecctraDsn + RoutingJobScheduler preparation.
     let t = Instant::now();
-    let design = fr_io::load_bytes(&data).map_err(|e| format!("{path}: {e:?}"))?;
-    for w in &design.warnings {
-        eprintln!("warning: {w}");
-    }
-    let board = fr_io::build_board(design);
+    let mut board = fr_io::post_load::load_from_specctra_dsn(&data, &mut settings)
+        .map_err(|e| format!("{path}: {e:?}"))?;
+    fr_io::post_load::prepare_for_routing(&mut board, &mut settings, None);
     eprintln!(
         "built board in {:.1} ms: {} items ({} pins, {} vias, {} traces)",
         t.elapsed().as_secs_f64() * 1e3,
@@ -87,8 +83,16 @@ fn run() -> Result<(), String> {
         board.get_vias().len(),
         board.get_traces().len(),
     );
-    if args.design_out.is_some() {
-        return Err("routing is not implemented yet (board model port in progress)".into());
+
+    if let Some(out) = args.design_out {
+        eprintln!("warning: routing is not implemented yet; writing the unrouted session");
+        // The Java CLI names the session after the input file stem.
+        let design_name = std::path::Path::new(&path)
+            .file_stem()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let bytes = fr_io::ses_writer::ses_bytes(&board, &design_name);
+        std::fs::write(&out, bytes).map_err(|e| format!("{out}: {e}"))?;
     }
     Ok(())
 }
