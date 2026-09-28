@@ -12,7 +12,9 @@
 pub mod autoroute;
 pub mod board;
 pub mod datastructures;
+pub mod drc;
 pub mod ids;
 pub mod library;
 pub mod rules;
+pub mod scoring;
 pub mod structure;

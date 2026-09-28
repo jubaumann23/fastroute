@@ -1,0 +1,175 @@
+MODE brief
+VARIANT source
+LAYERS 2 462e4375 1 422e4375 1
+BBOX B -1000 -1000 101000 101000
+COMM UM 10 -
+FLIP 0
+RULES 1 0 4093880000000000
+CLASSES 2 6e756c6c 64656661756c74
+CLROW 0 0 0 0 0
+CLROW 0 1 0 0 0
+CLROW 1 0 2000 0 2000
+CLROW 1 1 2000 0 2000
+NETCLASS 64656661756c74 0 1 0 0
+NET 1 43524f5353 1 0 0
+PADSTACK 1 436972636c655061645f465f3830305f756d 0 0 0 2 C 0 0 4000 N
+PADSTACK 2 436972636c655061645f425f3830305f756d 0 0 0 2 N C 0 0 4000
+PADSTACK 3 5669615b302d315d5f3830303a3430305f756d 0 0 0 2 C 0 0 4000 C 0 0 4000
+PACKAGE 1 5041445f46 1 1 31 1 0 0 0
+PACKAGE 2 5041445f42 1 1 31 2 0 0 0
+COMP 1 5531 I 20000 20000 0 1 1 1 0
+COMP 2 5532 I 80000 80000 0 1 2 2 0
+BOARD 1 1 P 4 I 0 0 I 100000 0 I 100000 100000 I 0 100000
+TOLERANCE 3ff0000000000000
+HOSTVERSION -
+VIAINFO 5669615b302d315d5f3830303a3430305f756d 3 1 0
+VIARULE 64656661756c74 1 0
+VIARULE 64656661756c74 1 0
+NCRULES 0 1 0 0
+PIN 1 0 1,1 1 0
+PIN 2 0 1,1 1 0
+PREEXIST 2
+SCORE
+= V 0
+= RAW 0 hash cbf29ce484222325
+= I 1 1 0 [ 1:1/2 ] [1]
+= AIRLINES 1
+= ESCAPED 2 hash db9c79b03f28411c
+= S full 6e756c6c2c6e756c6c mm
+= S board 42ca0000,42ca0000,bf800000,bf800000 0,0,42cc0000,42cc0000 3f852bd4
+= S layers 2 2
+= S items 3 0 0 0 0 2 0 1
+= S counts 2 2 1 1
+= S connections 1 1
+= S traces 0 0 0 0 0 0 0 0 0
+= S bends 0 0 0 0
+= S vias 0 0 0 0
+= S cv 0 2 0 0 0 0 0 0
+= S difficulty 2 2 4 40800000 3f852bd4
+= S bounds 41400000 1 1
+= S fanout 2 2 0
+= SC 0 447a0000 0 0 0 447a0000 0 0 0 4a989680
+= S nocv 6e756c6c2c6e756c6c mm
+= S board 42ca0000,42ca0000,bf800000,bf800000 0,0,42cc0000,42cc0000 3f852bd4
+= S layers 2 2
+= S items 3 0 0 0 0 2 0 1
+= S counts 2 2 1 1
+= S connections 1 1
+= S traces 0 0 0 0 0 0 0 0 0
+= S bends 0 0 0 0
+= S vias 0 0 0 0
+= S cv 0 0 0 0 0 0 0 0
+= S difficulty 2 2 4 40800000 3f852bd4
+= S bounds 41400000 1 1
+= S fanout 2 2 0
+= SC 0 447a0000 0 0 0 447a0000 0 0 0 4a989680
+= S inch 6e756c6c2c6e756c6c inch
+= S board 407e7cfa,407e7cfa,bd214285,bd214285 0,0,40808102,40808102 3f852bd4
+= S layers 2 2
+= S items 3 0 0 0 0 2 0 1
+= S counts 2 2 1 1
+= S connections - -
+= S traces 0 0 0 0 0 0 0 0 0
+= S bends 0 0 0 0
+= S vias 0 0 0 0
+= S cv 0 0 0 0 0 0 0 0
+= S difficulty 2 2 4 40800000 3f852bd4
+= S bounds 41400000 1 1
+= S fanout 2 2 0
+= SC inch 447a0000 447a0000
+SCORE
+= V 0
+= RAW 0 hash cbf29ce484222325
+= I 1 1 0 [ 1:1/2 ] [1]
+= AIRLINES 1
+= ESCAPED 2 hash db9c79b03f28411c
+= S full 6e756c6c2c6e756c6c mm
+= S board 42ca0000,42ca0000,bf800000,bf800000 0,0,42cc0000,42cc0000 3f852bd4
+= S layers 2 2
+= S items 3 0 0 0 0 2 0 1
+= S counts 2 2 1 1
+= S connections 1 1
+= S traces 0 0 0 0 0 0 0 0 0
+= S bends 0 0 0 0
+= S vias 0 0 0 0
+= S cv 0 2 0 0 0 0 0 0
+= S difficulty 2 2 4 40800000 3f852bd4
+= S bounds 41400000 1 1
+= S fanout 2 2 0
+= SC 0 447a0000 0 0 0 447a0000 0 0 0 4a989680
+= S nocv 6e756c6c2c6e756c6c mm
+= S board 42ca0000,42ca0000,bf800000,bf800000 0,0,42cc0000,42cc0000 3f852bd4
+= S layers 2 2
+= S items 3 0 0 0 0 2 0 1
+= S counts 2 2 1 1
+= S connections 1 1
+= S traces 0 0 0 0 0 0 0 0 0
+= S bends 0 0 0 0
+= S vias 0 0 0 0
+= S cv 0 0 0 0 0 0 0 0
+= S difficulty 2 2 4 40800000 3f852bd4
+= S bounds 41400000 1 1
+= S fanout 2 2 0
+= SC 0 447a0000 0 0 0 447a0000 0 0 0 4a989680
+= S inch 6e756c6c2c6e756c6c inch
+= S board 407e7cfa,407e7cfa,bd214285,bd214285 0,0,40808102,40808102 3f852bd4
+= S layers 2 2
+= S items 3 0 0 0 0 2 0 1
+= S counts 2 2 1 1
+= S connections - -
+= S traces 0 0 0 0 0 0 0 0 0
+= S bends 0 0 0 0
+= S vias 0 0 0 0
+= S cv 0 0 0 0 0 0 0 0
+= S difficulty 2 2 4 40800000 3f852bd4
+= S bounds 41400000 1 1
+= S fanout 2 2 0
+= SC inch 447a0000 447a0000
+SCORE
+= V 0
+= RAW 0 hash cbf29ce484222325
+= I 1 1 0 [ 1:1/2 ] [1]
+= AIRLINES 1
+= ESCAPED 2 hash db9c79b03f28411c
+= S full 6e756c6c2c6e756c6c mm
+= S board 42ca0000,42ca0000,bf800000,bf800000 0,0,42cc0000,42cc0000 3f852bd4
+= S layers 2 2
+= S items 3 0 0 0 0 2 0 1
+= S counts 2 2 1 1
+= S connections 1 1
+= S traces 0 0 0 0 0 0 0 0 0
+= S bends 0 0 0 0
+= S vias 0 0 0 0
+= S cv 0 2 0 0 0 0 0 0
+= S difficulty 2 2 4 40800000 3f852bd4
+= S bounds 41400000 1 1
+= S fanout 2 2 0
+= SC 0 447a0000 0 0 0 447a0000 0 0 0 4a989680
+= S nocv 6e756c6c2c6e756c6c mm
+= S board 42ca0000,42ca0000,bf800000,bf800000 0,0,42cc0000,42cc0000 3f852bd4
+= S layers 2 2
+= S items 3 0 0 0 0 2 0 1
+= S counts 2 2 1 1
+= S connections 1 1
+= S traces 0 0 0 0 0 0 0 0 0
+= S bends 0 0 0 0
+= S vias 0 0 0 0
+= S cv 0 0 0 0 0 0 0 0
+= S difficulty 2 2 4 40800000 3f852bd4
+= S bounds 41400000 1 1
+= S fanout 2 2 0
+= SC 0 447a0000 0 0 0 447a0000 0 0 0 4a989680
+= S inch 6e756c6c2c6e756c6c inch
+= S board 407e7cfa,407e7cfa,bd214285,bd214285 0,0,40808102,40808102 3f852bd4
+= S layers 2 2
+= S items 3 0 0 0 0 2 0 1
+= S counts 2 2 1 1
+= S connections - -
+= S traces 0 0 0 0 0 0 0 0 0
+= S bends 0 0 0 0
+= S vias 0 0 0 0
+= S cv 0 0 0 0 0 0 0 0
+= S difficulty 2 2 4 40800000 3f852bd4
+= S bounds 41400000 1 1
+= S fanout 2 2 0
+= SC inch 447a0000 447a0000
