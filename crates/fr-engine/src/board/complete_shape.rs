@@ -235,11 +235,9 @@ impl BasicBoard {
         }
         let mut bounding_shape = start_shape;
         let room_layer = room.layer;
-        let mut result: Vec<IncompleteFreeSpaceExpansionRoom> = vec![IncompleteFreeSpaceExpansionRoom::new(
-            Some(TileShape::IntOctagon(start_shape)),
-            room_layer,
-            Some(TileShape::IntOctagon(shape_to_be_contained)),
-        )];
+        // (room shape, shape to be contained); all shapes of this tree class are octagons
+        let mut result: Vec<(IntOctagon, IntOctagon)> = vec![(start_shape, shape_to_be_contained)];
+        let mut new_result: Vec<(IntOctagon, IntOctagon)> = Vec::new();
         let mut cursor = TreeCursor::new();
         cursor.start(&tree.tree);
         let layer_mask = layer_bit(room_layer);
@@ -257,10 +255,9 @@ impl BasicBoard {
                 .expect("tree shape")
                 .bounding_octagon()
                 .expect("bounding octagon");
-            let mut new_result: Vec<IncompleteFreeSpaceExpansionRoom> = Vec::new();
+            new_result.clear();
             let mut new_bounding_shape = IntOctagon::EMPTY;
-            for current_room in result {
-                let current_shape = *current_room.shape.as_ref().unwrap().as_int_octagon().expect("IntOctagon room shape");
+            for &(current_shape, current_contained) in &result {
                 let overlaps = current_shape.overlaps(&object_shape);
                 if overlaps {
                     if matches!(object, TreeObject::Room { .. }) {
@@ -271,126 +268,35 @@ impl BasicBoard {
                                 // 2-dim overlap-door with the fromRoom.
                                 if !ignore.contains_tile_shape(&TileShape::IntOctagon(current_shape)) {
                                     new_bounding_shape = new_bounding_shape.union_int_octagon(&current_shape);
-                                    new_result.push(current_room);
+                                    new_result.push((current_shape, current_contained));
                                 }
                                 continue;
                             }
                         }
                     }
-                    let restrained = Self::restrain_shape_45(&current_room, &object_shape);
-                    new_result.extend(restrained);
-                    for tmp in &new_result {
-                        new_bounding_shape = new_bounding_shape.union_int_octagon(tmp.shape.as_ref().unwrap().as_int_octagon().unwrap());
+                    let first_new = new_result.len();
+                    restrain_shape_45(current_shape, current_contained, &object_shape, &mut new_result);
+                    // Java unions all rooms of newResult here; the union (component-wise
+                    // min/max) is idempotent and the earlier rooms are already contained, so
+                    // adding the new rooms gives the same shape.
+                    for tmp in &new_result[first_new..] {
+                        new_bounding_shape = new_bounding_shape.union_int_octagon(&tmp.0);
                     }
                 } else {
                     new_bounding_shape = new_bounding_shape.union_int_octagon(&current_shape);
-                    new_result.push(current_room);
+                    new_result.push((current_shape, current_contained));
                 }
             }
-            result = new_result;
+            std::mem::swap(&mut result, &mut new_result);
             bounding_shape = new_bounding_shape;
         }
+        let result: Vec<IncompleteFreeSpaceExpansionRoom> = result
+            .into_iter()
+            .map(|(shape, contained)| IncompleteFreeSpaceExpansionRoom::new(Some(TileShape::IntOctagon(shape)), room_layer, Some(TileShape::IntOctagon(contained))))
+            .collect();
         let mut result = divide_large_room(TreeKind::FortyfiveDegree, result, &self.bounding_box);
         // remove rooms with shapes equal to the contained shape to prevent endless loop.
         result.retain(|r| !r.contained_shape.as_ref().unwrap().contains_tile_shape(r.shape.as_ref().unwrap()));
-        result
-    }
-
-    fn restrain_shape_45(incomplete_room: &IncompleteFreeSpaceExpansionRoom, obstacle_shape: &IntOctagon) -> Vec<IncompleteFreeSpaceExpansionRoom> {
-        let mut result = Vec::new();
-        let Some(contained) = &incomplete_room.contained_shape else {
-            return result;
-        };
-        if contained.is_empty() {
-            log::debug!("ShapeSearchTree45Degree.restrain_shape: shapeToBeContained is empty");
-            return result;
-        }
-        let shape_to_be_contained = match contained {
-            TileShape::IntOctagon(o) => *o,
-            TileShape::Simplex(_) => match contained.bounding_octagon() {
-                Some(o) => o,
-                None => {
-                    log::warn!("restrain_shape: cannot convert Simplex to IntOctagon");
-                    return Vec::new();
-                }
-            },
-            // `IntBox.isIntOctagon()` is true in Java
-            TileShape::IntBox(b) => b.bounding_octagon(),
-        };
-        let room_shape = match incomplete_room.shape.as_ref() {
-            Some(TileShape::IntOctagon(o)) => *o,
-            Some(s @ TileShape::Simplex(_)) => match s.bounding_octagon() {
-                Some(o) => o,
-                None => {
-                    log::warn!("restrain_shape: cannot convert room shape Simplex to IntOctagon");
-                    return Vec::new();
-                }
-            },
-            _ => {
-                log::warn!("restrain_shape: unsupported room shape type");
-                return Vec::new();
-            }
-        };
-        let mut cut_line_distance = -1.0;
-        let mut restraining_line_no = -1;
-        for obstacle_line_no in 0..8 {
-            let current_distance = signed_line_distance(obstacle_shape, obstacle_line_no, &shape_to_be_contained);
-            if current_distance > cut_line_distance && obstacle_segment_touches_inside(obstacle_shape, obstacle_line_no, &room_shape) {
-                cut_line_distance = current_distance;
-                restraining_line_no = obstacle_line_no;
-            }
-        }
-        if cut_line_distance >= 0.0 {
-            let restrained = calc_outside_restrained_shape(obstacle_shape, restraining_line_no, &room_shape);
-            result.push(IncompleteFreeSpaceExpansionRoom::new(
-                Some(TileShape::IntOctagon(restrained)),
-                incomplete_room.layer,
-                Some(TileShape::IntOctagon(shape_to_be_contained)),
-            ));
-            return result;
-        }
-        // There is no cut line, so that all shapeToBeContained is completely on the right side
-        // of that line. Search a cut line, so that at least part of shapeToBeContained is on the
-        // right side.
-        if shape_to_be_contained.dimension() < 1 {
-            // There is already a completed expansion room around shapeToBeContained.
-            return result;
-        }
-        restraining_line_no = -1;
-        for obstacle_line_no in 0..8 {
-            if obstacle_segment_touches_inside(obstacle_shape, obstacle_line_no, &room_shape) {
-                let current_line = obstacle_shape.border_line(obstacle_line_no);
-                if shape_to_be_contained.side_of(&current_line) == Side::Collinear {
-                    // current_line intersects with the interior of shapeToBeContained
-                    restraining_line_no = obstacle_line_no;
-                    break;
-                }
-            }
-        }
-        if restraining_line_no < 0 {
-            // cut line not found, parts or the whole of shape may be already occupied from
-            // somewhere else.
-            return result;
-        }
-        let restrained = calc_outside_restrained_shape(obstacle_shape, restraining_line_no, &room_shape);
-        if restrained.dimension() == 2 {
-            let new_contained = shape_to_be_contained.intersection_int_octagon(&restrained);
-            if new_contained.dimension() > 0 {
-                result.push(IncompleteFreeSpaceExpansionRoom::new(
-                    Some(TileShape::IntOctagon(restrained)),
-                    incomplete_room.layer,
-                    Some(TileShape::IntOctagon(new_contained)),
-                ));
-            }
-        }
-        let rest_piece = calc_inside_restrained_shape(obstacle_shape, restraining_line_no, &room_shape);
-        if rest_piece.dimension() >= 2 {
-            let rest_contained = TileShape::IntOctagon(shape_to_be_contained).intersection(&TileShape::IntOctagon(rest_piece));
-            if rest_contained.dimension() >= 0 {
-                let rest_room = IncompleteFreeSpaceExpansionRoom::new(Some(TileShape::IntOctagon(rest_piece)), incomplete_room.layer, Some(rest_contained));
-                result.extend(Self::restrain_shape_45(&rest_room, obstacle_shape));
-            }
-        }
         result
     }
 
@@ -680,4 +586,66 @@ fn restrain_shape_90(incomplete_room: &IncompleteFreeSpaceExpansionRoom, obstacl
         }
     }
     result
+}
+
+/// Java `ShapeSearchTree45Degree.restrainShape(room, obstacleShape)` for a room with octagon
+/// shape `room_shape` and octagon shape to be contained: appends the restrained rooms
+/// (shape, shape to be contained) to `out`, in the order of the Java result list.
+fn restrain_shape_45(room_shape: IntOctagon, shape_to_be_contained: IntOctagon, obstacle_shape: &IntOctagon, out: &mut Vec<(IntOctagon, IntOctagon)>) {
+    if shape_to_be_contained.is_empty() {
+        log::debug!("ShapeSearchTree45Degree.restrain_shape: shapeToBeContained is empty");
+        return;
+    }
+    let mut cut_line_distance = -1.0;
+    let mut restraining_line_no = -1;
+    for obstacle_line_no in 0..8 {
+        let current_distance = signed_line_distance(obstacle_shape, obstacle_line_no, &shape_to_be_contained);
+        if current_distance > cut_line_distance && obstacle_segment_touches_inside(obstacle_shape, obstacle_line_no, &room_shape) {
+            cut_line_distance = current_distance;
+            restraining_line_no = obstacle_line_no;
+        }
+    }
+    if cut_line_distance >= 0.0 {
+        let restrained = calc_outside_restrained_shape(obstacle_shape, restraining_line_no, &room_shape);
+        out.push((restrained, shape_to_be_contained));
+        return;
+    }
+    // There is no cut line, so that all shapeToBeContained is completely on the right side
+    // of that line. Search a cut line, so that at least part of shapeToBeContained is on the
+    // right side.
+    if shape_to_be_contained.dimension() < 1 {
+        // There is already a completed expansion room around shapeToBeContained.
+        return;
+    }
+    restraining_line_no = -1;
+    for obstacle_line_no in 0..8 {
+        if obstacle_segment_touches_inside(obstacle_shape, obstacle_line_no, &room_shape) {
+            let current_line = obstacle_shape.border_line(obstacle_line_no);
+            if shape_to_be_contained.side_of(&current_line) == Side::Collinear {
+                // current_line intersects with the interior of shapeToBeContained
+                restraining_line_no = obstacle_line_no;
+                break;
+            }
+        }
+    }
+    if restraining_line_no < 0 {
+        // cut line not found, parts or the whole of shape may be already occupied from
+        // somewhere else.
+        return;
+    }
+    let restrained = calc_outside_restrained_shape(obstacle_shape, restraining_line_no, &room_shape);
+    if restrained.dimension() == 2 {
+        let new_contained = shape_to_be_contained.intersection_int_octagon(&restrained);
+        if new_contained.dimension() > 0 {
+            out.push((restrained, new_contained));
+        }
+    }
+    let rest_piece = calc_inside_restrained_shape(obstacle_shape, restraining_line_no, &room_shape);
+    if rest_piece.dimension() >= 2 {
+        // Java: shapeToBeContained.intersection(restPiece) = restPiece.intersection(shapeToBeContained)
+        let rest_contained = rest_piece.intersection_int_octagon(&shape_to_be_contained);
+        if rest_contained.dimension() >= 0 {
+            restrain_shape_45(rest_piece, rest_contained, obstacle_shape, out);
+        }
+    }
 }

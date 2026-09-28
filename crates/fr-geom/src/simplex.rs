@@ -94,10 +94,22 @@ impl Simplex {
         if lines.is_empty() {
             return Simplex::empty();
         }
-        let mut current_arr: Vec<Line> = lines.to_vec();
-        // sort the lines in ascending direction (exact port of Java's TimSort, see java_sort)
-        crate::java_sort::sort_by(&mut current_arr, |a, b| a.compare_to(b));
-        Simplex::new(current_arr).remove_redundant_lines()
+        // Java: sort the lines in ascending direction (TimSort), then removeRedundantLines.
+        // Done on index arrays; only the remaining lines are cloned.
+        let n = lines.len();
+        with_buffers(n, |idx, kept, sides| {
+            for (k, v) in idx.iter_mut().enumerate() {
+                *v = k;
+            }
+            crate::java_sort::sort_indices_by(idx, |x, y| lines[x].compare_to(&lines[y]));
+            let idx: &[usize] = idx;
+            let k = redundant_lines_core(n, |i| &lines[idx[i]], kept, sides);
+            if k == 0 {
+                return Simplex::empty();
+            }
+            let result: Arc<[Line]> = kept[..k].iter().map(|&i| lines[idx[i]].clone()).collect();
+            Simplex::from_arc(result)
+        })
     }
 
     /// Return true, if this simplex is empty.
@@ -619,7 +631,7 @@ impl Simplex {
         let n = a.len() + b.len();
         with_buffers(n, |idx, lines, sides| {
             let get = |j: usize| -> &Line { if j < a.len() { &a[j] } else { &b[j - a.len()] } };
-            let k = intersection_core(n, &get, idx, lines, sides);
+            let k = intersection_core(n, a.len(), &get, idx, lines, sides);
             if k == 0 {
                 return Simplex::empty();
             }
@@ -1024,17 +1036,76 @@ fn with_buffers<R>(n: usize, f: impl FnOnce(&mut [usize], &mut [usize], &mut [Op
 /// lines. Returns the number of remaining lines; the remaining line `i` is `get(idx[lines[i]])`.
 fn intersection_core<'a>(
     n: usize,
+    a_len: usize,
     get: &impl Fn(usize) -> &'a Line,
     idx: &mut [usize],
     lines: &mut [usize],
     sides: &mut [Option<Side>],
 ) -> usize {
-    for (k, v) in idx.iter_mut().enumerate() {
-        *v = k;
+    if !merge_sorted_runs(n, a_len, get, idx) {
+        for (k, v) in idx.iter_mut().enumerate() {
+            *v = k;
+        }
+        crate::java_sort::sort_indices_by(idx, |x, y| get(x).compare_to(get(y)));
     }
-    crate::java_sort::sort_indices_by(idx, |x, y| get(x).compare_to(get(y)));
     let idx: &[usize] = idx;
     redundant_lines_core(n, |i| get(idx[i]), lines, sides)
+}
+
+/// The direction vector of a line if `Line.compareTo` is exact and consistent on it: IntPoints,
+/// not zero, components below 2^26 in absolute value (then the determinant in `compareTo` is
+/// computed exactly in `f64`, and `compareTo` orders the lines by the angle of their direction,
+/// a total preorder).
+#[inline]
+fn consistent_direction(l: &Line) -> Option<(i32, i32)> {
+    let (Point::Int(a), Point::Int(b)) = (&l.a, &l.b) else { return None };
+    let dx = b.x.wrapping_sub(a.x);
+    let dy = b.y.wrapping_sub(a.y);
+    const LIM: i32 = 1 << 26;
+    if (dx == 0 && dy == 0) || dx <= -LIM || dx >= LIM || dy <= -LIM || dy >= LIM {
+        return None;
+    }
+    Some((dx, dy))
+}
+
+/// Java's sort of `lines(0..a_len) ++ lines(a_len..n)` when both parts are already sorted and
+/// `compareTo` is a total preorder on all lines: every stable sort gives the same result (Java's
+/// TimSort is stable), namely the stable merge of the two runs. Writes it to `idx` and returns
+/// true; returns false (leaving `idx` unspecified) if the preconditions do not hold.
+fn merge_sorted_runs<'a>(n: usize, a_len: usize, get: &impl Fn(usize) -> &'a Line, idx: &mut [usize]) -> bool {
+    for j in 0..n {
+        if consistent_direction(get(j)).is_none() {
+            return false;
+        }
+    }
+    for j in 1..n {
+        if j != a_len && get(j - 1).compare_to(get(j)) > 0 {
+            return false;
+        }
+    }
+    let (mut i, mut j, mut k) = (0, a_len, 0);
+    while i < a_len && j < n {
+        // stable: take the element of the first run unless the second one is strictly smaller
+        if get(j).compare_to(get(i)) < 0 {
+            idx[k] = j;
+            j += 1;
+        } else {
+            idx[k] = i;
+            i += 1;
+        }
+        k += 1;
+    }
+    while i < a_len {
+        idx[k] = i;
+        i += 1;
+        k += 1;
+    }
+    while j < n {
+        idx[k] = j;
+        j += 1;
+        k += 1;
+    }
+    true
 }
 
 /// `!a.intersection(b).isEmpty()` for the non-empty simplex lines `a` and the `b_len` lines
@@ -1046,7 +1117,7 @@ fn intersection_nonempty<'a>(a: &'a [Line], b_len: usize, b: impl Fn(usize) -> &
     let n = a.len() + b_len;
     with_buffers(n, |idx, lines, sides| {
         let get = |j: usize| -> &'a Line { if j < a.len() { &a[j] } else { b(j - a.len()) } };
-        intersection_core(n, &get, idx, lines, sides) != 0
+        intersection_core(n, a.len(), &get, idx, lines, sides) != 0
     })
 }
 
@@ -1062,6 +1133,27 @@ fn redundant_lines_core<'a, F: Fn(usize) -> &'a Line>(
     lines: &mut [usize],
     sides: &mut [Option<Side>],
 ) -> usize {
+    // the int directions of the lines (computed once; `None` for other directions, where
+    // `int_direction` panics like the Java cast)
+    let mut dir_buf = [None; SMALL];
+    let mut dir_vec;
+    let dirs: &mut [Option<IntDirection>] = if arr_len <= SMALL {
+        &mut dir_buf[..arr_len]
+    } else {
+        dir_vec = vec![None; arr_len];
+        &mut dir_vec[..]
+    };
+    for (i, d) in dirs.iter_mut().enumerate() {
+        if let Direction::Int(v) = line(i).direction() {
+            *d = Some(v);
+        }
+    }
+    let int_dir = |i: usize| -> IntDirection {
+        match dirs[i] {
+            Some(d) => d,
+            None => line(i).int_direction(),
+        }
+    };
     // `lines` holds indices (Java holds object references)
     // copy the sorted lines while skipping multiple lines
     lines[0] = 0;
@@ -1094,8 +1186,8 @@ fn redundant_lines_core<'a, F: Fn(usize) -> &'a Line>(
             let next_line = lines[next_ind as usize];
 
             let mut remove_line = false;
-            let prev_dir = line(prev_line).int_direction();
-            let next_dir = line(next_line).int_direction();
+            let prev_dir = int_dir(prev_line);
+            let next_dir = int_dir(next_line);
             let det = prev_dir.determinant(&next_dir);
             if det != 0.0 {
                 // prev_line and next_line are not parallel
@@ -1115,7 +1207,7 @@ fn redundant_lines_core<'a, F: Fn(usize) -> &'a Line>(
                     remove_line = side != Side::OnTheLeft;
                 } else if side == Side::OnTheLeft {
                     // direction of next_line is smaller than direction of prev_line
-                    let current_direction = line(current_line).int_direction();
+                    let current_direction = int_dir(current_line);
                     if prev_dir.determinant(&current_direction) > 0.0 {
                         // the halfplane defined by current_line does not intersect with the
                         // simplex defined by prev_line and next_line: the simplex is empty
@@ -1305,5 +1397,48 @@ impl TileShapeImpl for Simplex {
     }
     fn bounding_shape_tile(&self, dirs: &ShapeBoundingDirections) -> Option<RegularTileShape> {
         self.bounding_shape(dirs)
+    }
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+
+    /// The stable merge of two sorted runs equals Java's TimSort of their concatenation.
+    #[test]
+    fn merge_matches_timsort() {
+        let mut seed = 12345u64;
+        let mut rnd = |m: i32| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((seed >> 33) as i64 % (2 * m as i64 + 1) - m as i64) as i32
+        };
+        let mut checked = 0;
+        for round in 0..20000 {
+            let big = if round % 10 == 0 { 1 << 27 } else { 5 };
+            let mut mk = |k: usize| -> Vec<Line> {
+                let mut v: Vec<Line> = (0..k)
+                    .map(|_| {
+                        let (x, y) = (rnd(1000), rnd(1000));
+                        Line::new_ints(x, y, x.wrapping_add(rnd(big)), y.wrapping_add(rnd(big)))
+                    })
+                    .collect();
+                if round % 3 != 0 {
+                    crate::java_sort::sort_by(&mut v, |a, b| a.compare_to(b));
+                }
+                v
+            };
+            let a = mk(1 + (round % 9));
+            let b = mk(1 + (round % 7));
+            let n = a.len() + b.len();
+            let get = |j: usize| if j < a.len() { &a[j] } else { &b[j - a.len()] };
+            let mut idx = vec![0usize; n];
+            if merge_sorted_runs(n, a.len(), &get, &mut idx) {
+                let mut expected: Vec<usize> = (0..n).collect();
+                crate::java_sort::sort_indices_by(&mut expected, |x, y| get(x).compare_to(get(y)));
+                assert_eq!(idx, expected, "round {round}");
+                checked += 1;
+            }
+        }
+        assert!(checked > 5000);
     }
 }

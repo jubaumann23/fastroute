@@ -246,6 +246,11 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
+/// mimalloc is noticeably faster than the system allocator for the many small, short-lived
+/// allocations of the geometry code (see docs/PERFORMANCE.md).
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,

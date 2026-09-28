@@ -145,7 +145,7 @@ pub struct TreeStatistics {
 }
 
 /// Java `MinAreaTree` (the only concrete `ShapeTree`).
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct MinAreaTree<O> {
     bounding_directions: ShapeBoundingDirections,
     nodes: Vec<Node<O>>,
@@ -162,6 +162,24 @@ pub struct MinAreaTree<O> {
     /// Secondary index over the leaves for [`Self::overlapping_leaves_indexed`], built lazily by
     /// the first query and maintained by insert/remove (dropped when the tree has grown a lot).
     grid: OnceLock<LayeredGrid>,
+}
+
+/// Cloning does not copy the secondary grid index (it is rebuilt lazily by the first indexed
+/// query of the clone): most clones (board snapshots, deep copies) are never queried.
+impl<O: Clone> Clone for MinAreaTree<O> {
+    fn clone(&self) -> Self {
+        MinAreaTree {
+            bounding_directions: self.bounding_directions,
+            nodes: self.nodes.clone(),
+            free_head: self.free_head,
+            root: self.root,
+            leaf_count: self.leaf_count,
+            revision: self.revision,
+            hot: self.hot.clone(),
+            bounds_kind: self.bounds_kind,
+            grid: OnceLock::new(),
+        }
+    }
 }
 
 /// The abstract Java base class has a single implementation.

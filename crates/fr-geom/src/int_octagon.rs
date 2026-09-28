@@ -524,7 +524,7 @@ impl IntOctagon {
         }
         // Small per thread memo (the conversion is pure; sharing the result is like Java's
         // memorized simplex).
-        const SLOTS: usize = 256;
+        const SLOTS: usize = 1024;
         thread_local! {
             static MEMO: std::cell::RefCell<Vec<Option<(IntOctagon, Simplex)>>> = std::cell::RefCell::new(vec![None; SLOTS]);
         }
@@ -540,7 +540,7 @@ impl IntOctagon {
         ]
         .iter()
         .fold(0u64, |h, &v| (h ^ v as u32 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
-        let slot = (h >> 56) as usize % SLOTS;
+        let slot = (h >> 40) as usize % SLOTS;
         if let Some(hit) = MEMO.with(|m| match &m.borrow()[slot] {
             Some((o, simplex)) if o == self => Some(simplex.clone()),
             _ => None,

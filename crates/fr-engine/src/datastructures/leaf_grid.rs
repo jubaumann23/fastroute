@@ -55,6 +55,8 @@ struct Entry {
 
 #[derive(Clone, Copy, Debug)]
 struct Level {
+    /// Number of leaves stored in this level.
+    count: u32,
     shift: u32,
     nx: i64,
     ny: i64,
@@ -94,7 +96,7 @@ impl LeafGrid {
         loop {
             let nx = (w >> shift) + 1;
             let ny = (h >> shift) + 1;
-            levels.push(Level { shift, nx, ny, offset });
+            levels.push(Level { count: 0, shift, nx, ny, offset });
             offset += (nx * ny) as usize;
             if nx <= 2 && ny <= 2 {
                 break;
@@ -143,6 +145,7 @@ impl LeafGrid {
             return;
         }
         let (k, cx0, cx1, cy0, cy1) = self.span(lx, ly, rx, ry);
+        self.levels[k].count += 1;
         let level = self.levels[k];
         for cy in cy0..=cy1 {
             for cx in cx0..=cx1 {
@@ -170,6 +173,7 @@ impl LeafGrid {
             return;
         }
         let (k, cx0, cx1, cy0, cy1) = self.span(lx, ly, rx, ry);
+        self.levels[k].count -= 1;
         let level = self.levels[k];
         for cy in cy0..=cy1 {
             for cx in cx0..=cx1 {
@@ -209,6 +213,9 @@ impl LeafGrid {
             }
         }
         for level in &self.levels {
+            if level.count == 0 {
+                continue;
+            }
             let (cx0, cx1) = (self.cell_x(level, qlx), self.cell_x(level, qrx));
             let (cy0, cy1) = (self.cell_y(level, qly), self.cell_y(level, qry));
             for cy in cy0..=cy1 {

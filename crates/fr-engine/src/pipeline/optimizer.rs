@@ -780,68 +780,71 @@ impl BatchOptimizer {
             deadline: self.deadline,
         };
         let stop = &ctx.stop;
-        let mut winning: Option<CandidateResult> = None;
+        let mut consumer = PassConsumer {
+            pass_no,
+            max_consecutive_failures,
+            winning: None,
+            consecutive_failures: 0,
+            evaluated: 0,
+            total_items_optimized: self.total_items_optimized,
+            result_map: std::mem::take(&mut self.result_map),
+            done: false,
+        };
         let mut stopped_or_timed_out = false;
-        let mut consecutive_failures = 0;
-        let mut worker: Option<RoutingBoard> = None;
-        let mut evaluated = 0usize;
-        'chunks: for chunk in candidates.chunks(chunk_size) {
-            if deadline_passed(self.deadline) {
-                log::info!("Optimizer stage timed out.");
-                self.timed_out = true;
-                stopped_or_timed_out = true;
-                break;
-            }
-            if stop.is_stop_requested() {
-                stopped_or_timed_out = true;
-                break;
-            }
-            let results: Vec<Option<CandidateResult>> = match (&self.mode, &self.pool) {
-                (OptimizerMode::Parallel { .. }, Some(pool)) => {
-                    use rayon::prelude::*;
-                    let b: &RoutingBoard = board;
-                    pool.install(|| chunk.par_iter().map(|&id| evaluate_fresh(b, id, &params)).collect())
+        match (&self.mode, &self.pool) {
+            (OptimizerMode::Parallel { threads }, Some(pool)) => {
+                // Candidates are claimed in order by the worker threads and their results are
+                // consumed strictly in candidate order (as soon as all earlier results are
+                // available), so the consumed prefix and thus the result are the same as with
+                // chunked evaluation, for any thread count. Candidates after the stop point
+                // are not evaluated.
+                let deadline = self.deadline;
+                let (flag, timed_out) = stream_parallel(pool, *threads, board, &candidates, &params, &mut consumer, || {
+                    if deadline_passed(deadline) {
+                        Some(true)
+                    } else if stop.is_stop_requested() {
+                        Some(false)
+                    } else {
+                        None
+                    }
+                });
+                if flag {
+                    stopped_or_timed_out = true;
+                    if timed_out {
+                        log::info!("Optimizer stage timed out.");
+                        self.timed_out = true;
+                    }
                 }
-                _ => {
+            }
+            _ => {
+                let mut worker: Option<RoutingBoard> = None;
+                'chunks: for chunk in candidates.chunks(chunk_size) {
+                    if deadline_passed(self.deadline) {
+                        log::info!("Optimizer stage timed out.");
+                        self.timed_out = true;
+                        stopped_or_timed_out = true;
+                        break;
+                    }
+                    if stop.is_stop_requested() {
+                        stopped_or_timed_out = true;
+                        break;
+                    }
                     // Java evaluates the tasks of a chunk in order on the executor thread; the
                     // results are consumed in the same order, so evaluating lazily (and not
                     // evaluating the tasks after an early stop) gives the same result.
-                    let mut v = Vec::with_capacity(chunk.len());
                     for &id in chunk {
                         let r = evaluate_compat(&mut worker, board, id, &params);
-                        v.push(r);
-                        if would_stop(&v, consecutive_failures, max_consecutive_failures) {
-                            break;
+                        if consumer.consume(r) {
+                            break 'chunks;
                         }
-                    }
-                    v
-                }
-            };
-            for r in results {
-                evaluated += 1;
-                let Some(res) = r else { continue };
-                self.total_items_optimized += 1;
-                self.result_map.insert(res.result.item_id, res.result.clone());
-                if res.result.improved {
-                    consecutive_failures = 0;
-                    let better = match &winning {
-                        None => true,
-                        Some(w) => res.result.improved_over(&w.result),
-                    };
-                    if better {
-                        winning = Some(res);
-                    }
-                } else {
-                    consecutive_failures += 1;
-                    if consecutive_failures >= max_consecutive_failures {
-                        log::info!(
-                            "Stopping optimization pass #{pass_no} early after {consecutive_failures} consecutive items could not be improved."
-                        );
-                        break 'chunks;
                     }
                 }
             }
         }
+        self.total_items_optimized = consumer.total_items_optimized;
+        self.result_map = std::mem::take(&mut consumer.result_map);
+        let winning = consumer.winning.take();
+        let evaluated = consumer.evaluated;
         let mut route_improved = 0.0f32;
         if !stopped_or_timed_out {
             if let Some(w) = winning {
@@ -868,21 +871,116 @@ impl BatchOptimizer {
     }
 }
 
-/// True if the consumption loop of `opt_route_pass` stops early after the results in `v`
-/// (given the consecutive failures before this chunk).
-fn would_stop(v: &[Option<CandidateResult>], consecutive_before: i32, max: i32) -> bool {
-    let mut c = consecutive_before;
-    for r in v.iter().flatten() {
-        if r.result.improved {
-            c = 0;
+/// The in-order consumption of candidate results of `opt_route_pass`.
+struct PassConsumer {
+    pass_no: i32,
+    max_consecutive_failures: i32,
+    winning: Option<CandidateResult>,
+    consecutive_failures: i32,
+    evaluated: usize,
+    total_items_optimized: i32,
+    result_map: HashMap<i32, ItemRouteResult>,
+    /// Set once the pass stops early (no further result is consumed).
+    done: bool,
+}
+
+impl PassConsumer {
+    /// Consumes the next result (in candidate order). Returns true if the pass stops here.
+    fn consume(&mut self, r: Option<CandidateResult>) -> bool {
+        debug_assert!(!self.done);
+        self.evaluated += 1;
+        let Some(res) = r else { return false };
+        self.total_items_optimized += 1;
+        self.result_map.insert(res.result.item_id, res.result.clone());
+        if res.result.improved {
+            self.consecutive_failures = 0;
+            let better = match &self.winning {
+                None => true,
+                Some(w) => res.result.improved_over(&w.result),
+            };
+            if better {
+                self.winning = Some(res);
+            }
         } else {
-            c += 1;
-            if c >= max {
+            self.consecutive_failures += 1;
+            if self.consecutive_failures >= self.max_consecutive_failures {
+                log::info!(
+                    "Stopping optimization pass #{} early after {} consecutive items could not be improved.",
+                    self.pass_no,
+                    self.consecutive_failures
+                );
+                self.done = true;
                 return true;
             }
         }
+        false
     }
-    false
+}
+
+/// Parallel mode: `threads` workers claim the candidates in order (shared counter) and evaluate
+/// each on a fresh clone of the baseline; results are handed to `consumer` strictly in candidate
+/// order. `interrupt` is polled before each claimed candidate: `Some(timed_out)` stops the pass.
+/// Returns (stopped by `interrupt`, timed out).
+fn stream_parallel(
+    pool: &rayon::ThreadPool,
+    threads: usize,
+    baseline: &RoutingBoard,
+    candidates: &[i32],
+    params: &CandidateParams<'_>,
+    consumer: &mut PassConsumer,
+    interrupt: impl Fn() -> Option<bool> + Sync,
+) -> (bool, bool) {
+    use std::sync::atomic::{AtomicUsize, Ordering as AtOrd};
+    use std::sync::Mutex;
+    struct Shared<'c> {
+        slots: Vec<Option<Option<CandidateResult>>>,
+        pos: usize,
+        consumer: &'c mut PassConsumer,
+        interrupted: Option<bool>,
+    }
+    let n = candidates.len();
+    let next = AtomicUsize::new(0);
+    // no candidate at or after this index is consumed (or needs to be evaluated)
+    let limit = AtomicUsize::new(n);
+    let shared = Mutex::new(Shared { slots: (0..n).map(|_| None).collect(), pos: 0, consumer, interrupted: None });
+    pool.scope(|s| {
+        for _ in 0..threads.max(1) {
+            s.spawn(|_| loop {
+                let i = next.fetch_add(1, AtOrd::SeqCst);
+                if i >= limit.load(AtOrd::SeqCst) {
+                    break;
+                }
+                if let Some(t) = interrupt() {
+                    let mut sh = shared.lock().unwrap();
+                    if sh.interrupted.is_none() {
+                        sh.interrupted = Some(t);
+                    }
+                    limit.store(0, AtOrd::SeqCst);
+                    break;
+                }
+                let r = evaluate_fresh(baseline, candidates[i], params);
+                let mut sh = shared.lock().unwrap();
+                sh.slots[i] = Some(r);
+                while sh.interrupted.is_none() && sh.pos < n && !sh.consumer.done && sh.slots[sh.pos].is_some() {
+                    let pos = sh.pos;
+                    let r = sh.slots[pos].take().unwrap();
+                    sh.pos += 1;
+                    if sh.consumer.consume(r) {
+                        limit.store(sh.pos, AtOrd::SeqCst);
+                        // drop the results evaluated beyond the stop point
+                        for slot in sh.slots.iter_mut().skip(pos + 1) {
+                            *slot = None;
+                        }
+                    }
+                }
+            });
+        }
+    });
+    let sh = shared.into_inner().unwrap();
+    match sh.interrupted {
+        Some(t) => (true, t),
+        None => (false, false),
+    }
 }
 
 #[cfg(test)]
