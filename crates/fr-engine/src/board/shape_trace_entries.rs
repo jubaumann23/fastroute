@@ -4,13 +4,14 @@
 //! The Java singly linked list of `EntryPoint`s is a `Vec` arena with `next` indices; the list
 //! order and all relinking operations are the same.
 
-use fr_geom::{FloatPoint, Line, Point, Polyline, TileShape};
+use fr_geom::{FloatPoint, Point, TileShape};
 
 use crate::ids::{ClearanceClassNo, FixedState, ItemId, LayerNo, NetNo};
 use crate::structure::ShapeEntrySide;
 
 use super::basic_board::BasicBoard;
 use super::item::{Item, ItemKey, ItemKind};
+use super::optimize::tracked::{BorderLines, TLine, TPolyline};
 
 /// Java `ShapeTraceEntries.c_offset_add`.
 const C_OFFSET_ADD: f64 = 1.0;
@@ -72,13 +73,16 @@ impl BasicBoard {
         let item = self.item(trace);
         let layer = item.trace().layer();
         let offset_shape = trace_offset_shape(self, shape, item, clearance_class, layer);
-        let trace_lines = item.trace().polyline().clone();
-        let pieces = offset_shape.cutout_polyline(&trace_lines);
-        if pieces.len() == 1 && std::sync::Arc::ptr_eq(&pieces[0].lines, &trace_lines.lines) {
+        let trace_lines = item.trace().tpolyline();
+        let pieces = trace_lines.cutout(&offset_shape);
+        if pieces.len() == 1 && pieces[0].same(&trace_lines) {
             // nothing cut off
             return;
         }
-        if pieces.len() == 2 && offset_shape.is_outside(&pieces[0].first_corner()) && offset_shape.is_outside(&pieces[1].last_corner()) {
+        if pieces.len() == 2
+            && offset_shape.is_outside(&pieces[0].polyline.first_corner())
+            && offset_shape.is_outside(&pieces[1].polyline.last_corner())
+        {
             let mut it = pieces.into_iter();
             let start = it.next().unwrap();
             let end = it.next().unwrap();
@@ -87,7 +91,7 @@ impl BasicBoard {
             let (half_width, nets, cl) = (item.trace().half_width(), item.net_numbers().to_vec(), item.clearance_class());
             self.remove_item(trace);
             for piece in pieces {
-                self.insert_trace_without_cleaning(piece, layer, half_width, &nets, cl, FixedState::Unfixed);
+                self.insert_trace_without_cleaning_tracked(piece, layer, half_width, &nets, cl, FixedState::Unfixed);
             }
         }
     }
@@ -197,12 +201,14 @@ impl ShapeTraceEntries {
             let edge_count = self.shape.border_line_count();
             let edge_diff = self.entries[last].edge_index - self.entries[first].edge_index;
             // calculate the polyline of the substitute trace
-            let mut piece_lines: Vec<Line> = Vec::with_capacity((edge_diff + 3).max(2) as usize);
+            let mut border = BorderLines::new(&offset_shape);
+            let mut piece_lines: Vec<TLine> = Vec::with_capacity((edge_diff + 3).max(2) as usize);
             // start with the intersecting line of the trace at the start entry.
-            piece_lines.push(board.item(self.entries[first].trace).trace().polyline().lines[self.entries[first].trace_line_no as usize].clone());
+            let first_trace = board.item(self.entries[first].trace).trace().tpolyline();
+            piece_lines.push(first_trace.tline(self.entries[first].trace_line_no as usize));
             let mut current_edge_no = self.entries[first].edge_index % edge_count;
             for _ in 1..edge_diff + 2 {
-                piece_lines.push(offset_shape.border_line(current_edge_no));
+                piece_lines.push(border.line(current_edge_no));
                 if current_edge_no == edge_count - 1 {
                     current_edge_no = 0;
                 } else {
@@ -210,8 +216,9 @@ impl ShapeTraceEntries {
                 }
             }
             // end with the intersecting line of the trace at the end entry
-            piece_lines.push(board.item(self.entries[last].trace).trace().polyline().lines[self.entries[last].trace_line_no as usize].clone());
-            let piece_polyline = Polyline::from_lines(piece_lines);
+            let last_trace = board.item(self.entries[last].trace).trace().tpolyline();
+            piece_lines.push(last_trace.tline(self.entries[last].trace_line_no as usize));
+            let piece_polyline = TPolyline::from_lines(&mut piece_lines);
             if piece_polyline.is_empty() {
                 // no valid trace piece, return the next one
                 continue;
@@ -220,7 +227,7 @@ impl ShapeTraceEntries {
             let (half_width, nets, cl) = (t.trace().half_width(), t.net_numbers().to_vec(), t.clearance_class());
             let id = ItemId(crate::datastructures::IdGenerator::new_id(&mut board.communication.id_generator));
             let layer_count = board.layer_count();
-            return Some(Item::new_trace(id, piece_polyline, self.layer, half_width, &nets, cl, 0, FixedState::Unfixed, layer_count));
+            return Some(Item::new_trace_tracked(id, piece_polyline, self.layer, half_width, &nets, cl, 0, FixedState::Unfixed, layer_count));
         }
     }
 

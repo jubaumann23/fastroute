@@ -771,7 +771,7 @@ impl BasicBoard {
 
     /// Java `SearchTreeManager.insert(item)`: inserts the item into all trees and marks it as on
     /// the board.
-    pub(crate) fn tree_insert(&mut self, key: ItemKey) {
+    pub fn tree_insert(&mut self, key: ItemKey) {
         let id = self.items.get(key).id().0;
         for t in 0..self.search_trees.trees.len() {
             let shapes = self.item_tree_shapes(t, key);
@@ -781,7 +781,7 @@ impl BasicBoard {
     }
 
     /// Java `SearchTreeManager.remove(item)`.
-    pub(crate) fn tree_remove(&mut self, key: ItemKey) {
+    pub fn tree_remove(&mut self, key: ItemKey) {
         if !self.items.get(key).is_on_board() {
             return;
         }

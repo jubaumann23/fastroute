@@ -1,7 +1,13 @@
 //! Port of the board-changing parts of `board/trace/PolylineTrace.java` (`combine`, `split`,
 //! `change`), `PolylineTraceNormalization.java` and `PolylineTraceSearchTreeAdapter.java`.
+//!
+//! The Java object identities of the trace lines are maintained through all operations (see
+//! [`super::optimize::tracked`]); `change` reuses the tree entries of the lines that are the same
+//! objects in the old and the new polyline ([`BasicBoard::change_trace_tracked`]).
 
 use fr_geom::{IntOctagon, Line, LineSegment, Point, Polyline};
+
+use super::optimize::tracked::{TLine, TPolyline};
 
 use crate::ids::ItemId;
 
@@ -12,13 +18,9 @@ use super::search_tree::{TreeObject, DEFAULT_TREE};
 /// Java `PolylineTraceNormalization.MAX_NORMALIZATION_DEPTH`.
 const MAX_NORMALIZATION_DEPTH: i32 = 16;
 
-/// How Java's object identity of the lines of the old and the new polyline in
-/// `PolylineTrace.change` is modelled (the port has no line objects).
-///
-/// Java keeps `Line` objects when polylines are cut, combined or built from line arrays, and
-/// creates new objects in `Line.opposite()` (so in `Polyline.reverse()`) and when lines are
-/// constructed. A caller of [`BasicBoard::change_trace_with`] must pick the variant that
-/// reproduces the Java provenance of the new polyline's lines.
+/// For polylines without tracked line identities ([`BasicBoard::change_trace_with`]): how the
+/// lines of the new polyline are identified with the lines of the trace. Code inside the engine
+/// uses [`BasicBoard::change_trace_tracked`] with the exact identities.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LineIdentity {
     /// Lines with identical defining points are the same object (right when the new polyline
@@ -87,12 +89,12 @@ impl BasicBoard {
         None
     }
 
-    fn other_lines(&self, other: ItemKey, reverse_order: bool) -> Vec<Line> {
-        let lines = &self.item(other).trace().polyline.lines;
+    fn other_lines(&self, other: ItemKey, reverse_order: bool) -> Vec<TLine> {
+        let tp = self.item(other).trace().tpolyline();
         if reverse_order {
-            lines.iter().rev().map(|l| l.opposite()).collect()
+            (0..tp.len()).rev().map(|i| tp.tline(i).opposite()).collect()
         } else {
-            lines.to_vec()
+            tp.tlines()
         }
     }
 
@@ -102,10 +104,10 @@ impl BasicBoard {
     }
 
     /// Java `PolylineTraceSearchTreeAdapter.replaceGeometry`.
-    pub(crate) fn replace_trace_geometry(&mut self, key: ItemKey, new_polyline: Polyline) {
+    pub(crate) fn replace_trace_geometry(&mut self, key: ItemKey, new_polyline: TPolyline) {
         self.tree_remove(key);
         self.clear_search_tree_entries(key);
-        self.item_mut(key).trace_mut().polyline = new_polyline;
+        self.item_mut(key).trace_mut().set_tpolyline(new_polyline);
         self.clear_derived_data(key);
         self.tree_insert(key);
     }
@@ -116,9 +118,10 @@ impl BasicBoard {
         let Some((other, reverse_order)) = self.combine_partner(key, &start_corner, true) else {
             return false;
         };
-        let this_lines: Vec<Line> = self.item(key).trace().polyline.lines.to_vec();
+        self.save_for_undo(key);
+        let this_lines: Vec<TLine> = self.item(key).trace().tpolyline().tlines();
         let other_lines = self.other_lines(other, reverse_order);
-        let skip_line = other_lines[other_lines.len() - 2].is_equal_or_opposite(&this_lines[1]);
+        let skip_line = other_lines[other_lines.len() - 2].line.is_equal_or_opposite(&this_lines[1].line);
         let mut new_line_count = this_lines.len() + other_lines.len() - 2;
         if skip_line {
             new_line_count -= 1;
@@ -127,12 +130,12 @@ impl BasicBoard {
         if skip_line {
             join_pos -= 1;
         }
-        let mut new_lines: Vec<Line> = other_lines[..join_pos].to_vec();
+        let mut new_lines: Vec<TLine> = other_lines[..join_pos].to_vec();
         new_lines.extend_from_slice(&this_lines[1..]);
         debug_assert_eq!(new_lines.len(), new_line_count);
-        let joined = Polyline::from_lines(new_lines);
+        let joined = TPolyline::from_lines(&mut new_lines);
         let has_tree_entries = self.has_default_entries(key, other);
-        if joined.lines.len() != new_line_count || !has_tree_entries {
+        if joined.len() != new_line_count || !has_tree_entries {
             // consecutive parallel lines were skipped at the join location or a trace lacks
             // search tree entries: combine without performance optimization
             self.replace_trace_geometry(key, joined);
@@ -141,9 +144,9 @@ impl BasicBoard {
             if skip_line {
                 to_no -= 1;
             }
-            self.merge_entries_in_front(other, key, &joined, other_lines.len() as i32 - 3, to_no);
+            self.merge_entries_in_front(other, key, &joined.polyline, other_lines.len() as i32 - 3, to_no);
             self.clear_search_tree_entries(other);
-            self.item_mut(key).trace_mut().polyline = joined;
+            self.item_mut(key).trace_mut().set_tpolyline(joined);
         }
         if self.item(key).trace().polyline.lines.len() < 3 {
             self.remove_item(key);
@@ -162,9 +165,10 @@ impl BasicBoard {
         let Some((other, reverse_order)) = self.combine_partner(key, &end_corner, false) else {
             return false;
         };
-        let this_lines: Vec<Line> = self.item(key).trace().polyline.lines.to_vec();
+        self.save_for_undo(key);
+        let this_lines: Vec<TLine> = self.item(key).trace().tpolyline().tlines();
         let other_lines = self.other_lines(other, reverse_order);
-        let skip_line = this_lines[this_lines.len() - 2].is_equal_or_opposite(&other_lines[1]);
+        let skip_line = this_lines[this_lines.len() - 2].line.is_equal_or_opposite(&other_lines[1].line);
         let mut new_line_count = this_lines.len() + other_lines.len() - 2;
         if skip_line {
             new_line_count -= 1;
@@ -173,21 +177,21 @@ impl BasicBoard {
         if skip_line {
             join_pos -= 1;
         }
-        let mut new_lines: Vec<Line> = this_lines[..join_pos].to_vec();
+        let mut new_lines: Vec<TLine> = this_lines[..join_pos].to_vec();
         new_lines.extend_from_slice(&other_lines[1..]);
         debug_assert_eq!(new_lines.len(), new_line_count);
-        let joined = Polyline::from_lines(new_lines);
+        let joined = TPolyline::from_lines(&mut new_lines);
         let has_tree_entries = self.has_default_entries(key, other);
-        if joined.lines.len() != new_line_count || !has_tree_entries {
+        if joined.len() != new_line_count || !has_tree_entries {
             self.replace_trace_geometry(key, joined);
         } else {
             let mut to_no = this_lines.len() as i32;
             if skip_line {
                 to_no -= 1;
             }
-            self.merge_entries_at_end(other, key, &joined, this_lines.len() as i32 - 3, to_no);
+            self.merge_entries_at_end(other, key, &joined.polyline, this_lines.len() as i32 - 3, to_no);
             self.clear_search_tree_entries(other);
-            self.item_mut(key).trace_mut().polyline = joined;
+            self.item_mut(key).trace_mut().set_tpolyline(joined);
         }
         if self.item(key).trace().polyline.lines.len() < 3 {
             self.remove_item(key);
@@ -214,7 +218,8 @@ impl BasicBoard {
         let line_count = self.item(key).trace().polyline.lines.len();
         let layer = self.item(key).trace().layer;
         for i in 0..line_count.saturating_sub(2) as i32 {
-            let lines = self.item(key).trace().polyline.clone();
+            let tlines = self.item(key).trace().tpolyline();
+            let lines = tlines.polyline.clone();
             if let Some(clip) = clip_shape {
                 let segment = LineSegment::from_polyline(&lines, i + 1).expect("LineSegment");
                 if !clip.intersects_int_box(&segment.bounding_box()) {
@@ -223,6 +228,7 @@ impl BasicBoard {
             }
             let current_shape = self.tree_shape(DEFAULT_TREE, key, i).expect("PolylineTrace.split: tree shape is null");
             let current_line_segment = LineSegment::from_polyline(&lines, i + 1).expect("LineSegment");
+            let current_tsegment = tlines.segment(i + 1);
             let query = fr_geom::ConvexShape::Tile(current_shape);
             // look for intersecting traces with the i-th line segment
             let mut entries = self.overlapping_tree_entries_list(DEFAULT_TREE, &query, layer, &[]);
@@ -255,8 +261,8 @@ impl BasicBoard {
                 }
                 match &self.item(found_key).kind {
                     ItemKind::Trace(found_trace) => {
-                        let found_segment = LineSegment::from_polyline(&found_trace.polyline, entry.shape_index + 1).expect("LineSegment");
-                        let intersecting_lines = found_segment.intersection(&current_line_segment);
+                        let found_tsegment = found_trace.tpolyline().segment(entry.shape_index + 1);
+                        let intersecting_lines = found_tsegment.intersection(&current_tsegment);
                         let mut split_pieces: Vec<ItemKey> = Vec::new();
                         // try splitting the found trace first
                         let mut found_trace_split = false;
@@ -270,8 +276,9 @@ impl BasicBoard {
                                     }
                                     if found_trace_split {
                                         // reread the overlapping tree entries, because the board
-                                        // has changed
-                                        entries = self.overlapping_tree_entries_list(DEFAULT_TREE, &query, layer, &[]);
+                                        // has changed (Java appends them to the list of the old
+                                        // entries and restarts the iteration at its front)
+                                        self.overlapping_tree_entries(DEFAULT_TREE, &query, layer, &[], &mut entries);
                                         pos = 0;
                                         break;
                                     }
@@ -282,7 +289,7 @@ impl BasicBoard {
                             }
                         }
                         // now try splitting the own trace
-                        let intersecting_lines = current_line_segment.intersection(&found_segment);
+                        let intersecting_lines = current_tsegment.intersection(&found_tsegment);
                         for line in &intersecting_lines {
                             if let Some(pieces) = self.split_trace_at_line(key, i + 1, line) {
                                 own_trace_split = true;
@@ -318,7 +325,7 @@ impl BasicBoard {
                         let split_point = self.item(found_key).center(self);
                         if current_line_segment.contains(&split_point) {
                             let dir = current_line_segment.get_line().direction().turn_45_degree(2);
-                            let split_line = Line::from_point_direction(split_point, dir);
+                            let split_line = TLine::fresh(Line::from_point_direction(split_point, dir));
                             self.split_trace_at_line(key, i + 1, &split_line);
                         }
                     }
@@ -362,7 +369,7 @@ impl BasicBoard {
             let segment = LineSegment::from_polyline(&lines, i + 1).expect("LineSegment");
             if segment.contains(point) {
                 let dir = segment.get_line().direction().turn_45_degree(2);
-                let split_line = Line::from_point_direction(point.clone(), dir);
+                let split_line = TLine::fresh(Line::from_point_direction(point.clone(), dir));
                 if let Some(result) = self.split_trace_at_line(key, i + 1, &split_line) {
                     return Some(result);
                 }
@@ -372,7 +379,7 @@ impl BasicBoard {
     }
 
     /// Java private `PolylineTrace.split(lineIndex, newEndLine)`.
-    pub(crate) fn split_trace_at_line(&mut self, key: ItemKey, line_index: i32, new_end_line: &Line) -> Option<[Option<ItemKey>; 2]> {
+    pub(crate) fn split_trace_at_line(&mut self, key: ItemKey, line_index: i32, new_end_line: &TLine) -> Option<[Option<ItemKey>; 2]> {
         if !self.item(key).is_on_board() {
             return None;
         }
@@ -380,8 +387,8 @@ impl BasicBoard {
         if self.is_deletion_forbidden(key) {
             return None;
         }
-        let split_polylines = self.item(key).trace().polyline.split(line_index, new_end_line)?;
-        if self.split_inside_drill_pad_prohibited(key, line_index, new_end_line) {
+        let split_polylines = self.item(key).trace().tpolyline().split(line_index, new_end_line)?;
+        if self.split_inside_drill_pad_prohibited(key, line_index, &new_end_line.line) {
             return None;
         }
         self.remove_item(key);
@@ -394,8 +401,8 @@ impl BasicBoard {
             item.fixed_state,
         );
         let [first, second] = split_polylines;
-        let r0 = self.insert_trace_without_cleaning(first, layer, half_width, &nets, cl, fixed);
-        let r1 = self.insert_trace_without_cleaning(second, layer, half_width, &nets, cl, fixed);
+        let r0 = self.insert_trace_without_cleaning_tracked(first, layer, half_width, &nets, cl, fixed);
+        let r1 = self.insert_trace_without_cleaning_tracked(second, layer, half_width, &nets, cl, fixed);
         Some([r0, r1])
     }
 
@@ -458,30 +465,51 @@ impl BasicBoard {
     }
 
     /// Java `PolylineTrace.change(newPolyline)`: changes the geometry, reusing the tree entries
-    /// of unchanged lines, and normalizes the trace.
-    ///
-    /// Java compares the lines of the old and new polyline by object identity; this uses
-    /// [`LineIdentity::SamePoints`], see [`Self::change_trace_with`].
+    /// of unchanged lines, and normalizes the trace. The lines of `new_polyline` are taken to be
+    /// the objects of the current polyline where their defining points are equal
+    /// ([`LineIdentity::SamePoints`]); use [`Self::change_trace_tracked`] if the identities are
+    /// known.
     pub fn change_trace(&mut self, key: ItemKey, new_polyline: Polyline) {
         self.change_trace_with(key, new_polyline, LineIdentity::SamePoints);
     }
 
-    /// Java `PolylineTrace.change(newPolyline)` with an explicit model of Java's line object
-    /// identity (which decides how many tree entries are reused, and so the tree structure).
+    /// Java `PolylineTrace.change(newPolyline)` with a model of Java's line object identity for a
+    /// polyline without tracked identities.
     pub fn change_trace_with(&mut self, key: ItemKey, new_polyline: Polyline, identity: LineIdentity) {
+        let old = self.item(key).trace().tpolyline();
+        let ids: Vec<u64> = new_polyline
+            .lines
+            .iter()
+            .map(|nl| {
+                let found = (0..old.len()).find(|&k| identity.same(nl, &old.polyline.lines[k]));
+                match found {
+                    Some(k) => old.ids[k],
+                    None => super::optimize::tracked::fresh_line_id(),
+                }
+            })
+            .collect();
+        self.change_trace_tracked(key, TPolyline::new(new_polyline, ids.into()));
+    }
+
+    /// Java `PolylineTrace.change(newPolyline)`: changes the geometry, reusing the tree entries
+    /// of the lines that are the same Java objects in the old and the new polyline, and
+    /// normalizes the trace.
+    pub fn change_trace_tracked(&mut self, key: ItemKey, new_polyline: TPolyline) {
         if !self.item(key).is_on_board() {
             // Just change the polyline of this trace.
-            self.item_mut(key).trace_mut().polyline = new_polyline;
+            self.item_mut(key).trace_mut().set_tpolyline(new_polyline);
             return;
         }
         self.additional_update_after_change(key);
-        let old = self.item(key).trace().polyline.clone();
-        let new_len = new_polyline.lines.len();
-        let old_len = old.lines.len();
+        self.save_for_undo(key);
+        let old_ids = self.item(key).trace().line_ids.clone();
+        let new_ids = new_polyline.ids.clone();
+        let new_len = new_ids.len();
+        let old_len = old_ids.len();
         let last_index = new_len.min(old_len);
         let mut first_diff = last_index;
         for i in 0..last_index {
-            if !identity.same(&new_polyline.lines[i], &old.lines[i]) {
+            if new_ids[i] != old_ids[i] {
                 first_diff = i;
                 break;
             }
@@ -491,7 +519,7 @@ impl BasicBoard {
         }
         let mut last_diff: i64 = -1;
         for i in 1..=last_index {
-            if !identity.same(&new_polyline.lines[new_len - i], &old.lines[old_len - i]) {
+            if new_ids[new_len - i] != old_ids[old_len - i] {
                 last_diff = (new_len - i) as i64;
                 break;
             }
@@ -501,31 +529,34 @@ impl BasicBoard {
         }
         let keep_at_start = (first_diff as i32 - 2).max(0);
         let keep_at_end = (new_len as i32 - last_diff as i32 - 3).max(0);
-        self.change_entries(key, &new_polyline, keep_at_start, keep_at_end);
+        self.change_entries(key, &new_polyline.polyline, keep_at_start, keep_at_end);
         let layer = self.item(key).trace().layer;
-        self.item_mut(key).trace_mut().polyline = new_polyline;
+        self.item_mut(key).trace_mut().set_tpolyline(new_polyline);
         let clip_shape = self.changed_area.as_ref().map(|c| c.get_area(layer));
         self.normalize_trace(key, clip_shape.as_ref());
     }
 
     /// Java `ShapeTraceEntries.cutoutTrace` fast path helper `fastCutoutTrace`: replaces `trace`
     /// by the two pieces, reusing its tree entries.
-    pub fn fast_cutout_trace(&mut self, trace: ItemKey, start_piece: Polyline, end_piece: Polyline) -> [ItemKey; 2] {
+    pub fn fast_cutout_trace(&mut self, trace: ItemKey, start_piece: TPolyline, end_piece: TPolyline) -> [ItemKey; 2] {
         self.additional_update_after_change(trace);
+        self.save_for_undo(trace);
         let (layer, half_width, nets, cl) = {
             let item = self.item(trace);
             (item.trace().layer, item.trace().half_width, item.net_numbers.clone(), item.clearance_class)
         };
         let lc = self.layer_count();
         let start_id = ItemId(crate::datastructures::IdGenerator::new_id(&mut self.communication.id_generator));
-        let start = super::item::Item::new_trace(start_id, start_piece, layer, half_width, &nets, cl, 0, crate::ids::FixedState::Unfixed, lc);
+        let start = super::item::Item::new_trace_tracked(start_id, start_piece, layer, half_width, &nets, cl, 0, crate::ids::FixedState::Unfixed, lc);
         let start_key = self.items.alloc(start);
         self.items.list_insert(start_key);
+        self.journal_insert(start_key);
         self.items.get_mut(start_key).on_board = true;
         let end_id = ItemId(crate::datastructures::IdGenerator::new_id(&mut self.communication.id_generator));
-        let end = super::item::Item::new_trace(end_id, end_piece, layer, half_width, &nets, cl, 0, crate::ids::FixedState::Unfixed, lc);
+        let end = super::item::Item::new_trace_tracked(end_id, end_piece, layer, half_width, &nets, cl, 0, crate::ids::FixedState::Unfixed, lc);
         let end_key = self.items.alloc(end);
         self.items.list_insert(end_key);
+        self.journal_insert(end_key);
         self.items.get_mut(end_key).on_board = true;
         self.reuse_entries_after_cutout(trace, start_key, end_key);
         self.remove_item(trace);

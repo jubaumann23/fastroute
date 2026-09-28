@@ -64,8 +64,8 @@ pub struct BasicBoard {
     pub bounding_box: IntBox,
     pub(crate) items: ItemRepository,
     pub(crate) search_trees: SearchTreeManager,
-    normalize_suppressed_net_nos: BTreeSet<NetNo>,
-    revision: i32,
+    pub(crate) normalize_suppressed_net_nos: BTreeSet<NetNo>,
+    pub(crate) revision: i32,
     max_trace_half_width: i32,
     min_trace_half_width: i32,
     pub pre_existing_clearance_violations_count: i32,
@@ -78,6 +78,8 @@ pub struct BasicBoard {
     pub autoroute_maintenance: Option<AutorouteMaintenance>,
     /// Which Java version to reproduce where the reference source and the 2.4.1 jar differ.
     pub java_variant: JavaVariant,
+    /// Undo bookkeeping of the item list (Java `UndoableObjects` levels), see [`super::undo`].
+    pub(crate) undo: super::undo::UndoJournal,
 }
 
 /// The reference source (`reference/freerouting/src`) is newer than the 2.4.1 jar used for the
@@ -138,6 +140,7 @@ impl BasicBoard {
             changed_area: None,
             autoroute_maintenance: None,
             java_variant: JavaVariant::Source,
+            undo: super::undo::UndoJournal::default(),
         };
         board.insert_outline(outline_shapes, outline_cl_class_no);
         board
@@ -368,6 +371,7 @@ impl BasicBoard {
         let is_pin_or_outline = item.is_pin() || item.is_board_outline();
         let key = self.items.alloc(item);
         self.items.list_insert(key);
+        self.journal_insert(key);
         self.tree_insert(key);
         self.additional_update_after_change(key);
         self.increment_revision();
@@ -381,6 +385,7 @@ impl BasicBoard {
     pub fn reinsert_item(&mut self, key: ItemKey) {
         let is_pin_or_outline = self.item(key).is_pin() || self.item(key).is_board_outline();
         self.items.list_insert(key);
+        self.journal_insert(key);
         self.tree_insert(key);
         self.additional_update_after_change(key);
         self.increment_revision();
@@ -390,7 +395,8 @@ impl BasicBoard {
     }
 
     /// Java `insertTraceWithoutCleaning(polyline, layer, halfWidth, netNumbers, clearanceClass,
-    /// fixedState)`. Returns the new trace, or `None` if nothing was inserted.
+    /// fixedState)`. Returns the new trace, or `None` if nothing was inserted. The lines of
+    /// `polyline` are new objects (see [`Self::insert_trace_without_cleaning_tracked`]).
     pub fn insert_trace_without_cleaning(
         &mut self,
         polyline: Polyline,
@@ -400,11 +406,26 @@ impl BasicBoard {
         clearance_class: ClearanceClassNo,
         fixed_state: FixedState,
     ) -> Option<ItemKey> {
-        if polyline.corner_count() < 2 {
+        let tp = super::optimize::tracked::TPolyline::fresh(polyline);
+        self.insert_trace_without_cleaning_tracked(tp, layer, half_width, net_numbers, clearance_class, fixed_state)
+    }
+
+    /// [`Self::insert_trace_without_cleaning`] with the Java identities of the lines.
+    pub fn insert_trace_without_cleaning_tracked(
+        &mut self,
+        polyline: super::optimize::tracked::TPolyline,
+        layer: LayerNo,
+        half_width: i32,
+        net_numbers: &[NetNo],
+        clearance_class: ClearanceClassNo,
+        fixed_state: FixedState,
+    ) -> Option<ItemKey> {
+        if polyline.polyline.corner_count() < 2 {
             return None;
         }
         let id = self.new_item_id();
-        let item = Item::new_trace(id, polyline, layer, half_width, net_numbers, clearance_class, 0, fixed_state, self.layer_count());
+        let item =
+            Item::new_trace_tracked(id, polyline, layer, half_width, net_numbers, clearance_class, 0, fixed_state, self.layer_count());
         if item.first_corner() == item.last_corner() && fixed_state < FixedState::UserFixed {
             return None;
         }
@@ -427,7 +448,22 @@ impl BasicBoard {
         clearance_class: ClearanceClassNo,
         fixed_state: FixedState,
     ) {
-        let Some(new_trace) = self.insert_trace_without_cleaning(polyline, layer, half_width, net_numbers, clearance_class, fixed_state) else {
+        let tp = super::optimize::tracked::TPolyline::fresh(polyline);
+        self.insert_trace_tracked(tp, layer, half_width, net_numbers, clearance_class, fixed_state);
+    }
+
+    /// [`Self::insert_trace`] with the Java identities of the lines.
+    pub fn insert_trace_tracked(
+        &mut self,
+        polyline: super::optimize::tracked::TPolyline,
+        layer: LayerNo,
+        half_width: i32,
+        net_numbers: &[NetNo],
+        clearance_class: ClearanceClassNo,
+        fixed_state: FixedState,
+    ) {
+        let Some(new_trace) = self.insert_trace_without_cleaning_tracked(polyline, layer, half_width, net_numbers, clearance_class, fixed_state)
+        else {
             return;
         };
         let clip_shape = self.changed_area.as_ref().map(|c| c.get_area(layer));
@@ -677,6 +713,7 @@ impl BasicBoard {
         }
         self.additional_update_after_change(key);
         self.tree_remove(key);
+        self.journal_delete(key);
         self.items.list_remove(key);
         self.increment_revision();
         let item = self.item(key);
@@ -705,6 +742,7 @@ impl BasicBoard {
         while let Some(key) = self.items.cursor_next(&mut cursor) {
             let item = self.item(key);
             if item.is_trace() || item.is_via() {
+                self.journal_delete(key);
                 self.items.list_remove(key);
             }
         }
@@ -796,6 +834,7 @@ impl BasicBoard {
             log::warn!("Item.assign_net_no: netNumber to big");
             return;
         }
+        self.save_for_undo(key);
         let mut nets = self.item(key).net_numbers.clone();
         if net_number <= 0 {
             nets.clear();
@@ -892,11 +931,18 @@ impl BasicBoard {
     /// Java `Item.moveBy(vector)` for traces, vias and areas (translates the item in the
     /// board; the extra connection traces of `DrillItem.moveBy` are not inserted).
     pub fn translate_item(&mut self, key: ItemKey, vector: &Vector) {
+        self.save_for_undo(key);
         self.tree_remove(key);
         {
             let item = self.items.get_mut(key);
             match &mut item.kind {
-                ItemKind::Trace(t) => t.polyline = t.polyline.translate_by(vector),
+                ItemKind::Trace(t) => {
+                    // (Java keeps the line objects only for a zero vector)
+                    if *vector != Vector::ZERO {
+                        t.polyline = t.polyline.translate_by(vector);
+                        t.line_ids = super::optimize::tracked::fresh_line_ids(t.polyline.lines.len());
+                    }
+                }
                 ItemKind::Via(v) => v.center = v.center.translate_by(vector),
                 ItemKind::Pin(p) => {
                     if let Some(c) = p.center.get().cloned() {

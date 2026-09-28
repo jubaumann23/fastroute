@@ -9,6 +9,7 @@ use crate::ids::{AngleRestriction, FixedState, LayerNo};
 
 use super::basic_board::BasicBoard;
 use super::item::{ItemKey, ItemKind};
+use super::optimize::tracked::{BorderLines, TLine, TPolyline};
 use super::item_list::ItemSet;
 
 /// Java `Pin.TraceExitRestriction`.
@@ -255,7 +256,8 @@ impl BasicBoard {
         let t = item.trace();
         let layer = t.layer();
         let half_width = t.half_width();
-        let trace_polyline = if at_start { t.polyline().clone() } else { t.polyline().reverse() };
+        let trace_tpolyline = if at_start { t.tpolyline() } else { t.tpolyline().reverse() };
+        let trace_polyline = trace_tpolyline.polyline.clone();
         let Some(contact_pin) = self.trace_end_pin(trace, at_start) else {
             return false;
         };
@@ -289,58 +291,59 @@ impl BasicBoard {
             // Java would dereference null here
             panic!("correctConnectionToPin: no exit restriction selected");
         };
+        // the Java line objects (the exit ray is shared with the exit stub, the border lines of a
+        // simplex are the same objects on every call)
+        let exit_ray = TLine::fresh(nearest.exit_ray.clone());
+        let mut border = BorderLines::new(&offset_pin_shape);
         // append the polygon piece around the border of the pin shape.
         let corner_count = offset_pin_shape.border_line_count();
         let clock_wise_side_diff = (nearest.border_line_no - latest[1] + corner_count) % corner_count;
         let counter_clock_wise_side_diff = (latest[1] - nearest.border_line_no + corner_count) % corner_count;
         let mut current_border_line_no = nearest.border_line_no;
-        let mut middle: Vec<Line> = Vec::new();
+        let mut middle: Vec<TLine> = Vec::new();
         if counter_clock_wise_side_diff <= clock_wise_side_diff {
             for _ in 0..=counter_clock_wise_side_diff {
-                middle.push(offset_pin_shape.border_line(current_border_line_no));
+                middle.push(border.line(current_border_line_no));
                 current_border_line_no = (current_border_line_no + 1) % corner_count;
             }
         } else {
             for _ in 0..=clock_wise_side_diff {
-                middle.push(offset_pin_shape.border_line(current_border_line_no));
+                middle.push(border.line(current_border_line_no));
                 current_border_line_no = (current_border_line_no - 1 + corner_count) % corner_count;
             }
         }
-        let mut current_lines: Vec<Line> = Vec::with_capacity(middle.len() + 2);
-        current_lines.push(nearest.exit_ray.clone());
+        let mut current_lines: Vec<TLine> = Vec::with_capacity(middle.len() + 2);
+        current_lines.push(exit_ray.clone());
         current_lines.extend(middle);
-        current_lines.push(trace_polyline.lines[latest[0] as usize].clone());
-        let border_polyline = Polyline::from_lines(current_lines.clone());
+        current_lines.push(trace_tpolyline.tline(latest[0] as usize));
+        // (Java normalizes the directions in current_lines if nothing is filtered)
+        let border_polyline = TPolyline::from_lines(&mut current_lines);
         let nets = item.net_numbers().to_vec();
         let cl = item.clearance_class();
-        if !self.check_polyline_trace(&border_polyline, layer, half_width, &nets, cl) {
+        if !self.check_polyline_trace(&border_polyline.polyline, layer, half_width, &nets, cl) {
             return false;
         }
-        let mut cut_lines: Vec<Line> = Vec::with_capacity(trace_polyline.lines.len() - latest[0] as usize + 1);
+        let mut cut_lines: Vec<TLine> = Vec::with_capacity(trace_polyline.lines.len() - latest[0] as usize + 1);
         cut_lines.push(current_lines[current_lines.len() - 2].clone());
-        cut_lines.extend(trace_polyline.lines[latest[0] as usize..].iter().cloned());
-        let cut_polyline = Polyline::from_lines(cut_lines);
-        let mut changed_polyline = if cut_polyline.first_corner() == cut_polyline.last_corner() {
+        cut_lines.extend(trace_tpolyline.tlines_range(latest[0] as usize..trace_tpolyline.len()));
+        let cut_polyline = TPolyline::from_lines(&mut cut_lines);
+        let mut changed_polyline = if cut_polyline.polyline.first_corner() == cut_polyline.polyline.last_corner() {
             border_polyline
         } else {
-            border_polyline.combine(Some(&cut_polyline))
+            border_polyline.combine(&cut_polyline)
         };
-        // `reverse()` creates new line objects in Java: nothing is shared with the old polyline
-        let identity = if at_start {
-            super::trace_ops::LineIdentity::SamePoints
-        } else {
+        if !at_start {
             changed_polyline = changed_polyline.reverse();
-            super::trace_ops::LineIdentity::NoneShared
-        };
-        self.change_trace_with(trace, changed_polyline, identity);
+        }
+        self.change_trace_tracked(trace, changed_polyline);
         // create a shove fixed exit line.
-        let exit_lines = vec![
-            Line::from_point_direction(pin_center.clone(), nearest.direction.turn_45_degree(2)),
-            nearest.exit_ray.clone(),
-            offset_pin_shape.border_line(nearest.border_line_no),
+        let mut exit_lines = vec![
+            TLine::fresh(Line::from_point_direction(pin_center.clone(), nearest.direction.turn_45_degree(2))),
+            exit_ray,
+            border.line(nearest.border_line_no),
         ];
-        let exit_line_segment = Polyline::from_lines(exit_lines);
-        self.insert_trace(exit_line_segment, layer, half_width, &nets, cl, FixedState::ShoveFixed);
+        let exit_line_segment = TPolyline::from_lines(&mut exit_lines);
+        self.insert_trace_tracked(exit_line_segment, layer, half_width, &nets, cl, FixedState::ShoveFixed);
         true
     }
 

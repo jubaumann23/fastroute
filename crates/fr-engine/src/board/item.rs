@@ -116,6 +116,9 @@ pub struct Via {
 #[derive(Clone, Debug)]
 pub struct PolylineTrace {
     pub(crate) polyline: Polyline,
+    /// The Java object identities of the lines of the polyline (see
+    /// [`super::optimize::tracked`]).
+    pub(crate) line_ids: Arc<[u64]>,
     pub(crate) layer: LayerNo,
     pub(crate) half_width: i32,
 }
@@ -233,14 +236,34 @@ impl Item {
             log::warn!("PolylineTrace: polyline.lines.length >= 3 expected");
         }
         let layer = layer.max(0).min(layer_count - 1);
+        let line_ids = super::optimize::tracked::fresh_line_ids(polyline.lines.len());
         Item::new_header(
             id,
             net_numbers,
             clearance_class,
             component_no,
             fixed_state,
-            ItemKind::Trace(PolylineTrace { polyline, layer, half_width }),
+            ItemKind::Trace(PolylineTrace { polyline, line_ids, layer, half_width }),
         )
+    }
+
+    /// [`Item::new_trace`] with the identities of the lines of the polyline (lines shared with
+    /// other traces).
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_trace_tracked(
+        id: ItemId,
+        polyline: super::optimize::tracked::TPolyline,
+        layer: LayerNo,
+        half_width: i32,
+        net_numbers: &[NetNo],
+        clearance_class: ClearanceClassNo,
+        component_no: ComponentNo,
+        fixed_state: FixedState,
+        layer_count: i32,
+    ) -> Item {
+        let mut item = Item::new_trace(id, polyline.polyline, layer, half_width, net_numbers, clearance_class, component_no, fixed_state, layer_count);
+        item.trace_mut().line_ids = polyline.ids;
+        item
     }
 
     // ------------------------------------------------------------------------------------------
@@ -1074,6 +1097,16 @@ impl PolylineTrace {
     pub fn polyline(&self) -> &Polyline {
         &self.polyline
     }
+    /// The polyline with the identities of its lines.
+    pub fn tpolyline(&self) -> super::optimize::tracked::TPolyline {
+        super::optimize::tracked::TPolyline::new(self.polyline.clone(), self.line_ids.clone())
+    }
+    /// Sets the polyline and the identities of its lines (Java `lines = newPolyline`).
+    pub(crate) fn set_tpolyline(&mut self, polyline: super::optimize::tracked::TPolyline) {
+        debug_assert_eq!(polyline.polyline.lines.len(), polyline.ids.len());
+        self.polyline = polyline.polyline;
+        self.line_ids = polyline.ids;
+    }
     /// Java `getLayer()`.
     pub fn layer(&self) -> LayerNo {
         self.layer
@@ -1203,6 +1236,10 @@ impl ConductionArea {
     /// Java `getIsObstacle()`.
     pub fn is_obstacle(&self) -> bool {
         self.is_obstacle
+    }
+    /// Java `setIsObstacle(value)` (plain field update; callers reinsert the tree items).
+    pub fn set_is_obstacle(&mut self, value: bool) {
+        self.is_obstacle = value;
     }
     /// Java `getIsFilled()`.
     pub fn is_filled(&self) -> bool {

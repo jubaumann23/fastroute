@@ -83,7 +83,14 @@ write unrouted SES, diff against Java) → U6 (+SesReader: score Java-routed boa
 - **Undo/snapshots**: cheap `Board: Clone` (flat arenas, `Arc` shapes, `Arc` rules/library).
   `BoardHistory` stores clones; board hash is an incremental content hash. Optimizer undo
   restores a snapshot but carries over `id_generator`, `failure_log` and
-  `normalize_suppressed_net_nos` (Java does not undo these).
+  `normalize_suppressed_net_nos` (Java does not undo these). Implemented (U7) as a journal of
+  the `UndoableObjects` nodes (`board/undo.rs`), not a whole-board clone: Java restores only the
+  items saved for undo / inserted / deleted after the snapshot (in-place changes like
+  `setFixedState` survive) and re-inserts them into the search trees, which changes the tree
+  structure; `RoutingBoard::deep_copy` is the serialization round trip (trees rebuilt).
+- **Line identity**: `PolylineTrace.change` reuses tree entries by Java `Line` object identity,
+  so trace lines carry identities (`board/optimize/tracked.rs`) maintained by all polyline
+  operations (split, combine, cutout, substitute traces, pull tight).
 - **Floats**: keep operation order, no `mul_add`; scoring uses `f32` with Java casts;
   compensated summation for `DoubleStream.sum`; `libm` for trig (fdlibm).
 - **Threads**: autorouter single-threaded. Optimizer: `java-compat` mode (sequential, one
