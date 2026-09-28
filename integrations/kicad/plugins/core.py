@@ -250,40 +250,100 @@ def strip_unlocked_wiring(dsn_path):
     return removed
 
 
-def strip_planes(dsn_path):
-    """Removes `(plane ...)` scopes from a DSN file. Returns the number removed.
+def _polygon_area(coords):
+    pts = list(zip(coords[0::2], coords[1::2]))
+    return abs(sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(pts, pts[1:] + pts[:1]))) / 2.0
 
-    KiCad exports copper zones as planes covering the zone outline, so the
+
+def _numbers_after(text, pattern):
+    """Numbers following a regex match (the coordinate list of a shape)."""
+    m = re.search(pattern, text)
+    if not m:
+        return []
+    rest = text[m.end():]
+    end = rest.find(")")
+    return [float(v) for v in rest[: end if end >= 0 else len(rest)].split()]
+
+
+# A power-type layer counts as a real plane layer if one plane covers at
+# least this fraction of the board.
+PLANE_LAYER_MIN_COVERAGE = 0.5
+
+
+def strip_planes(dsn_path):
+    """Prepares the zones of a KiCad DSN export for routing.
+
+    KiCad exports every copper zone as a plane covering the zone outline, so the
     router treats every pad of the zone's net inside the outline as connected.
     The real fill leaves clearance around the new tracks and can cut pads off
-    into islands. Without the planes the zone nets are routed with tracks;
-    the refilled zones then only add copper.
+    into islands, so zones are dropped and their nets routed with tracks; the
+    refilled zones then only add copper.
+
+    Exception: a power-type layer with a plane covering most of the board is a
+    real plane layer. Its plane is kept (pads reach it reliably through vias)
+    and the router keeps the layer free of tracks. Other power-type layers
+    (e.g. a top layer typed "power" with a few pours) become signal layers,
+    since Freerouting never routes on power layers. Returns the number of
+    removed planes.
     """
     text = Path(dsn_path).read_text(encoding="utf-8", errors="replace")
-    out, i, removed = [], 0, 0
+    boundary = _numbers_after(text, r"\(boundary\s*\(path\s+pcb\s+[\d.]+")
+    board_area = _polygon_area(boundary) if len(boundary) >= 6 else 0.0
+
+    planes = []  # (start, end, layer, area)
+    i = 0
     while True:
         j = text.find("(plane ", i)
         if j < 0:
-            out.append(text[i:])
             break
-        out.append(text[i:j])
-        depth, k, quoted = 0, j, False
-        while k < len(text):
-            c = text[k]
-            if c == '"':
-                quoted = not quoted
-            elif not quoted and c == "(":
-                depth += 1
-            elif not quoted and c == ")":
-                depth -= 1
-                if depth == 0:
-                    k += 1
-                    break
-            k += 1
+        k = _scope_end(text, j)
+        scope = text[j:k]
+        m = re.match(r'\(plane\s+(?:"[^"]*"|\S+)\s+\((polygon|rect)\s+"?([^\s"()]+)"?', scope)
+        layer, area = None, 0.0
+        if m:
+            layer = m.group(2)
+            nums = _numbers_after(scope, r"\((?:polygon|rect)\s+\S+")
+            if m.group(1) == "polygon" and len(nums) >= 7:
+                area = _polygon_area(nums[1:])  # skip the aperture width
+            elif m.group(1) == "rect" and len(nums) >= 4:
+                area = abs(nums[2] - nums[0]) * abs(nums[3] - nums[1])
+        planes.append((j, k, layer, area))
         i = k
-        removed += 1
-    Path(dsn_path).write_text("".join(out), encoding="utf-8")
+
+    power_layers = set(
+        m.group(1)
+        for m in re.finditer(r'\(layer\s+"?([^\s"()]+)"?\s*\(type\s+power\)', text)
+    )
+    plane_layers = {
+        layer
+        for _, _, layer, area in planes
+        if layer in power_layers and board_area > 0 and area >= PLANE_LAYER_MIN_COVERAGE * board_area
+    }
+
+    out, pos, removed = [], 0, 0
+    for j, k, layer, _ in planes:
+        out.append(text[pos:j])
+        if layer in plane_layers:
+            out.append(text[j:k])
+        else:
+            removed += 1
+        pos = k
+    out.append(text[pos:])
+    result = "".join(out)
+    for layer in power_layers - plane_layers:
+        result = re.sub(
+            r'(\(layer\s+"?' + re.escape(layer) + r'"?\s*\(type\s+)power\)', r"\1signal)", result
+        )
+    Path(dsn_path).write_text(result, encoding="utf-8")
     return removed
+
+
+def copper_edge_clearance_nm(board):
+    """The board's copper-to-edge clearance constraint (0 if unset)."""
+    try:
+        return int(board.GetDesignSettings().m_CopperEdgeClearance)
+    except Exception:
+        return 0
 
 
 def min_track_width_nm(board):
@@ -428,7 +488,9 @@ class Router:
         return result
 
 
-def mode_args(mode, max_passes=0, threads=0, neckdown=True, min_track_width_nm=0):
+def mode_args(
+    mode, max_passes=0, threads=0, neckdown=True, min_track_width_nm=0, edge_clearance_nm=0
+):
     """Command-line options for the plugin's routing modes.
 
     fast  - default: parallel optimizer, wall-clock time limits.
@@ -449,7 +511,16 @@ def mode_args(mode, max_passes=0, threads=0, neckdown=True, min_track_width_nm=0
         # Neck-down narrows traces at pins below the net's width.
         args.append("--router.automatic_neckdown=false")
     if min_track_width_nm > 0:
+        width_um = f"{min_track_width_nm / 1000.0:g}"
         # KiCad's board minimum track width is not part of the DSN export;
         # this fastroute option also bounds the fanout's escape traces.
-        args.append(f"--router.min_trace_width_um={min_track_width_nm / 1000.0:g}")
+        args.append(f"--router.min_trace_width_um={width_um}")
+        # Connections whose path is found but whose trace does not fit are
+        # retried with traces of the minimum width (Freerouting's "necked
+        # retry", off by default there).
+        args.append(f"--router.neck_width_um={width_um}")
+    if edge_clearance_nm > 0:
+        # Board Setup > Constraints > Copper to edge clearance (not in the DSN
+        # export; Freerouting's own default is 250 um).
+        args.append(f"--router.copper_to_edge_clearance_um={edge_clearance_nm / 1000.0:g}")
     return args

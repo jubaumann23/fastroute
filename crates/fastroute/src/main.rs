@@ -209,7 +209,7 @@ fn run() -> Result<(), String> {
         None if args.parity || optimizer_threads <= 1 => OptimizerMode::JavaCompat,
         None => OptimizerMode::Parallel { threads: optimizer_threads },
     };
-    let ctx = PipelineContext { stop: StopToken::new(), wall_clock_limits: limits, optimizer_mode };
+    let ctx = PipelineContext { stop: StopToken::new(), wall_clock_limits: limits, optimizer_mode, enhancements: !args.parity };
     log::info!(
         target: "fastroute",
         "optimizer mode: {optimizer_mode:?}, board time limits: {mode:?}, stage wall clock limits: {}",

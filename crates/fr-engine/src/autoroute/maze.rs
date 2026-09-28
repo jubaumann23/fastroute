@@ -327,7 +327,9 @@ impl<'a> MazeSearchEngine<'a> {
                 // try evtl. neckdown at a start pin
                 let start_item = self.eng.target_door(t).item;
                 if self.board.item(start_item).is_pin() {
-                    let neckdown_half_width = self.board.pin_trace_neckdown_half_width(start_item, layer_index) as f64;
+                    let neckdown_half_width = ctrl
+                        .clamp_neckdown_half_width(self.board.pin_trace_neckdown_half_width(start_item, layer_index))
+                        as f64;
                     if neckdown_half_width > 0.0 {
                         half_width = jmin(half_width, neckdown_half_width);
                     }
@@ -853,7 +855,8 @@ impl<'a> MazeSearchEngine<'a> {
         for &t in self.eng.room(room).target_doors() {
             let item = self.eng.target_door(t).item;
             if self.board.item(item).is_pin() {
-                return self.board.pin_trace_neckdown_half_width(item, layer) as f64;
+                let half = self.board.pin_trace_neckdown_half_width(item, layer);
+                return self.ctrl.clamp_neckdown_half_width(half) as f64;
             }
         }
         0.0

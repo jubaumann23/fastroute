@@ -55,11 +55,19 @@ pub struct PipelineContext {
     pub wall_clock_limits: bool,
     /// How the optimizer evaluates its candidates.
     pub optimizer_mode: OptimizerMode,
+    /// fastroute improvements that change results compared with Freerouting
+    /// (see docs/IMPROVEMENTS.md). Off for `--parity`.
+    pub enhancements: bool,
 }
 
 impl Default for PipelineContext {
     fn default() -> Self {
-        PipelineContext { stop: StopToken::new(), wall_clock_limits: true, optimizer_mode: OptimizerMode::JavaCompat }
+        PipelineContext {
+            stop: StopToken::new(),
+            wall_clock_limits: true,
+            optimizer_mode: OptimizerMode::JavaCompat,
+            enhancements: false,
+        }
     }
 }
 

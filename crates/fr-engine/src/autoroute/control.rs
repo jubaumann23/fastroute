@@ -103,6 +103,16 @@ pub struct AutorouteControl {
 }
 
 impl AutorouteControl {
+    /// fastroute extension: a neck-down half width raised to the board minimum
+    /// (`router.min_trace_width_um`); unchanged when no minimum is set.
+    pub fn clamp_neckdown_half_width(&self, half_width: i32) -> i32 {
+        if self.min_trace_half_width > 0 && half_width > 0 {
+            half_width.max(self.min_trace_half_width)
+        } else {
+            half_width
+        }
+    }
+
     /// Java `new AutorouteControl(board, netNumber, settings)`.
     pub fn new_default(board: &RoutingBoard, net_number: NetNo, settings: &RouterSettings) -> Self {
         let mut c = Self::base(board, settings, settings.get_trace_costs());

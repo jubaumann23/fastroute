@@ -25,7 +25,7 @@ The plugin finds `fastroute` in this order: `$FASTROUTE_BIN`, the bundled
 | Remove existing tracks | off | Deletes unlocked tracks/vias first; locked ones are kept. |
 | Route zone nets with tracks | on | KiCad exports copper zones as Specctra *planes* covering the zone outline, so the router assumes every pad of the zone's net is connected. The refilled zone leaves clearance around the new tracks and can cut pads off. With this option the planes are removed from the exchange file and those nets are routed too. |
 | Keep tracks away from copper texts | on | KiCad's export omits copper texts; each glyph is added as a keepout. |
-| Respect minimum track width | on | Uses *Board Setup → Constraints → Minimum track width*: no neck-down below it (`--router.min_trace_width_um`, a fastroute extension). |
+| Respect minimum track width | on | Uses *Board Setup → Constraints → Minimum track width*: neck-down stops there, and connections that do not fit are retried with traces of that width. The board's copper-to-edge clearance is passed on as well. |
 | Refill zones | on | Refills all zones after importing the result. |
 
 ## Headless use
@@ -41,22 +41,19 @@ $PY integrations/kicad/plugins/route_cli.py board.kicad_pcb -o routed.kicad_pcb 
 `tests/e2e.sh` routes the KiCad demo boards this way and runs KiCad's DRC on
 the result (optionally side by side with Freerouting via `FREEROUTING_CMD`).
 
-## Results (KiCad 10.0.6, demo boards, tracks removed and re-routed)
+## Results
 
-Unconnected items / routing-related DRC violations (clearance, track width,
-shorts, hole clearance, thermals, copper-to-edge) reported by KiCad's DRC:
+See [docs/IMPROVEMENTS.md](../../docs/IMPROVEMENTS.md) for the full table.
+KiCad 10 DRC after re-routing from scratch (unconnected items / routing violations):
 
-| Board | Original (hand-routed) | Freerouting plugin flow | fastroute plugin |
+| Board | Original design | Plain Freerouting flow | fastroute plugin |
 |---|---|---|---|
-| pic_programmer | 0 / 8 | 0 / 118 (3.9 s) | **0 / 0** (0.7 s) |
-| interf_u | 0 / 3 | 8 / 346 (28.8 s) | **0 / 1** (3.3 s) |
-| ecc83-pp | 0 / 0 | 0 / 6 (2.8 s) | **0 / 0** (0.3 s) |
-| sonde xilinx | 0 / 38 | 1 / 122 (4.4 s) | **0 / 36** (0.4 s) |
-| complex_hierarchy | 0 / 1 | 83 / 3 (3.4 s) | 13 / 3 (5.3 s) |
-
-The remaining sonde violations are pads placed too close to the board edge in
-the original design; complex_hierarchy is a hard board for this router
-(Freerouting leaves 86 connections unrouted on the same export).
+| lora_node (4 layers, 445 SMD pads) | 0 / 0 | — | 1 / 0 (13.9 s) |
+| complex_hierarchy | 0 / 1 | 83 / 3 | 0 / 0 (0.7 s) |
+| interf_u | 0 / 3 | 8 / 346 | 0 / 2 (5.6 s) |
+| pic_programmer | 0 / 8 | 0 / 118 | 0 / 0 (0.7 s) |
+| ecc83-pp | 0 / 0 | 0 / 6 | 0 / 0 (0.3 s) |
+| sonde xilinx | 0 / 38 | 1 / 122 | 0 / 36 (0.4 s) |
 
 ## Known limitations
 

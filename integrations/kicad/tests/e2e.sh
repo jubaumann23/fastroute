@@ -53,6 +53,6 @@ for board in "$@"; do
   run "$name" "$board" fastroute
   if [ -n "${FREEROUTING_CMD:-}" ]; then
     run "$name" "$board" freerouting --fastroute "$FREEROUTING_CMD" \
-      --zones-as-planes --no-refill --neckdown on --no-text-keepouts
+      --zones-as-planes --no-refill --ignore-min-width --no-text-keepouts
   fi
 done

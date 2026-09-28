@@ -31,10 +31,12 @@ def main(argv=None):
     ap.add_argument("--max-passes", type=int, default=0)
     ap.add_argument("--threads", type=int, default=0)
     ap.add_argument(
-        "--neckdown",
-        choices=("auto", "on", "off"),
-        default="auto",
-        help="narrow traces at pins; auto = off if the board sets a minimum track width",
+        "--neckdown", choices=("on", "off"), default="on", help="narrow traces at pins"
+    )
+    ap.add_argument(
+        "--ignore-min-width",
+        action="store_true",
+        help="allow neck-down below the board's minimum track width",
     )
     ap.add_argument("--no-refill", action="store_true", help="do not refill zones afterwards")
     ap.add_argument(
@@ -55,13 +57,14 @@ def main(argv=None):
     if args.work_dir:
         args.work_dir.mkdir(parents=True, exist_ok=True)
 
-    min_width = core.min_track_width_nm(board)
-    neckdown = {"on": True, "off": False}.get(args.neckdown, min_width == 0)
+    min_width = 0 if args.ignore_min_width else core.min_track_width_nm(board)
+    neckdown = args.neckdown == "on"
     router = core.Router(
         board,
         binary=args.fastroute,
         extra_args=core.mode_args(
-            args.mode, args.max_passes, args.threads, neckdown, 0 if args.neckdown == "on" else min_width
+            args.mode, args.max_passes, args.threads, neckdown, min_width,
+            core.copper_edge_clearance_nm(board),
         )
         + args.extra,
         work_dir=args.work_dir,

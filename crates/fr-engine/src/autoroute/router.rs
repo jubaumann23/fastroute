@@ -105,6 +105,13 @@ impl AutorouteEngine {
             return AutorouteAttemptResult::with_details(AutorouteAttemptState::Failed, "Failed to route connection.");
         };
         if !ctrl.layer_active[autoroute_result.start_layer as usize] || !ctrl.layer_active[autoroute_result.target_layer as usize] {
+            log::debug!(
+                target: "fr_engine::pipeline::diag",
+                "located connection on inactive layer: start {} target {} active {:?}",
+                autoroute_result.start_layer,
+                autoroute_result.target_layer,
+                ctrl.layer_active
+            );
             return AutorouteAttemptResult::with_details(
                 AutorouteAttemptState::Failed,
                 "Failed to route connection, because some of their layers are disabled.",

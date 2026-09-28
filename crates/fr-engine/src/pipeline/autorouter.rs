@@ -568,7 +568,9 @@ impl BatchAutorouter {
             }
         }
         let was_router_run = settings.get_run_router() && settings.autorouter.max_passes.map(|m| m >= 0).unwrap_or(true);
-        if was_router_run && !stop.is_stop_autorouter_requested() {
+        // Java skips the final tail removal when the autorouter was stopped (also by its own
+        // stagnation rule), leaving unused fanout escapes (via + stub) on the board.
+        if was_router_run && (!stop.is_stop_autorouter_requested() || ctx.enhancements) {
             self.remove_tails(board, StopConnectionOption::None, Some(stop));
         }
         if is_router_enabled {
@@ -586,6 +588,22 @@ impl BatchAutorouter {
 }
 
 fn record_failure(board: &mut RoutingBoard, key: ItemKey, pass_no: i32, result: &AutorouteAttemptResult) {
+    if log::log_enabled!(log::Level::Debug) {
+        let item = board.item(key);
+        let comp = if item.component_no() > 0 { board.components.get(item.component_no()).name.clone() } else { String::new() };
+        let net = board.rules.nets.get(item.net_number(0)).map(|n| n.name.clone()).unwrap_or_default();
+        let bb = item.bounding_box(board);
+        let res = board.communication.resolution.max(1) as f64;
+        log::debug!(
+            "route failure pass {pass_no}: {} #{} {comp} net '{net}' at ({:.0}, {:.0}) um: {:?} {}",
+            if item.is_pin() { "pin" } else if item.is_via() { "via" } else { "item" },
+            item.id().0,
+            (bb.ll.x as f64 + bb.ur.x as f64) / 2.0 / res,
+            (bb.ll.y as f64 + bb.ur.y as f64) / 2.0 / res,
+            result.state,
+            result.details
+        );
+    }
     let RoutingBoard { basic, failure_log, .. } = board;
     failure_log.record_failure(basic, key, pass_no, result.state, &result.details);
 }

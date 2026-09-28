@@ -82,7 +82,7 @@ class SettingsDialog(wx.Dialog):
             "KiCad's Specctra export omits copper texts.",
         )
         self.min_width = check(
-            "Respect the board's minimum track width (no neck-down below it)",
+            "Respect the board's minimum track width (neck-down stops there)",
             "respect_min_width",
             "Board Setup > Constraints > Minimum track width.",
         )
@@ -213,8 +213,8 @@ class FastrouteAction(pcbnew.ActionPlugin):
         router = core.Router(
             board,
             extra_args=core.mode_args(
-                settings["mode"], settings["max_passes"], neckdown=min_width == 0,
-                min_track_width_nm=min_width,
+                settings["mode"], settings["max_passes"], min_track_width_nm=min_width,
+                edge_clearance_nm=core.copper_edge_clearance_nm(board),
             ),
             refill=settings["refill_zones"],
             route_zone_nets=settings["route_zone_nets"],
