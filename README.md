@@ -1,7 +1,10 @@
 # fastroute
 
-A Rust port of the [Freerouting](https://github.com/freerouting/freerouting) PCB
-autorouter. Same algorithms, same input/output (Specctra `.dsn` → `.ses`), same
+**PCB autorouter for KiCad and Specctra DSN** — a Rust port of the
+[Freerouting](https://github.com/freerouting/freerouting) PCB autorouter.
+(Not related to the FastRoute global router for IC design used in OpenROAD.)
+
+Same algorithms, same input/output (Specctra `.dsn` → `.ses`), same
 command line — without Java, several times faster and with a fraction of the memory.
 
 - **Exact mode** (`--parity`) produces SES output byte-identical to Freerouting's
@@ -76,5 +79,7 @@ The Java reference build and scripts: `scripts/java-parity.sh`, `scripts/parity-
 
 ## License
 
-GPL-3.0-or-later. fastroute is a derivative work of Freerouting (GPL-3.0); all credit for
-the routing algorithms goes to the Freerouting authors.
+GPL-3.0-or-later ([LICENSE](LICENSE)). fastroute is a derivative work of Freerouting
+(GPL-3.0); all credit for the routing algorithms goes to the Freerouting authors. See
+[NOTICE](NOTICE) for the attribution, the Freerouting version it is based on, and the
+third-party crates.

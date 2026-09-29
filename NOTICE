@@ -1,0 +1,73 @@
+fastroute — a Rust port of the Freerouting PCB autorouter
+Copyright (C) 2026 Baris Akin
+
+fastroute is a derivative work of Freerouting:
+
+  Freerouting — https://github.com/freerouting/freerouting
+  Originally written by Alfons Wirtz; developed further by the Freerouting
+  project and its contributors.
+  Licensed under the GNU General Public License, version 3.
+
+This port is based on Freerouting source commit
+aa909a3450d2de57cb7823f2098fe38c4af67769 (2026-09-25). Its algorithms, data
+structures and file formats were translated from Java to Rust; comments of the
+form "Java ClassName.method" refer to the Freerouting original.
+
+fastroute is distributed under the GNU General Public License, version 3 or
+(at your option) any later version. See LICENSE.
+
+Changes relative to Freerouting
+-------------------------------
+- Complete translation from Java to Rust. With --parity the output is
+  byte-identical to Freerouting's deterministic mode on its benchmark boards.
+- Parallel optimizer and parallel autorouting passes, multi-start routing,
+  checkpoints, --max-time and stop signals, progress reporting.
+- Many routing fixes and enhancements (see docs/IMPROVEMENTS.md), among them:
+  plane connections, class-pair clearances, minimum track width for neck-down,
+  rollback of bad passes, stagnation stops, optimizer time budgets.
+- New features: length matching (--tune), controlled-impedance widths and
+  no-neckdown classes, differential pair routing (--pairs).
+- A KiCad plugin (integrations/kicad) with design-rule translation from
+  .kicad_dru, impedance calculator and length/pair rules.
+
+Test data
+---------
+crates/*/testdata contains boards and sessions derived from the Freerouting
+test fixtures and benchmark boards (GPL-3.0, from the Freerouting repository)
+and from KiCad demo projects.
+
+Third-party Rust crates (all MIT and/or Apache-2.0, compatible with GPL-3.0)
+---------------------------------------------------------------------------
+- autocfg 1.5.1 (Apache-2.0 OR MIT)
+- bitflags 2.13.2 (MIT OR Apache-2.0)
+- cc 1.5.1 (MIT OR Apache-2.0)
+- cfg-if 1.0.5 (MIT OR Apache-2.0)
+- cfg_aliases 0.2.2 (MIT)
+- crossbeam-deque 0.8.8 (MIT OR Apache-2.0)
+- crossbeam-epoch 0.9.21 (MIT OR Apache-2.0)
+- crossbeam-utils 0.8.23 (MIT OR Apache-2.0)
+- ctrlc 3.4.5 (MIT/Apache-2.0)
+- either 1.18.0 (MIT OR Apache-2.0)
+- find-msvc-tools 0.1.14 (MIT OR Apache-2.0)
+- libc 0.2.189 (MIT OR Apache-2.0)
+- libm 0.2.16 (MIT)
+- libmimalloc-sys 0.1.49 (MIT)
+- log 0.4.34 (MIT OR Apache-2.0)
+- mimalloc 0.1.52 (MIT)
+- nix 0.29.0 (MIT)
+- num-bigint 0.4.8 (MIT OR Apache-2.0)
+- num-integer 0.1.47 (MIT OR Apache-2.0)
+- num-traits 0.2.19 (MIT OR Apache-2.0)
+- rayon 1.12.0 (MIT OR Apache-2.0)
+- rayon-core 1.13.0 (MIT OR Apache-2.0)
+- shlex 2.0.1 (MIT OR Apache-2.0)
+- windows-sys 0.59.0 (MIT OR Apache-2.0)
+- windows-targets 0.52.6 (MIT OR Apache-2.0)
+- windows_aarch64_gnullvm 0.52.6 (MIT OR Apache-2.0)
+- windows_aarch64_msvc 0.52.6 (MIT OR Apache-2.0)
+- windows_i686_gnu 0.52.6 (MIT OR Apache-2.0)
+- windows_i686_gnullvm 0.52.6 (MIT OR Apache-2.0)
+- windows_i686_msvc 0.52.6 (MIT OR Apache-2.0)
+- windows_x86_64_gnu 0.52.6 (MIT OR Apache-2.0)
+- windows_x86_64_gnullvm 0.52.6 (MIT OR Apache-2.0)
+- windows_x86_64_msvc 0.52.6 (MIT OR Apache-2.0)
