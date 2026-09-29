@@ -367,6 +367,39 @@ def add_dru_class_clearances(board, dsn_path):
 
 
 _DRU_NET_TERM = re.compile(r"A\.(NetClass|NetName)\s*==\s*'([^']*)'")
+_DRU_DIFF_TERM = re.compile(r"A\.inDiffPair\('([^']*)'\)")
+
+
+def _pair_base(name):
+    """KiCad's differential pair naming: (base, '+' or '-') for names ending in +/- or P/N."""
+    if len(name) > 1 and name[-1] in "+P":
+        return name[:-1], "+"
+    if len(name) > 1 and name[-1] in "-N":
+        return name[:-1], "-"
+    return None, None
+
+
+def _dru_matches(cond, name, cls):
+    """True/False if the net matches a .kicad_dru condition; None if the condition uses
+    anything but A.NetClass == '...', A.NetName == '...' and A.inDiffPair('...') joined by
+    && or ||."""
+    for alt in cond.split("||"):
+        terms = [t.strip().strip("()") for t in alt.split("&&")]
+        ok = True
+        for t in terms:
+            m = _DRU_NET_TERM.fullmatch(t)
+            d = _DRU_DIFF_TERM.fullmatch(t + ")" if t.startswith("A.inDiffPair(") and not t.endswith(")") else t)
+            if m:
+                key, val = m.groups()
+                ok = ok and (cls == val if key == "NetClass" else fnmatch.fnmatchcase(name, val))
+            elif d:
+                base, _ = _pair_base(name)
+                ok = ok and base is not None and fnmatch.fnmatchcase(base, d.group(1))
+            else:
+                return None  # unsupported condition
+        if ok:
+            return True
+    return False
 
 
 def _net_class_name(net):
@@ -401,23 +434,6 @@ def write_tune_file(board, path):
     except Exception:
         return 0
 
-    def matches(cond, name, cls):
-        for alt in cond.split("||"):
-            terms = [t.strip().strip("()") for t in alt.split("&&")]
-            ok = True
-            for t in terms:
-                m = _DRU_NET_TERM.fullmatch(t)
-                if not m:
-                    return None  # unsupported condition
-                key, val = m.groups()
-                if key == "NetClass":
-                    ok = ok and cls == val
-                else:
-                    ok = ok and fnmatch.fnmatchcase(name, val)
-            if ok:
-                return True
-        return False
-
     def mm(value, unit):
         return float(value) * {"mm": 1.0, "mil": 0.0254, "um": 0.001}[unit or "mm"]
 
@@ -430,7 +446,7 @@ def write_tune_file(board, path):
             continue
         members = []
         for name, cls in sorted(nets.items()):
-            r = matches(cond.group(1), name, cls)
+            r = _dru_matches(cond.group(1), name, cls)
             if r is None:
                 members = []
                 break
@@ -451,6 +467,65 @@ def write_tune_file(board, path):
         lines.extend(f"  {n}" for n in members)
     Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
     return len(groups)
+
+
+def _board_layer_name(board, layer):
+    """The board's own name of a layer given by its canonical name ("In1.Cu")."""
+    try:
+        lid = board.GetLayerID(layer)
+        if lid >= 0:
+            return board.GetLayerName(lid)
+    except Exception:
+        pass
+    return layer
+
+
+def write_pairs_file(board, path):
+    """Writes a fastroute --pairs file from the diff_pair_gap rules of the board's .kicad_dru.
+
+    Every rule with `(constraint diff_pair_gap ...)` makes the matching nets differential
+    pairs, paired by KiCad's naming (NAME+/NAME-, NAMEP/NAMEN), with the rule's opt gap
+    (min if there is no opt), for one layer if the rule has `(layer "...")`. Returns the
+    number of pairs (0: no file written).
+    """
+    try:
+        dru = Path(board.GetFileName()).with_suffix(".kicad_dru")
+        rules_text = dru.read_text(encoding="utf-8", errors="replace")
+        nets = {str(n): _net_class_name(net) for n, net in board.GetNetsByName().items() if str(n)}
+    except Exception:
+        return 0
+    pairs = {}  # base -> {"+": name, "-": name, "gap": mm, "layers": {layer: mm}}
+    for _rule_name, body in _DRU_RULE.findall(rules_text):
+        cond = re.search(r"\(condition\s+\"([^\"]*)\"", body)
+        gap = re.search(r"\(constraint\s+diff_pair_gap\b([^\n]*)", body)
+        if not cond or not gap:
+            continue
+        value = re.search(r"\(opt\s+([\d.]+)\s*(mm|mil|um)?\)", gap.group(1)) or re.search(
+            r"\(min\s+([\d.]+)\s*(mm|mil|um)?\)", gap.group(1)
+        )
+        mm = float(value.group(1)) * {"mm": 1.0, "mil": 0.0254, "um": 0.001}[value.group(2) or "mm"] if value else None
+        layer = re.search(r"\(layer\s+\"?([^\"\s)]+)\"?\)", body)
+        for name, cls in nets.items():
+            base, pol = _pair_base(name)
+            if base is None or not _dru_matches(cond.group(1), name, cls):
+                continue
+            entry = pairs.setdefault(base, {"gap": None, "layers": {}})
+            entry[pol] = name
+            if mm is not None:
+                if layer:
+                    entry["layers"][_board_layer_name(board, layer.group(1))] = mm
+                else:
+                    entry["gap"] = mm
+    lines = []
+    for base, e in sorted(pairs.items()):
+        if "+" not in e or "-" not in e:
+            continue
+        opts = ([f"gap={e['gap']:g}"] if e["gap"] is not None else []) + [f"gap@{l}={g:g}" for l, g in sorted(e["layers"].items())]
+        lines.append(" ".join(["pair", e["+"], e["-"]] + opts))
+    if not lines:
+        return 0
+    Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return len(lines)
 
 
 def add_dru_layer_widths(board, dsn_path):
@@ -718,6 +793,11 @@ class Router:
         self.tune_groups = 0
         if not any(a.startswith("--tune=") for a in self.extra_args):
             self.tune_groups = write_tune_file(self.board, self._tune)
+        self._pairs = self._dsn.with_name("pairs.txt")
+        self._pairs.unlink(missing_ok=True)
+        self.diff_pairs = 0
+        if not any(a.startswith("--pairs=") for a in self.extra_args):
+            self.diff_pairs = write_pairs_file(self.board, self._pairs)
         if self.clear_tracks:
             strip_unlocked_wiring(self._dsn)
         if self.route_zone_nets:
@@ -735,6 +815,8 @@ class Router:
             cmd.append("--no-neckdown-classes=" + ",".join(classes))
         if getattr(self, "tune_groups", 0):
             cmd.append(f"--tune={self._tune}")
+        if getattr(self, "diff_pairs", 0):
+            cmd.append(f"--pairs={self._pairs}")
         kwargs = {}
         if os.name == "nt":
             kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW

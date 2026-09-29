@@ -69,6 +69,17 @@ A target ending in `d` is differential (`--gap` sets the pair gap, default
 equal to the width). Solder mask is not included; check the widths against
 your fabricator's stackup.
 
+Differential pairs: every `.kicad_dru` rule with a `diff_pair_gap` constraint makes the
+matching nets pairs (KiCad naming: `NAME+`/`NAME-` or `NAMEP`/`NAMEN`), routed first with
+the rule's gap (`opt`, else `min`; per layer if the rule has a `layer`). The impedance rules
+of `impedance_cli.py` for `90d`-style targets contain such constraints. By hand:
+
+```
+(rule "USB"
+  (condition "A.inDiffPair('/USB_D')")
+  (constraint diff_pair_gap (opt 0.2mm)))
+```
+
 Zones: by default a zone on a *power*-type layer covering at least half of the
 board stays a plane (pads connect with vias, no tracks on that layer); other
 zones are removed for routing and their nets are routed with tracks, then the
@@ -97,5 +108,6 @@ KiCad 10 DRC after re-routing from scratch (unconnected items / routing violatio
 
 - Uses the classic `pcbnew` Python action-plugin API (KiCad 7–10). The KiCad 10
   IPC plugin API has no Specctra export yet.
-- Differential pairs are routed as two ordinary nets: they get the computed
-  width, but no coupled routing and no enforced gap.
+- Differential pairs run side by side where there is room next to the first net's
+  path; pad pairs in swapped order, branches and intra-pair length matching are not
+  handled (see docs/IMPROVEMENTS.md).

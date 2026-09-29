@@ -62,8 +62,47 @@ about impedance. fastroute adds two pieces:
   test board had 30 KiCad `track_width` errors on the 50 Ω class; with it, 0.
 
 Solder mask is not modelled (coated microstrips come out 2–4 Ω lower); widths should be
-checked against the fabricator's stackup. Differential pairs get the right width, but the
-two nets are still routed independently (no coupled routing, the gap is not enforced).
+checked against the fabricator's stackup. Differential pairs get the width here and the
+gap from the pair routing below.
+
+## Differential pairs (`--pairs`, new)
+
+Freerouting routes the two nets of a pair independently, so they rarely run side by side.
+With `--pairs=FILE` fastroute routes the pairs first, on the empty board, and makes one net
+follow the other:
+
+1. Both nets are routed with the maze router.
+2. The lead net's traces are chained into paths (imported boards have one trace per segment),
+   oriented from the pin closest to the other net's pins, and offset sideways by
+   `half width + half width + gap` towards the side of that pin (exact 45° geometry: the
+   polyline's lines are translated, corners are their intersections).
+3. The offset path is cut into 0.2 mm pieces; each piece is checked for clearance with a
+   5 µm wider probe. Runs of free pieces (≥ 0.6 mm) become the follower's traces, the
+   follower's old routing is removed, and the maze router joins the runs and the pins
+   (fewer runs if it cannot join all of them).
+4. The change is kept only if no connection is lost, the follower has no clearance
+   violation and the score `coupled length − 0.5 × |length difference|` improves. Both
+   directions (N following P, P following N) and both sides are tried.
+5. The pair's traces and vias are fixed while the rest of the board is routed and optimized
+   (like pairs a designer routes by hand first). If connections stay unrouted, the pairs are
+   released and the board is routed once more: the autorouter then rips the pairs only where it
+   must. Finally the coupling is tried again on the finished board, scored over all pairs
+   (routing one pair may shove another away from its partner).
+
+Test board (STM32H7, 4 layers, USB + 2 Ethernet pairs, through the plugin):
+
+| | unrouted | KiCad DRC | coupled USB / ETH TX / ETH RX | time |
+|---|---|---|---|---|
+| no pairs | 0 | 0 | — | 193 s |
+| pairs routed first, not held | 0 | 0 | 6 / 11 / 4 mm | 405 s |
+| pairs held fixed throughout | 15 | 0 | 23 / 21 / 9 mm | 414 s |
+| held, released if needed (default) | 0 | 0 | 14.5 / 11.3 / 13.8 mm of 28 / 32 / 24 | 507 s |
+
+The gap is the pair clearance unless given (per layer as well). Limits: the pair is coupled
+where there is room next to the lead net's path; ends whose pads are in the opposite order
+need a crossing, which the router makes around a pad or with a via; branches (a USB-C
+connector's two D+ pads) are coupled only along one path; the traces are not length-matched
+within the pair (the skew is logged).
 
 ## KiCad plugin
 

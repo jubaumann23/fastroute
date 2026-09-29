@@ -12,6 +12,7 @@
 pub mod autoroute;
 pub mod board;
 pub mod datastructures;
+pub mod diffpair;
 pub mod drc;
 pub mod ids;
 pub mod library;

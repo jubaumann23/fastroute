@@ -43,6 +43,7 @@ struct Args {
     time_limit_factor: i64,
     max_time: Option<f64>,
     tune: Option<String>,
+    pairs: Option<String>,
     no_neckdown_classes: Vec<String>,
     verbose: bool,
     rest: Vec<String>,
@@ -61,6 +62,7 @@ fn parse_args() -> Result<Args, String> {
         time_limit_factor: fr_engine::datastructures::time_limit::DEFAULT_COUNT_FACTOR,
         max_time: None,
         tune: None,
+        pairs: None,
         no_neckdown_classes: Vec::new(),
         verbose: false,
         rest: Vec::new(),
@@ -125,6 +127,11 @@ fn parse_args() -> Result<Args, String> {
                     i += 1;
                     continue;
                 }
+                if let Some(m) = a.strip_prefix("--pairs=") {
+                    args.pairs = Some(m.to_string());
+                    i += 1;
+                    continue;
+                }
                 if let Some(m) = a.strip_prefix("--tune=") {
                     args.tune = Some(m.to_string());
                     i += 1;
@@ -159,6 +166,7 @@ options:
   -mp N                    maximum autorouter passes (router.autorouter.max_passes)
   --no-neckdown-classes=A,B  keep the full trace width of these net classes at pins
                            (controlled impedance)
+  --pairs=FILE             differential pairs: routed first, N running along P (see below)
   --tune=FILE              length matching after routing (groups of nets, see below)
   --max-time=SECONDS       stop after this wall-clock time and write the best result
                            (Ctrl+C / SIGTERM / Ctrl+Break do the same; a second one exits)
@@ -178,6 +186,10 @@ tune file: one group per `group` line, followed by net names (* = any text):
     /SD_D*
     /SD_NBL*
   group sdram_clk tolerance=0.2 target=40   # fixed target length in mm
+
+pairs file: one pair per line, optional copper gap in mm (default: their clearance),
+also per layer. Pairs are routed and coupled first, then fixed while the rest is routed:
+  pair /USB_DP /USB_DN gap=0.15 gap@In1.Cu=0.12
 
 common --router.* settings (numbers, true/false, comma-separated lists):
   --router.autorouter.max_passes=N          passes (0 = unlimited)
@@ -394,17 +406,55 @@ fn run() -> Result<(), String> {
         }
     }
 
+    let pairs = match &args.pairs {
+        Some(f) => parse_pairs_file(f)?,
+        None => Vec::new(),
+    };
     let tune_groups = match &args.tune {
         Some(f) => parse_tune_file(f)?,
         None => Vec::new(),
     };
+    // differential pairs are routed and coupled first, then fixed while the rest is routed
+    let mut pair_items = Vec::new();
+    if !pairs.is_empty() {
+        let t = Instant::now();
+        // how the pre-routed pairs are held while the rest is routed (experiment switch)
+        let hold = match std::env::var("FASTROUTE_PAIR_HOLD").as_deref() {
+            Ok("none") => None,
+            Ok("shove") => Some(fr_engine::ids::FixedState::ShoveFixed),
+            _ => Some(fr_engine::ids::FixedState::UserFixed),
+        };
+        let (results, fixed) = fr_engine::diffpair::preroute_pairs(&mut board, &pairs, &settings, &ctx.stop, hold);
+        for r in &results {
+            log_pair(r, "pre-routed");
+        }
+        log::info!(target: "fastroute", "diff pairs pre-routed in {:.2} s ({} items fixed during routing)", t.elapsed().as_secs_f64(), fixed.len());
+        pair_items = fixed;
+    }
     let t = Instant::now();
     pipeline::run_pipeline(&mut board, &mut settings, &ctx);
+    if !pair_items.is_empty() {
+        fr_engine::diffpair::release_pairs(&mut board, &pair_items);
+        // the fixed pairs may have blocked connections: route once more with the pairs free
+        // (the autorouter rips them only where it has to; the coupling is retried afterwards)
+        let unrouted = fr_engine::pipeline::stats::incomplete_count(&board, None);
+        if unrouted > 0 && !ctx.stop.is_stop_requested() {
+            log::info!(target: "fastroute", "diff pairs released: {unrouted} connections unrouted with the pairs fixed, routing again");
+            pipeline::run_pipeline(&mut board, &mut settings, &ctx);
+        }
+    }
     log::info!(target: "fastroute", "routing finished in {:.2} s", t.elapsed().as_secs_f64());
     if fired.load(Ordering::SeqCst) {
         log::info!(target: "fastroute", "note: a board time limit fired ({mode:?})");
     }
 
+    if !pairs.is_empty() && !ctx.stop.is_stop_requested() {
+        let t = Instant::now();
+        for r in fr_engine::diffpair::couple_pairs(&mut board, &pairs, &settings, &ctx.stop) {
+            log_pair(&r, "after routing");
+        }
+        log::info!(target: "fastroute", "diff pairs finished in {:.2} s", t.elapsed().as_secs_f64());
+    }
     if !tune_groups.is_empty() && !ctx.stop.is_stop_requested() {
         let t = Instant::now();
         let results = fr_engine::tuning::tune_lengths(&mut board, &tune_groups);
@@ -509,6 +559,48 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn log_pair(r: &fr_engine::diffpair::PairResult, stage: &str) {
+    log::info!(
+        target: "fastroute",
+        "diff pair {}/{} ({stage}): coupled {:.2} -> {:.2} mm of {:.2} mm, skew {:+.2} mm{}",
+        r.p,
+        r.n,
+        r.coupled_before_mm,
+        r.coupled_after_mm,
+        r.p_length_mm,
+        r.skew_mm,
+        if r.message.is_empty() { String::new() } else { format!(" ({})", r.message) }
+    );
+}
+
+/// Reads a `--pairs` file (see the help text).
+fn parse_pairs_file(path: &str) -> Result<Vec<fr_engine::diffpair::DiffPair>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    let mut pairs = Vec::new();
+    for (no, raw) in text.lines().enumerate() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let words: Vec<&str> = line.split_whitespace().collect();
+        if words.len() < 3 || words[0] != "pair" {
+            return Err(format!("{path}:{}: expected 'pair P N [gap=MM]'", no + 1));
+        }
+        let mut pair = fr_engine::diffpair::DiffPair { p: words[1].to_string(), n: words[2].to_string(), gap_mm: None, layer_gaps_mm: Vec::new() };
+        for w in &words[3..] {
+            let (k, v) = w.split_once('=').ok_or(format!("{path}:{}: unknown option '{w}'", no + 1))?;
+            let mm: f64 = v.trim_end_matches("mm").parse().map_err(|_| format!("{path}:{}: bad number '{v}'", no + 1))?;
+            match k.split_once('@') {
+                None if k == "gap" => pair.gap_mm = Some(mm),
+                Some(("gap", layer)) => pair.layer_gaps_mm.push((layer.to_string(), mm)),
+                _ => return Err(format!("{path}:{}: unknown option '{w}'", no + 1)),
+            }
+        }
+        pairs.push(pair);
+    }
+    Ok(pairs)
 }
 
 /// Reads a `--tune` file (see the help text).
