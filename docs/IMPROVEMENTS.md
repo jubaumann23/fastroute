@@ -44,6 +44,27 @@ The KiCad plugin writes the groups from the board's `.kicad_dru`: `skew` constra
 matched to its longest net) and `length (min …)` constraints, for conditions on
 `A.NetClass == '…'` / `A.NetName == '…'` (wildcards) joined by `&&` / `||`.
 
+## Controlled impedance (new)
+
+Freerouting has one trace width per net class and layer, taken from the DSN; it knows nothing
+about impedance. fastroute adds two pieces:
+
+- `integrations/kicad/plugins/impedance_cli.py` computes widths from the board's stackup
+  (read from the `.kicad_pcb`; KiCad's default FR4 stackup if none is defined): outer layers
+  as microstrip (Hammerstad–Jensen with Wadell's thickness correction), inner layers as
+  stripline between the neighbouring layers (Wheeler, asymmetric case combined from two
+  symmetric ones; within 0.3 % of Cohn's exact result), differential pairs with the IPC-2141
+  coupling term. `--write` puts one `.kicad_dru` rule per class and layer (`track_width`
+  min/opt/max, `diff_pair_gap` for pairs) into a marked block, so KiCad's DRC checks them.
+- The plugin reads those per-layer widths back and writes them as DSN `layer_rule`s of the
+  class, and passes `--no-neckdown-classes` for those classes: neck-down at pins (including
+  the fanout micro neck-down) and the necked retry would break the width. Without this the
+  test board had 30 KiCad `track_width` errors on the 50 Ω class; with it, 0.
+
+Solder mask is not modelled (coated microstrips come out 2–4 Ω lower); widths should be
+checked against the fabricator's stackup. Differential pairs get the right width, but the
+two nets are still routed independently (no coupled routing, the gap is not enforced).
+
 ## KiCad plugin
 
 | Change | Why |

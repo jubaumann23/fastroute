@@ -44,6 +44,9 @@ pub struct AutorouteControl {
     pub trace_costs: Vec<ExpansionCostFactor>,
     pub bend_costs: Vec<f64>,
     pub with_neckdown: bool,
+    /// fastroute extension: the net's class forbids any neck-down, including
+    /// the fanout micro neck-down (controlled-impedance classes).
+    pub no_neckdown: bool,
     /// fastroute extension: neck-down never goes below this half width
     /// (`router.min_trace_width_um`; 0 = Java behaviour).
     pub min_trace_half_width: i32,
@@ -150,6 +153,7 @@ impl AutorouteControl {
             trace_costs,
             bend_costs,
             with_neckdown: settings.get_automatic_neckdown(),
+            no_neckdown: false,
             min_trace_half_width: min_trace_half_width(board, settings),
             layer_active,
             layer_count,
@@ -242,6 +246,10 @@ impl AutorouteControl {
             if let Some(nc) = net_class {
                 if !nc.is_active_routing_layer(i) {
                     self.layer_active[iu] = false;
+                }
+                if nc.no_neckdown {
+                    self.with_neckdown = false;
+                    self.no_neckdown = true;
                 }
             }
         }

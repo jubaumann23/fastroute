@@ -26,6 +26,9 @@ pub struct NetClass {
     /// Clearance classes of the item types (from a DSN class).
     pub default_item_clearance_classes: DefaultItemClearanceClasses,
     pub is_ignored_by_autorouter: bool,
+    /// fastroute: traces of this class keep their width at pins (controlled impedance): no
+    /// neck-down, no retry with narrower traces.
+    pub no_neckdown: bool,
     via_rule: Option<ViaRuleId>,
     trace_clearance_class: ClearanceClassNo,
     shove_fixed: bool,
@@ -51,6 +54,7 @@ impl NetClass {
             trace_half_width_arr: vec![0; n],
             default_item_clearance_classes: DefaultItemClearanceClasses::new(),
             is_ignored_by_autorouter: ignored_by_autorouter,
+            no_neckdown: false,
             via_rule: None,
             trace_clearance_class: 0,
             shove_fixed: false,

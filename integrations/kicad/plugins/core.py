@@ -453,6 +453,45 @@ def write_tune_file(board, path):
     return len(groups)
 
 
+def add_dru_layer_widths(board, dsn_path):
+    """Carries per-layer track widths of the .kicad_dru (e.g. the controlled-impedance rules
+    written by impedance_cli.py) into the DSN as class layer rules. Returns
+    [(class, layer, width mm)]."""
+    try:
+        import impedance
+
+        dru = Path(board.GetFileName()).with_suffix(".kicad_dru")
+        widths = impedance.layer_widths_from_dru(dru.read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        return []
+    if not widths:
+        return []
+    text = Path(dsn_path).read_text(encoding="utf-8", errors="replace")
+    unit_um = 1000.0 if re.search(r"\(resolution\s+mm", text) else 1.0
+    done = []
+    for (cls, layer), w in sorted(widths.items()):
+        dsn_cls = "kicad_default" if cls == "Default" and "(class kicad_default" in text else cls
+        m = re.search(r"\(class\s+\"?" + re.escape(dsn_cls) + r"\"?[\s)]", text)
+        if not m:
+            continue
+        end = _scope_end(text, m.start())
+        # the DSN uses the board's layer names ("L1-Signal"), the rules may use canonical ones
+        dsn_layer = layer
+        try:
+            lid = board.GetLayerID(layer)
+            if lid >= 0:
+                dsn_layer = board.GetLayerName(lid)
+        except Exception:
+            pass
+        if re.search(r"[\s()]", dsn_layer):
+            dsn_layer = f'"{dsn_layer}"'
+        rule = f" (layer_rule {dsn_layer} (rule (width {w * 1000.0 / unit_um:g})))"
+        text = text[: end - 1] + rule + text[end - 1 :]
+        done.append((cls, layer, w))
+    Path(dsn_path).write_text(text, encoding="utf-8")
+    return done
+
+
 def fix_rule_area_keepouts(board, dsn_path):
     """Corrects the keepouts KiCad exports for rule areas.
 
@@ -632,6 +671,7 @@ class Router:
         self._proc = None
         self._cancel = threading.Event()
         self.dru_rules = []
+        self.layer_widths = []
 
     def cancel(self):
         self._cancel.set()
@@ -672,6 +712,7 @@ class Router:
             return result
         fix_rule_area_keepouts(self.board, self._dsn)
         self.dru_rules = add_dru_class_clearances(self.board, self._dsn)
+        self.layer_widths = add_dru_layer_widths(self.board, self._dsn)
         self._tune = self._dsn.with_name("tune.txt")
         self._tune.unlink(missing_ok=True)
         self.tune_groups = 0
@@ -689,6 +730,9 @@ class Router:
         """Runs fastroute on the exported file (does not touch the board)."""
         result = RouteResult()
         cmd = [str(self.binary), "-de", str(self._dsn), "-do", str(self._ses)] + self.extra_args
+        classes = sorted({c for c, _, _ in getattr(self, "layer_widths", [])})
+        if classes and not any(x.startswith("--no-neckdown-classes=") for x in self.extra_args):
+            cmd.append("--no-neckdown-classes=" + ",".join(classes))
         if getattr(self, "tune_groups", 0):
             cmd.append(f"--tune={self._tune}")
         kwargs = {}

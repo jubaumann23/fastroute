@@ -136,7 +136,7 @@ impl FoundConnectionInserter {
                 neckdown_inserted =
                     self.insert_neckdown(board, ctrl, ok_point.point().unwrap(), &current_corner_arr[1], trace.layer, start_pin, end_pin);
             }
-            if !neckdown_inserted && !ok_is_last && (ctrl.is_fanout || ctrl.with_neckdown) && current_corner_arr.len() == 2 {
+            if !neckdown_inserted && !ok_is_last && (ctrl.is_fanout || ctrl.with_neckdown) && !ctrl.no_neckdown && current_corner_arr.len() == 2 {
                 micro_neckdown_inserted =
                     self.insert_fanout_micro_neckdown(board, ctrl, ok_point.point(), &current_corner_arr[1], trace.layer, &net_numbers, start_pin, end_pin);
             }

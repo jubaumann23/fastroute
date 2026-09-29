@@ -56,6 +56,19 @@ classes or net names, the plugin passes them to fastroute, which adds meanders a
   (constraint skew (max 0.5mm)))
 ```
 
+Controlled impedance: `impedance_cli.py` computes trace widths for target
+impedances from the board's stackup and, with `--write`, adds per-layer
+`track_width` rules to the `.kicad_dru`. The plugin then routes those classes
+with the per-layer widths and without neck-down:
+
+```
+$PY integrations/kicad/plugins/impedance_cli.py board.kicad_pcb --class RF=50 --class USB=90d --write
+```
+
+A target ending in `d` is differential (`--gap` sets the pair gap, default
+equal to the width). Solder mask is not included; check the widths against
+your fabricator's stackup.
+
 Zones: by default a zone on a *power*-type layer covering at least half of the
 board stays a plane (pads connect with vias, no tracks on that layer); other
 zones are removed for routing and their nets are routed with tracks, then the
@@ -84,5 +97,5 @@ KiCad 10 DRC after re-routing from scratch (unconnected items / routing violatio
 
 - Uses the classic `pcbnew` Python action-plugin API (KiCad 7–10). The KiCad 10
   IPC plugin API has no Specctra export yet.
-- Specctra carries no differential-pair or length-tuning rules; those nets are
-  routed as ordinary nets.
+- Differential pairs are routed as two ordinary nets: they get the computed
+  width, but no coupled routing and no enforced gap.

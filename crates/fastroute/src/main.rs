@@ -43,6 +43,7 @@ struct Args {
     time_limit_factor: i64,
     max_time: Option<f64>,
     tune: Option<String>,
+    no_neckdown_classes: Vec<String>,
     verbose: bool,
     rest: Vec<String>,
 }
@@ -60,6 +61,7 @@ fn parse_args() -> Result<Args, String> {
         time_limit_factor: fr_engine::datastructures::time_limit::DEFAULT_COUNT_FACTOR,
         max_time: None,
         tune: None,
+        no_neckdown_classes: Vec::new(),
         verbose: false,
         rest: Vec::new(),
     };
@@ -118,6 +120,11 @@ fn parse_args() -> Result<Args, String> {
                     i += 1;
                     continue;
                 }
+                if let Some(m) = a.strip_prefix("--no-neckdown-classes=") {
+                    args.no_neckdown_classes = m.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                    i += 1;
+                    continue;
+                }
                 if let Some(m) = a.strip_prefix("--tune=") {
                     args.tune = Some(m.to_string());
                     i += 1;
@@ -150,6 +157,8 @@ options:
   -do FILE                 output Specctra session (.ses); also rewritten with the best
                            board so far whenever routing/optimizing improves
   -mp N                    maximum autorouter passes (router.autorouter.max_passes)
+  --no-neckdown-classes=A,B  keep the full trace width of these net classes at pins
+                           (controlled impedance)
   --tune=FILE              length matching after routing (groups of nets, see below)
   --max-time=SECONDS       stop after this wall-clock time and write the best result
                            (Ctrl+C / SIGTERM / Ctrl+Break do the same; a second one exits)
@@ -264,6 +273,20 @@ fn run() -> Result<(), String> {
         let n = fr_io::network::extend_class_pair_clearances(&mut board, &dsn);
         if n > 0 {
             log::info!(target: "fastroute", "class-pair clearances applied to {n} pin/SMD clearance class pairs as well");
+        }
+    }
+    if !args.no_neckdown_classes.is_empty() {
+        let rules = board.rules_mut();
+        let ids: Vec<_> = rules.net_classes.iter().collect();
+        for c in ids {
+            let name = rules.net_classes[c].get_name().to_string();
+            let hit = args.no_neckdown_classes.iter().any(|n| {
+                n.eq_ignore_ascii_case(&name) || (n.eq_ignore_ascii_case("Default") && fr_io::network::is_kicad_default_net_class_name(&name))
+            });
+            if hit {
+                rules.net_classes[c].no_neckdown = true;
+                log::info!(target: "fastroute", "net class '{name}': no neck-down");
+            }
         }
     }
     fr_io::post_load::prepare_for_routing(&mut board, &mut settings, None);

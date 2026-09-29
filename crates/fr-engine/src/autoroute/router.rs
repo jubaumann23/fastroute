@@ -509,6 +509,11 @@ fn retry_connection_necked(
     time_limit: TimeLimit,
     stop: Option<&StopToken>,
 ) -> Option<AutorouteAttemptResult> {
+    if let Some(net) = board.rules.nets.get(route_net_no) {
+        if board.rules.net_classes[net.get_net_class()].no_neckdown {
+            return None;
+        }
+    }
     let board_resolution = board.communication.resolution.max(1);
     let neck_width = fr_jcompat::math_round(Unit::scale(settings.get_neck_width_um() * board_resolution as f64, Unit::Um, board.communication.unit)) as i32;
     let neck_half_width = (neck_width / 2).max(1);
