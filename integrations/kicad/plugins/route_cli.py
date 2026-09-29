@@ -64,7 +64,13 @@ def main(argv=None):
     args = ap.parse_args(argv)
     args.extra = extra
 
+    if not args.board.is_file():
+        print(f"error: {args.board}: no such file", file=sys.stderr)
+        return 2
     board = pcbnew.LoadBoard(str(args.board))
+    if board is None or not core.has_board_outline(board):
+        print(f"error: {args.board}: not a board with an outline on Edge.Cuts", file=sys.stderr)
+        return 2
     if args.work_dir:
         args.work_dir.mkdir(parents=True, exist_ok=True)
 

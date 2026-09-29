@@ -86,8 +86,25 @@ def find_binary():
     return Path(found) if found else None
 
 
+def has_board_outline(board):
+    """True if the board has an outline on Edge.Cuts (KiCad's DSN export crashes without)."""
+    try:
+        for d in board.GetDrawings():
+            if d.GetLayer() == pcbnew.Edge_Cuts:
+                return True
+        for fp in board.GetFootprints():
+            for g in fp.GraphicalItems():
+                if g.GetLayer() == pcbnew.Edge_Cuts:
+                    return True
+    except Exception:
+        return True  # cannot tell: let KiCad try
+    return False
+
+
 def export_dsn(board, path):
     """Writes the board as a Specctra DSN file. Returns True on success."""
+    if not has_board_outline(board):
+        return False
     try:
         ok = pcbnew.ExportSpecctraDSN(board, str(path))
     except TypeError:  # KiCad 6: operates on the board open in the editor
@@ -560,7 +577,10 @@ class Router:
             f.unlink(missing_ok=True)
         if not export_dsn(self.board, self._dsn):
             result = RouteResult()
-            result.message = "KiCad could not export the board as Specctra DSN"
+            result.message = (
+                "KiCad could not export the board as Specctra DSN"
+                + ("" if has_board_outline(self.board) else " (the board has no outline on Edge.Cuts)")
+            )
             return result
         fix_rule_area_keepouts(self.board, self._dsn)
         self.dru_rules = add_dru_class_clearances(self.board, self._dsn)
