@@ -28,6 +28,8 @@ as `--gui.enabled` are ignored. fastroute adds:
 | `--optimizer-mode=java-compat\|parallel` | Optimizer strategy (default: parallel if more than one thread) |
 | `--time-limit-mode=wall\|count\|disabled`, `--time-limit-factor=N` | How Freerouting's internal time limits are evaluated |
 | `--router.min_trace_width_um=<w>` | Never neck traces down below this width |
+| `--multi-start=N` | Rerun the autorouter with N−1 shuffled orders in parallel if connections remain unrouted (default 4) |
+| `--no-enhancements` | Freerouting's behaviour without fastroute's routing/optimizer improvements (see [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md)) |
 | `-v` | Verbose progress |
 
 ## Performance

@@ -58,6 +58,10 @@ pub struct PipelineContext {
     /// fastroute improvements that change results compared with Freerouting
     /// (see docs/IMPROVEMENTS.md). Off for `--parity`.
     pub enhancements: bool,
+    /// fastroute multi-start (with `enhancements`): if the autorouter leaves connections
+    /// unrouted, it is rerun this many times in total with shuffled first-pass orders (in
+    /// parallel) and the best board is kept. 1 = off.
+    pub multi_start: usize,
 }
 
 impl Default for PipelineContext {
@@ -67,6 +71,7 @@ impl Default for PipelineContext {
             wall_clock_limits: true,
             optimizer_mode: OptimizerMode::JavaCompat,
             enhancements: false,
+            multi_start: 1,
         }
     }
 }
@@ -100,7 +105,11 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
     // runRoutingStage
     let router_enabled = settings.get_run_router() && settings.autorouter.max_passes.map(|m| m >= 0).unwrap_or(true);
     if router_enabled && !ctx.stop.is_stop_autorouter_requested() {
+        let unrouted_board = (ctx.enhancements && ctx.multi_start > 1).then(|| board.clone());
         autorouter.run_batch_loop(board, settings, ctx);
+        if let Some(start) = unrouted_board {
+            multi_start(board, &start, settings, ctx);
+        }
     } else if settings.is_fanout_enabled() && !ctx.stop.is_stop_autorouter_requested() {
         let original = settings.autorouter.max_passes;
         settings.autorouter.max_passes = Some(0);
@@ -125,6 +134,74 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
         outcome.optimizer_timed_out = optimizer.timed_out;
     }
     outcome
+}
+
+/// fastroute multi-start: reruns the routing stage from `start` with `ctx.multi_start - 1`
+/// shuffled first-pass orders (in parallel) and keeps the best board (fewest unrouted
+/// connections, then fewest clearance violations, then highest router score; ties keep the
+/// earlier variant, so the result does not depend on thread timing).
+fn multi_start(board: &mut RoutingBoard, start: &RoutingBoard, settings: &RouterSettings, ctx: &PipelineContext) {
+    use rayon::prelude::*;
+    let mut stats = StatsCache::new();
+    let first = stats.score(board, settings);
+    if first.incomplete_count == 0 || ctx.stop.is_stop_requested() {
+        return;
+    }
+    let variants: Vec<(usize, RoutingBoard, stats::Score)> = (1..ctx.multi_start)
+        .into_par_iter()
+        .map(|v| {
+            let mut b = start.clone();
+            let variant_ctx = PipelineContext {
+                stop: StopToken::new(),
+                wall_clock_limits: ctx.wall_clock_limits,
+                optimizer_mode: ctx.optimizer_mode,
+                enhancements: true,
+                multi_start: 1,
+            };
+            let mut router = BatchAutorouter::for_job(&b, settings);
+            router.order_seed = Some(0x5eed_0000 + v as i64);
+            router.run_batch_loop(&mut b, settings, &variant_ctx);
+            b.finish_autoroute();
+            let s = StatsCache::new().score(&b, settings);
+            (v, b, s)
+        })
+        .collect();
+    let key = |s: &stats::Score| (s.incomplete_count, s.clearance_violation_count, std::cmp::Reverse(ordered_f32(s.router_score)));
+    let mut best: Option<(usize, RoutingBoard, stats::Score)> = None;
+    for (v, b, s) in variants {
+        log::info!(
+            "Multi-start variant {v}: {} unrouted, {} violations, router score {:.2}.",
+            s.incomplete_count,
+            s.clearance_violation_count,
+            s.router_score as f64
+        );
+        let better = match &best {
+            None => key(&s) < key(&first),
+            Some((_, _, bs)) => key(&s) < key(bs),
+        };
+        if better {
+            best = Some((v, b, s));
+        }
+    }
+    if let Some((v, b, s)) = best {
+        log::info!(
+            "Multi-start: variant {v} is better ({} unrouted, {} violations; first run {} unrouted, {} violations).",
+            s.incomplete_count,
+            s.clearance_violation_count,
+            first.incomplete_count,
+            first.clearance_violation_count
+        );
+        *board = b;
+    }
+}
+
+/// Total order on finite scores (NaN sorts last).
+fn ordered_f32(x: f32) -> i64 {
+    if x.is_nan() {
+        i64::MIN
+    } else {
+        (x as f64 * 1000.0).round() as i64
+    }
 }
 
 /// Java `HeadlessBoardManager.scheduleDeferredPostLoadProcessing`: the board part (awaited by

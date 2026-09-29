@@ -17,6 +17,7 @@ here. The engine-side ones are active unless `--parity` is given
 | Greedy optimizer passes | Java evaluates every candidate but applies only the single best one per pass, so on larger boards a pass rarely clears the 2.5 % continuation threshold. After the winner, the other improving candidates are re-routed best-first on the current board and kept if the optimizer score improves without more unrouted connections or violations. |
 | Optimizer re-routes only the ripped item's nets | Java's re-route runs full autorouter passes over every unrouted connection on the board for each candidate, retrying hopeless connections hundreds of times. |
 | A failing connection rips its net only once | Java rips every unfixed trace/via of the net on each failure from the second one on. A connection that can never be routed (e.g. an enclosed GND pin) then tears down its whole net every other pass: lora oscillated between 12 and 19 unrouted. Unrouted after the change: bm05 10 → 7, complex_hierarchy 10 → 8, lora 12 → 11, StickHub 2 → 3. |
+| Parallel multi-start routing (`--multi-start=N`, default 4) | If the autorouter leaves connections unrouted, it is rerun N−1 more times in parallel with shuffled (seeded) first-pass orders and the best board is kept (fewest unrouted, then violations, then router score). Boards that route completely pay nothing; others take about twice as long. Unrouted: bm04 1 → 0, bm05 7 → 2, CM5 8 → 7, StickHub 3 → 1. |
 | Unclamped optimizer score | The V2 score is clamped at 0; on bm01 the excess length/vias push it below 0, so no candidate could ever be accepted. The optimizer compares unclamped values (and the pass improvement relative to the magnitude). |
 
 ## KiCad plugin
@@ -52,8 +53,9 @@ zone-to-zone link.
 ## Optimizer results (benchmark boards, default parallel mode)
 
 `scripts/ab-enhancements.sh` runs each board with and without the improvements
-(`--no-enhancements`). Routing results (router score, unrouted, violations) are
-unchanged except bm05 (11 → 10 unrouted); optimizer scores:
+(`--no-enhancements`). Unrouted connections, Freerouting behaviour → fastroute:
+bm04 1 → 0, bm05 11 → 2, CM5 8 → 7, StickHub 2 → 1, complex_hierarchy 10 → 8,
+all other boards unchanged (no board got worse). Optimizer scores:
 
 | Board | Freerouting behaviour | fastroute |
 |---|---|---|

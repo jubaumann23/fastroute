@@ -51,6 +51,8 @@ pub struct BatchAutorouter {
     pub net_filter: Option<BTreeSet<NetNo>>,
     /// fastroute improvements (see `PipelineContext::enhancements`).
     pub enhancements: bool,
+    /// fastroute multi-start: shuffles the order of the first pass's signal items.
+    pub order_seed: Option<i64>,
     pub fanout_timed_out: bool,
     /// Java `initialUnroutedCount`.
     pub initial_unrouted_count: i32,
@@ -112,6 +114,7 @@ impl BatchAutorouter {
             is_optimizer_autorouter: false,
             net_filter: None,
             enhancements: false,
+            order_seed: None,
             fanout_timed_out: false,
             initial_unrouted_count: 0,
             previous_incomplete_nets: BTreeSet::new(),
@@ -271,6 +274,12 @@ impl BatchAutorouter {
         }
         if pass_no > 1 {
             self.reorder_items(board, &mut items, pass_no);
+        } else if let Some(seed) = self.order_seed {
+            let (plane, mut signal): (Vec<ItemKey>, Vec<ItemKey>) = items.iter().partition(|&&k| Self::is_plane_item(board, k));
+            let mut rnd = fr_jcompat::random::JavaRandom::new(seed);
+            fr_jcompat::random::shuffle(&mut signal, &mut rnd);
+            items = plane;
+            items.extend(signal);
         }
         let params = self.params();
         let ids: Vec<ItemId> = items.iter().map(|&k| board.item(k).id()).collect();

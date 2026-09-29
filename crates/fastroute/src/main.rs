@@ -30,6 +30,7 @@ struct Args {
     design_out: Option<String>,
     parity: bool,
     no_enhancements: bool,
+    multi_start: usize,
     no_time_limits: bool,
     optimizer_mode: Option<String>,
     time_limit_mode: Option<String>,
@@ -44,6 +45,7 @@ fn parse_args() -> Result<Args, String> {
         design_out: None,
         parity: false,
         no_enhancements: false,
+        multi_start: 4,
         no_time_limits: false,
         optimizer_mode: None,
         time_limit_mode: None,
@@ -60,7 +62,7 @@ fn parse_args() -> Result<Args, String> {
             "-h" | "--help" => {
                 println!(
                     "usage: fastroute -de <design.dsn> [-do <out.ses>] [-mp <passes>] [--router.<path>=<value> ...]\n\
-                     \x20      [--parity] [--no-enhancements] [--no-time-limits] [--optimizer-mode=java-compat|parallel]\n\
+                     \x20      [--parity] [--no-enhancements] [--multi-start=N] [--no-time-limits] [--optimizer-mode=java-compat|parallel]\n\
                      \x20      [--time-limit-mode=wall|count|disabled] [--time-limit-factor=N] [-v]"
                 );
                 std::process::exit(0);
@@ -72,6 +74,14 @@ fn parse_args() -> Result<Args, String> {
             }
             "--no-enhancements" => {
                 args.no_enhancements = true;
+                i += 1;
+                continue;
+            }
+            _ if a.starts_with("--multi-start=") => {
+                args.multi_start = a["--multi-start=".len()..]
+                    .parse::<usize>()
+                    .map_err(|_| format!("bad value in {a}"))?
+                    .max(1);
                 i += 1;
                 continue;
             }
@@ -216,7 +226,10 @@ fn run() -> Result<(), String> {
         None if args.parity || optimizer_threads <= 1 => OptimizerMode::JavaCompat,
         None => OptimizerMode::Parallel { threads: optimizer_threads },
     };
-    let ctx = PipelineContext { stop: StopToken::new(), wall_clock_limits: limits, optimizer_mode, enhancements: !args.parity && !args.no_enhancements };
+    let ctx = PipelineContext { stop: StopToken::new(), wall_clock_limits: limits, optimizer_mode,
+        enhancements: !args.parity && !args.no_enhancements,
+        multi_start: args.multi_start,
+    };
     log::info!(
         target: "fastroute",
         "optimizer mode: {optimizer_mode:?}, board time limits: {mode:?}, stage wall clock limits: {}",
