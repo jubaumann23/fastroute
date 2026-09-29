@@ -27,6 +27,7 @@ here. The engine-side ones are active unless `--parity` is given
 | Board copper-to-edge clearance → `copper_to_edge_clearance_um` | Not in the DSN export; Freerouting's default is 250 µm. |
 | Zone handling (`strip_planes`) | KiCad exports each zone as a plane covering its outline, so pads inside count as connected even if the refilled zone cuts them off. Pours on signal layers are removed and their nets routed with tracks. A power-type layer with one plane covering ≥ 50 % of the board is kept as a plane layer (pads connect through vias; no tracks on it). Other power-type layers become signal layers — Freerouting never routes on power layers, which made the 2-layer complex_hierarchy demo effectively single-layer. |
 | Copper texts → keepouts (glyph convex hulls) | Omitted by KiCad's DSN export. |
+| Rule-area keepouts corrected | KiCad exports every rule area as a keepout, even areas that forbid nothing (KiCad 10's multichannel "auto-placement-area" regions). The router then blocked whole channels: multichannel_mixer went from 160 unrouted (Freerouting) to 0. Areas forbidding neither tracks nor vias are dropped; via-only areas become via keepouts. |
 | Zone refill after import | Stale fills overlapped the new tracks. |
 | "Remove existing tracks" drops unlocked wires/vias from the DSN | Deleting board items inside the action plugin crashed pcbnew (undo snapshot with freed items); locked (`type fix`) tracks are kept. |
 
@@ -36,7 +37,8 @@ Unconnected items / routing-related violations; see `integrations/kicad/tests/e2
 
 | Board | Original design | Plain Freerouting flow | fastroute plugin |
 |---|---|---|---|
-| lora_node (4 layers, 445 SMD pads) | 0 / 0 | — | 1 / 0 (13.9 s) |
+| lora_node (4 layers, 445 SMD pads) | 0 / 0 | — | 1 / 0 (53 s incl. optimizer) |
+| multichannel_mixer | 0 / 0 | 160 unrouted in the benchmark | 0 / 0 (3.3 s) |
 | complex_hierarchy | 0 / 1 | 83 / 3 | 0 / 0 (0.7 s) |
 | interf_u | 0 / 3 | 8 / 346 | 0 / 2 (5.6 s) |
 | pic_programmer | 0 / 8 | 0 / 118 | 0 / 0 (0.7 s) |

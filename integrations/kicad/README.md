@@ -48,7 +48,8 @@ KiCad 10 DRC after re-routing from scratch (unconnected items / routing violatio
 
 | Board | Original design | Plain Freerouting flow | fastroute plugin |
 |---|---|---|---|
-| lora_node (4 layers, 445 SMD pads) | 0 / 0 | — | 1 / 0 (13.9 s) |
+| lora_node (4 layers, 445 SMD pads) | 0 / 0 | — | 1 / 0 (53 s incl. optimizer) |
+| multichannel_mixer | 0 / 0 | 160 unrouted (benchmark DSN) | 0 / 0 (3.3 s) |
 | complex_hierarchy | 0 / 1 | 83 / 3 | 0 / 0 (0.7 s) |
 | interf_u | 0 / 3 | 8 / 346 | 0 / 2 (5.6 s) |
 | pic_programmer | 0 / 8 | 0 / 118 | 0 / 0 (0.7 s) |

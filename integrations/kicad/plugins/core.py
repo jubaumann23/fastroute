@@ -270,6 +270,61 @@ def _numbers_after(text, pattern):
 PLANE_LAYER_MIN_COVERAGE = 0.5
 
 
+def _outline_key(points):
+    """Order-independent key of polygon corners in DSN micrometres."""
+    return frozenset((round(x), round(y)) for x, y in points)
+
+
+def fix_rule_area_keepouts(board, dsn_path):
+    """Corrects the keepouts KiCad exports for rule areas.
+
+    KiCad writes every rule area as a Specctra keepout, including areas that
+    forbid neither tracks nor vias (e.g. KiCad 10's multichannel
+    "auto-placement-area" regions); the router then blocks everything inside,
+    so whole channels become unroutable. Such keepouts are removed; areas that
+    only forbid vias become via keepouts. Returns (removed, converted).
+    """
+    nonblocking, via_only = set(), set()
+    for zone in board.Zones():
+        if not zone.GetIsRuleArea():
+            continue
+        tracks, vias = zone.GetDoNotAllowTracks(), zone.GetDoNotAllowVias()
+        if tracks:
+            continue
+        outline = zone.Outline()
+        for i in range(outline.OutlineCount()):
+            chain = outline.Outline(i)
+            key = _outline_key(
+                (chain.CPoint(k).x / 1000.0, -chain.CPoint(k).y / 1000.0)
+                for k in range(chain.PointCount())
+            )
+            (via_only if vias else nonblocking).add(key)
+    if not nonblocking and not via_only:
+        return 0, 0
+    text = Path(dsn_path).read_text(encoding="utf-8", errors="replace")
+    out, i, removed, converted = [], 0, 0, 0
+    while True:
+        j = text.find("(keepout", i)
+        if j < 0:
+            out.append(text[i:])
+            break
+        k = _scope_end(text, j)
+        scope = text[j:k]
+        nums = _numbers_after(scope, r"\(polygon\s+(?:\"[^\"]*\"|\S+)")
+        key = _outline_key(zip(nums[1::2], nums[2::2])) if len(nums) >= 7 else None
+        out.append(text[i:j])
+        if key is not None and key in nonblocking:
+            removed += 1
+        elif key is not None and key in via_only:
+            out.append("(via_keepout" + scope[len("(keepout"):])
+            converted += 1
+        else:
+            out.append(scope)
+        i = k
+    Path(dsn_path).write_text("".join(out), encoding="utf-8")
+    return removed, converted
+
+
 def strip_planes(dsn_path):
     """Prepares the zones of a KiCad DSN export for routing.
 
@@ -426,6 +481,7 @@ class Router:
             result = RouteResult()
             result.message = "KiCad could not export the board as Specctra DSN"
             return result
+        fix_rule_area_keepouts(self.board, self._dsn)
         if self.clear_tracks:
             strip_unlocked_wiring(self._dsn)
         if self.route_zone_nets:

@@ -723,7 +723,7 @@ impl<'a> MazeSearchEngine<'a> {
             destination_ok = true;
         }
         if !destination_ok {
-            log::debug!("MazeSearchEngine.init: Failed - no valid destination items found");
+            log::debug!(target: "fr_engine::pipeline::diag", "MazeSearchEngine.init: Failed - no valid destination items found");
             return false;
         }
         // process the start items
@@ -794,7 +794,7 @@ impl<'a> MazeSearchEngine<'a> {
             }
         }
         if !start_ok {
-            log::debug!("MazeSearchEngine.init: Failed - no accessible expansion doors found");
+            log::debug!(target: "fr_engine::pipeline::diag", "MazeSearchEngine.init: Failed - no accessible expansion doors found");
         }
         start_ok
     }
