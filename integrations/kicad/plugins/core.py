@@ -416,7 +416,8 @@ def write_tune_file(board, path):
     """Writes a fastroute --tune file from the length rules of the board's .kicad_dru.
 
     `(constraint skew (max X))` makes the matching nets one group (matched to the longest
-    net, X allowed); `(constraint length (min A) ...)` brings every matching net to at least A.
+    net, X allowed); with `(within_diff_pairs)` each differential pair is its own group;
+    `(constraint length (min A) ...)` brings every matching net to at least A.
     Conditions: A.NetClass == 'X' and A.NetName == 'pattern' (* = any text), joined by &&
     or ||. Returns the number of groups (0: no file written).
     """
@@ -455,7 +456,18 @@ def write_tune_file(board, path):
         if not members:
             continue
         tag = re.sub(r"\W+", "_", rule_name).strip("_") or "rule"
-        if skew:
+        if skew and re.search(r"\(within_diff_pairs\)", body):
+            # KiCad: `(within_diff_pairs)` limits the skew inside each pair; without it the
+            # skew is between all matching nets
+            pairs = {}
+            for name in members:
+                base, _ = _pair_base(name)
+                pairs.setdefault(base, []).append(name)
+            for base, pair_nets in sorted(pairs.items()):
+                if len(pair_nets) == 2:
+                    ptag = tag + "_" + (re.sub(r"\W+", "_", base).strip("_") or "pair")
+                    groups.append((ptag, f"tolerance={mm(*skew.groups()):g}", sorted(pair_nets)))
+        elif skew:
             groups.append((tag, f"tolerance={mm(*skew.groups()):g}", members))
         if length:
             groups.append((tag + "_min", f"tolerance=0 target={mm(*length.groups()):g}", members))
@@ -478,6 +490,23 @@ def _board_layer_name(board, layer):
     except Exception:
         pass
     return layer
+
+
+def layer_heights_mm(board):
+    """Height of each copper layer from the top of the board (stackup), for via lengths in
+    length matching; [] if the stackup cannot be read."""
+    try:
+        import impedance
+
+        layers, _defined = impedance.read_stackup(Path(board.GetFileName()))
+    except Exception:
+        return []
+    heights, z = [], 0.0
+    for layer in layers:
+        if layer.kind == "copper":
+            heights.append(z)
+        z += layer.thickness
+    return heights
 
 
 def write_pairs_file(board, path):
@@ -815,6 +844,9 @@ class Router:
             cmd.append("--no-neckdown-classes=" + ",".join(classes))
         if getattr(self, "tune_groups", 0):
             cmd.append(f"--tune={self._tune}")
+            heights = layer_heights_mm(self.board)
+            if heights and not any(x.startswith("--layer-heights=") for x in self.extra_args):
+                cmd.append("--layer-heights=" + ",".join(f"{h:.4f}" for h in heights))
         if getattr(self, "diff_pairs", 0):
             cmd.append(f"--pairs={self._pairs}")
         kwargs = {}

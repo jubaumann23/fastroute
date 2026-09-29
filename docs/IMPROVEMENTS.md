@@ -37,12 +37,18 @@ shorter nets get serpentine meanders on their longest straight segments (both si
 alternating, amplitudes 2 mm down to 0.45 mm, leg pitch 3× the width where it fits, else
 width + clearance). Every meander is made on a board clone and kept only if a slightly wider
 probe trace (+5 µm) has no clearance violation, so the result stays DRC-clean in KiCad too.
-Lengths count traces only (vias are not in the DSN's geometry). Nets that have no room left
-are reported with the missing length.
+Lengths are trace lengths plus, for every via, the stackup height between the layers its
+traces use (`--layer-heights`, which the plugin takes from the board's stackup): the same
+length KiCad's DRC measures. Nets that have no room left are reported with the missing length.
 
 The KiCad plugin writes the groups from the board's `.kicad_dru`: `skew` constraints (group
 matched to its longest net) and `length (min …)` constraints, for conditions on
-`A.NetClass == '…'` / `A.NetName == '…'` (wildcards) joined by `&&` / `||`.
+`A.NetClass == '…'` / `A.NetName == '…'` (wildcards) / `A.inDiffPair('…')` joined by `&&` / `||`.
+A skew rule with `(within_diff_pairs)` makes each differential pair its own group (intra-pair
+skew), as in KiCad; without it, all matching nets are matched to each other.
+
+Intra-pair skew after the pair routing on the STM32H7 test board (KiCad DRC, rules 0.2 mm USB,
+0.5 mm Ethernet): 1.8 / 2.7 / 14.5 mm before, 0.1 / 0.25 / 0.25 mm after, no DRC errors.
 
 ## Controlled impedance (new)
 

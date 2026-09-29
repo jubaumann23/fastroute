@@ -74,7 +74,7 @@ fn net_traces(board: &RoutingBoard, net: NetNo) -> Vec<ItemKey> {
 }
 
 fn net_length(board: &RoutingBoard, net: NetNo) -> f64 {
-    net_traces(board, net).iter().map(|&k| board.item(k).as_trace().map(|t| t.length()).unwrap_or(0.0)).sum()
+    crate::tuning::net_length(board, net)
 }
 
 /// Couples all pairs; returns what was done.

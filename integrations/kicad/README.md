@@ -56,6 +56,14 @@ classes or net names, the plugin passes them to fastroute, which adds meanders a
   (constraint skew (max 0.5mm)))
 ```
 
+Intra-pair skew: a skew rule with `(within_diff_pairs)` matches the two nets of every pair:
+
+```
+(rule "USB skew"
+  (condition "A.inDiffPair('/USB_D')")
+  (constraint skew (max 0.2mm) (within_diff_pairs)))
+```
+
 Controlled impedance: `impedance_cli.py` computes trace widths for target
 impedances from the board's stackup and, with `--write`, adds per-layer
 `track_width` rules to the `.kicad_dru`. The plugin then routes those classes

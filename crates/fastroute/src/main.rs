@@ -127,6 +127,12 @@ fn parse_args() -> Result<Args, String> {
                     i += 1;
                     continue;
                 }
+                if let Some(m) = a.strip_prefix("--layer-heights=") {
+                    let hs: Result<Vec<f64>, _> = m.split(',').map(|x| x.trim().parse::<f64>()).collect();
+                    fr_engine::tuning::set_layer_heights_mm(hs.map_err(|_| format!("bad --layer-heights '{m}' (mm, comma separated)"))?);
+                    i += 1;
+                    continue;
+                }
                 if let Some(m) = a.strip_prefix("--pairs=") {
                     args.pairs = Some(m.to_string());
                     i += 1;
@@ -167,6 +173,8 @@ options:
   --no-neckdown-classes=A,B  keep the full trace width of these net classes at pins
                            (controlled impedance)
   --pairs=FILE             differential pairs: routed first, N running along P (see below)
+  --layer-heights=MM,..    height of each copper layer from the top (stackup), so that via
+                           lengths count in length matching as in KiCad
   --tune=FILE              length matching after routing (groups of nets, see below)
   --max-time=SECONDS       stop after this wall-clock time and write the best result
                            (Ctrl+C / SIGTERM / Ctrl+Break do the same; a second one exits)

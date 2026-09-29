@@ -19,7 +19,7 @@
 
 use crate::board::{ItemKey, RoutingBoard};
 use crate::drc::clearance_violation::clearance_violation_count;
-use crate::ids::{FixedState, NetNo};
+use crate::ids::{FixedState, LayerNo, NetNo};
 use fr_geom::{IntPoint, Point, Polyline};
 
 /// Extra half width of the clearance check of a meander, micrometres.
@@ -92,9 +92,44 @@ fn net_traces(board: &RoutingBoard, net: NetNo) -> Vec<ItemKey> {
     board.get_connectable_items(net).into_iter().filter(|&k| board.item(k).is_trace()).collect()
 }
 
-/// Routed length of a net in board units (sum of its traces).
+/// Height of each copper layer from the top of the board, mm (index = layer number); empty:
+/// vias do not count. KiCad adds the stackup distance between the layers a via connects to
+/// the net length; set from the board's stackup (`--layer-heights`).
+static LAYER_HEIGHTS_MM: std::sync::RwLock<Vec<f64>> = std::sync::RwLock::new(Vec::new());
+
+/// Sets the copper layer heights used for via lengths (see [`net_length`]).
+pub fn set_layer_heights_mm(heights: Vec<f64>) {
+    *LAYER_HEIGHTS_MM.write().unwrap() = heights;
+}
+
+/// Routed length of a net in board units: its traces plus, for every via, the height between
+/// the outermost layers its traces use there (as KiCad measures it).
 pub fn net_length(board: &RoutingBoard, net: NetNo) -> f64 {
-    net_traces(board, net).iter().map(|&k| board.item(k).as_trace().map(|t| t.length()).unwrap_or(0.0)).sum()
+    let traces = net_traces(board, net);
+    let mut len: f64 = traces.iter().map(|&k| board.item(k).as_trace().map(|t| t.length()).unwrap_or(0.0)).sum();
+    let heights = LAYER_HEIGHTS_MM.read().unwrap();
+    if heights.is_empty() {
+        return len;
+    }
+    let upm = units_per_mm(board);
+    let ends: Vec<(LayerNo, Point, Point)> = traces
+        .iter()
+        .filter_map(|&k| board.item(k).as_trace().map(|t| (t.layer(), t.first_corner(), t.last_corner())))
+        .collect();
+    for k in board.get_connectable_items(net) {
+        let item = board.item(k);
+        if !item.is_via() {
+            continue;
+        }
+        let c = item.center(board);
+        let layers: Vec<usize> = ends.iter().filter(|(_, a, b)| *a == c || *b == c).map(|(l, _, _)| *l as usize).collect();
+        if let (Some(&lo), Some(&hi)) = (layers.iter().min(), layers.iter().max()) {
+            if hi < heights.len() {
+                len += (heights[hi] - heights[lo]) * upm;
+            }
+        }
+    }
+    len
 }
 
 /// Tunes all groups; returns what was done.
