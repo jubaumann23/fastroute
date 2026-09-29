@@ -18,6 +18,10 @@ cargo build --release -p fastroute          # or scripts/build-pgo.sh (~15 % fas
 target/release/fastroute -de board.dsn -do board.ses
 ```
 
+Windows x64 build (cross-compiled with MinGW-w64): `scripts/build-windows.sh` →
+`dist/windows/fastroute.exe`. The KiCad package can bundle several platforms:
+`integrations/kicad/package.sh --bin <macos binary> macos-arm64 --bin dist/windows/fastroute.exe windows-x64`.
+
 Freerouting's options are accepted: `-mp <passes>`, `--router.<path>=<value>` (e.g.
 `--router.optimizer.enabled=false`, `--router.scoring.via_costs=80`); GUI/API options such
 as `--gui.enabled` are ignored. fastroute adds:
