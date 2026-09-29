@@ -29,6 +29,7 @@ struct Args {
     design_in: Option<String>,
     design_out: Option<String>,
     parity: bool,
+    no_enhancements: bool,
     no_time_limits: bool,
     optimizer_mode: Option<String>,
     time_limit_mode: Option<String>,
@@ -42,6 +43,7 @@ fn parse_args() -> Result<Args, String> {
         design_in: None,
         design_out: None,
         parity: false,
+        no_enhancements: false,
         no_time_limits: false,
         optimizer_mode: None,
         time_limit_mode: None,
@@ -58,13 +60,18 @@ fn parse_args() -> Result<Args, String> {
             "-h" | "--help" => {
                 println!(
                     "usage: fastroute -de <design.dsn> [-do <out.ses>] [-mp <passes>] [--router.<path>=<value> ...]\n\
-                     \x20      [--parity] [--no-time-limits] [--optimizer-mode=java-compat|parallel]\n\
+                     \x20      [--parity] [--no-enhancements] [--no-time-limits] [--optimizer-mode=java-compat|parallel]\n\
                      \x20      [--time-limit-mode=wall|count|disabled] [--time-limit-factor=N] [-v]"
                 );
                 std::process::exit(0);
             }
             "--parity" => {
                 args.parity = true;
+                i += 1;
+                continue;
+            }
+            "--no-enhancements" => {
+                args.no_enhancements = true;
                 i += 1;
                 continue;
             }
@@ -209,7 +216,7 @@ fn run() -> Result<(), String> {
         None if args.parity || optimizer_threads <= 1 => OptimizerMode::JavaCompat,
         None => OptimizerMode::Parallel { threads: optimizer_threads },
     };
-    let ctx = PipelineContext { stop: StopToken::new(), wall_clock_limits: limits, optimizer_mode, enhancements: !args.parity };
+    let ctx = PipelineContext { stop: StopToken::new(), wall_clock_limits: limits, optimizer_mode, enhancements: !args.parity && !args.no_enhancements };
     log::info!(
         target: "fastroute",
         "optimizer mode: {optimizer_mode:?}, board time limits: {mode:?}, stage wall clock limits: {}",

@@ -12,6 +12,11 @@ here. The engine-side ones are active unless `--parity` is given
 |---|---|
 | Final tail removal also after the autorouter stopped itself | Freerouting skips `removeTails` when the stagnation rule stops the router, leaving unused fanout escapes (via + stub) on the board. KiCad reports them as dangling vias (50 on the lora board). |
 | `router.min_trace_width_um` (option, unset by default) | Neck-down (at pins, fanout "micro neck-down", necked retry) never goes below this width; narrower candidates are raised to it. |
+| The autorouter's own stop (stagnation, max passes) is withdrawn before the optimizer | Java keeps the stop request set, so every optimizer candidate fails to route and the optimizer gives up after its failure limit. |
+| Optimizer also runs on partly routed boards | Java skips it whenever a connection is unrouted; the acceptance rules already reject candidates that add unrouted connections. |
+| Greedy optimizer passes | Java evaluates every candidate but applies only the single best one per pass, so on larger boards a pass rarely clears the 2.5 % continuation threshold. After the winner, the other improving candidates are re-routed best-first on the current board and kept if the optimizer score improves without more unrouted connections or violations. |
+| Optimizer re-routes only the ripped item's nets | Java's re-route runs full autorouter passes over every unrouted connection on the board for each candidate, retrying hopeless connections hundreds of times. |
+| Unclamped optimizer score | The V2 score is clamped at 0; on bm01 the excess length/vias push it below 0, so no candidate could ever be accepted. The optimizer compares unclamped values (and the pass improvement relative to the magnitude). |
 
 ## KiCad plugin
 
@@ -40,6 +45,24 @@ Unconnected items / routing-related violations; see `integrations/kicad/tests/e2
 Remaining violations exist in the original designs as well (pads close to the
 board edge, thermal spokes). The lora board's last unconnected item is a GND
 zone-to-zone link.
+
+## Optimizer results (benchmark boards, default parallel mode)
+
+`scripts/ab-enhancements.sh` runs each board with and without the improvements
+(`--no-enhancements`). Routing results (router score, unrouted, violations) are
+unchanged except bm05 (11 → 10 unrouted); optimizer scores:
+
+| Board | Freerouting behaviour | fastroute |
+|---|---|---|
+| DAC2020_bm06 | 617 | 718 |
+| DAC2020_bm07 | 657 | 752 |
+| DAC2020_bm10 | 641 | 711 |
+| DAC2020_bm11 | 768 | 859 |
+| interf_u | 585 | 619 |
+| sonde xilinx | 877 | 928 |
+| bm04 / bm05 / CM5 / StickHub (partly routed) | optimizer skipped | 943 / 750 / 898 / 814 |
+| bm01 (score below 0) | no improvement possible | −182 → 14 after one pass |
+| lora_node | 328 (+0.45 %) | 435 (+33 %) |
 
 ## Open ideas
 

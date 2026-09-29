@@ -26,7 +26,7 @@ use fr_settings::{ItemSelectionStrategy, RouterSettings};
 use crate::ids::FixedState;
 use crate::board::{BasicBoard, ItemKey, ItemSet, RoutingBoard, StopConnectionOption};
 use crate::datastructures::StopToken;
-use crate::ids::ItemId;
+use crate::ids::{ItemId, NetNo};
 use crate::rules::BoardRules;
 
 use super::autorouter::BatchAutorouter;
@@ -275,6 +275,8 @@ struct CandidateParams<'a> {
     use_increased_ripup_costs: bool,
     stop: &'a StopToken,
     deadline: Option<Instant>,
+    /// fastroute: re-route only the nets of the ripped item.
+    only_item_nets: bool,
 }
 
 fn deadline_passed(deadline: Option<Instant>) -> bool {
@@ -326,6 +328,13 @@ fn opt_route_item_on_board(board: &mut RoutingBoard, item: ItemKey, p: &Candidat
     let max_autoroute_passes = settings.optimizer.max_autoroute_passes.expect("NullPointerException");
     let accuracy = settings.trace_pull_tight_accuracy.expect("NullPointerException");
     let mut router = BatchAutorouter::new(board, settings, true, p.with_preferred_directions, ripup_costs, accuracy);
+    if p.only_item_nets {
+        let mut nets: std::collections::BTreeSet<NetNo> = std::collections::BTreeSet::new();
+        for k in ripped_items.iter() {
+            nets.extend(board.item(k).net_numbers().iter().copied());
+        }
+        router.net_filter = Some(nets);
+    }
     router.autoroute_passes_for_optimizing_item(board, settings, max_autoroute_passes, p.stop);
 
     let (via_count_after, weighted_after) = light_statistics(board);
@@ -461,12 +470,19 @@ impl BatchOptimizer {
     }
 
     /// Java `evaluatePreFlightGuards(stats)`: the reason to skip the optimizer, if any.
-    fn evaluate_pre_flight_guards(board: &RoutingBoard, settings: &RouterSettings, stats: &crate::scoring::BoardStatistics) -> Option<String> {
+    fn evaluate_pre_flight_guards(
+        board: &RoutingBoard,
+        settings: &RouterSettings,
+        stats: &crate::scoring::BoardStatistics,
+        enhancements: bool,
+    ) -> Option<String> {
         if settings.optimizer.enable_preflight_guards == Some(false) {
             return None;
         }
         let incomplete = stats.connections.incomplete_count.unwrap_or(0);
-        if incomplete > 0 {
+        // fastroute: the optimizer also improves partly routed boards (its acceptance rules
+        // reject any candidate that leaves more connections unrouted).
+        if incomplete > 0 && !enhancements {
             return Some(format!("the board has {incomplete} unrouted connection(s) (optimizer only runs on completely routed boards)"));
         }
         let initial_score = stats.get_optimizer_score(Some(settings));
@@ -580,7 +596,7 @@ impl BatchOptimizer {
     pub fn run_batch_loop(&mut self, board: &mut RoutingBoard, settings: &mut RouterSettings, ctx: &PipelineContext, stats: &mut StatsCache) {
         self.use_increased_ripup_costs = true;
         let initial = stats.score(board, settings);
-        if let Some(reason) = Self::evaluate_pre_flight_guards(board, settings, stats.statistics(board)) {
+        if let Some(reason) = Self::evaluate_pre_flight_guards(board, settings, stats.statistics(board), ctx.enhancements) {
             log::info!("Skipping optimization stage: {reason}.");
             return;
         }
@@ -650,8 +666,14 @@ impl BatchOptimizer {
                     self.restore_incumbent_board(board);
                 }
             }
-            let pass_improvement_fraction =
-                if score_before_pass > 0.0 { (score_after_pass - score_before_pass) as f64 / score_before_pass as f64 } else { 0.0 };
+            let pass_improvement_fraction = if score_before_pass > 0.0 {
+                (score_after_pass - score_before_pass) as f64 / score_before_pass as f64
+            } else if ctx.enhancements && score_before_pass < 0.0 {
+                // unclamped scores can be negative: relative to the magnitude
+                (score_after_pass - score_before_pass) as f64 / (-score_before_pass) as f64
+            } else {
+                0.0
+            };
             let pass_improvement_percent = pass_improvement_fraction * 100.0;
             log::info!(
                 "Optimizer pass #{current_pass}: optimizer score {:.2} -> {:.2} ({}, {}), router score: {:.2}, incomplete connections: {}, clearance violations: {}.",
@@ -664,7 +686,11 @@ impl BatchOptimizer {
                 } else {
                     "UNCHANGED"
                 },
-                if score_before_pass > 0.0 { format!("{pass_improvement_percent:.4}%") } else { "n/a (baseline was 0.00)".to_string() },
+                if score_before_pass > 0.0 || (ctx.enhancements && score_before_pass < 0.0) {
+                    format!("{pass_improvement_percent:.4}%")
+                } else {
+                    "n/a (baseline was 0.00)".to_string()
+                },
                 pass_stats.router_score as f64,
                 pass_stats.incomplete_count,
                 pass_stats.clearance_violation_count
@@ -705,6 +731,53 @@ impl BatchOptimizer {
             f.optimizer_score as f64,
             stage_start.elapsed().as_secs_f64()
         );
+    }
+
+    /// fastroute greedy mode: after the pass winner was applied, re-routes the other improving
+    /// candidates (best first) on the current board and keeps each one that improves the optimizer
+    /// score without adding unrouted connections or clearance violations. Deterministic: the
+    /// order depends only on the candidate results. Returns the number of applied candidates.
+    fn apply_greedy(
+        &mut self,
+        board: &mut RoutingBoard,
+        settings: &RouterSettings,
+        ctx: &PipelineContext,
+        stats: &mut StatsCache,
+        params: &CandidateParams<'_>,
+        mut candidates: Vec<ItemRouteResult>,
+    ) -> usize {
+        // compare_to orders better results first (fewer incompletes, vias, length; then id).
+        candidates.sort_by(|a, b| a.compare_to(b));
+        let mut applied = 0;
+        let mut current = stats.score(board, settings);
+        for c in candidates {
+            if ctx.stop.is_stop_requested() || deadline_passed(self.deadline) {
+                break;
+            }
+            let mut trial = board.clone();
+            let Some(key) = trial.get_item(ItemId(c.item_id)) else { continue };
+            let p = CandidateParams { baseline_trace_length: light_statistics(&trial).1 as f64, ..*params };
+            let ok = catch_unwind(AssertUnwindSafe(|| opt_route_item_on_board(&mut trial, key, &p)))
+                .map(|r| r.improved)
+                .unwrap_or(false);
+            if !ok {
+                continue;
+            }
+            trial.clear_transient_autoroute_state();
+            let s = stats.score(&trial, settings);
+            if s.incomplete_count <= current.incomplete_count
+                && s.clearance_violation_count <= current.clearance_violation_count
+                && s.optimizer_score > current.optimizer_score
+            {
+                *board = trial;
+                current = s;
+                applied += 1;
+            }
+        }
+        if applied > 0 {
+            self.min_cumulative_trace_length = light_statistics(board).1 as f64;
+        }
+        applied
     }
 
     /// Java `prepareCandidateItems()`.
@@ -778,6 +851,7 @@ impl BatchOptimizer {
             use_increased_ripup_costs: self.use_increased_ripup_costs,
             stop: &ctx.stop,
             deadline: self.deadline,
+            only_item_nets: ctx.enhancements,
         };
         let stop = &ctx.stop;
         let mut consumer = PassConsumer {
@@ -789,6 +863,7 @@ impl BatchOptimizer {
             total_items_optimized: self.total_items_optimized,
             result_map: std::mem::take(&mut self.result_map),
             done: false,
+            improving: Vec::new(),
         };
         let mut stopped_or_timed_out = false;
         match (&self.mode, &self.pool) {
@@ -849,9 +924,18 @@ impl BatchOptimizer {
         if !stopped_or_timed_out {
             if let Some(w) = winning {
                 if w.result.improved {
+                    let winner_id = w.result.item_id;
                     *board = w.board.expect("improved candidate without board");
                     self.min_cumulative_trace_length = light_statistics(board).1 as f64;
                     route_improved = w.result.improvement_percentage;
+                    if ctx.enhancements {
+                        let mut rest = std::mem::take(&mut consumer.improving);
+                        rest.retain(|r| r.item_id != winner_id);
+                        let applied = self.apply_greedy(board, settings, ctx, stats, &params, rest);
+                        if applied > 0 {
+                            log::info!("Optimizer pass #{pass_no}: applied {applied} more improving candidate(s).");
+                        }
+                    }
                 }
             }
         }
@@ -882,6 +966,8 @@ struct PassConsumer {
     result_map: HashMap<i32, ItemRouteResult>,
     /// Set once the pass stops early (no further result is consumed).
     done: bool,
+    /// fastroute greedy mode: the item ids of all improving candidates.
+    improving: Vec<ItemRouteResult>,
 }
 
 impl PassConsumer {
@@ -894,6 +980,7 @@ impl PassConsumer {
         self.result_map.insert(res.result.item_id, res.result.clone());
         if res.result.improved {
             self.consecutive_failures = 0;
+            self.improving.push(res.result.clone());
             let better = match &self.winning {
                 None => true,
                 Some(w) => res.result.improved_over(&w.result),

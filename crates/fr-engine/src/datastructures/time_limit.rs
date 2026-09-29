@@ -201,6 +201,11 @@ impl StopToken {
         self.stop_autorouter.store(true, Ordering::SeqCst);
     }
 
+    /// Withdraws a `request_stop_autorouter` (a full `request_stop` stays in effect).
+    pub fn clear_stop_autorouter(&self) {
+        self.stop_autorouter.store(false, Ordering::SeqCst);
+    }
+
     /// Java `isStopAutoRouterRequested()`: true after either request.
     pub fn is_stop_autorouter_requested(&self) -> bool {
         self.stop_autorouter.load(Ordering::SeqCst) || self.stop.load(Ordering::SeqCst)

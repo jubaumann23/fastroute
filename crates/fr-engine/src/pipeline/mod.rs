@@ -109,11 +109,18 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
     }
     outcome.fanout_timed_out = autorouter.fanout_timed_out;
     board.finish_autoroute();
+    if ctx.enhancements {
+        // The autorouter's own stop rules (stagnation, max passes) request a stop of the
+        // autorouter; in Java that request stays set, so every optimizer candidate fails to
+        // route and the optimizer gives up after its failure limit.
+        ctx.stop.clear_stop_autorouter();
+    }
 
     // runOptimizationStage
     if run_optimizer && !ctx.stop.is_stop_requested() {
         let mut optimizer = BatchOptimizer::new(ctx.optimizer_mode);
         let mut stats = StatsCache::new();
+        stats.unclamped_optimizer_score = ctx.enhancements;
         optimizer.run_batch_loop(board, settings, ctx, &mut stats);
         outcome.optimizer_timed_out = optimizer.timed_out;
     }

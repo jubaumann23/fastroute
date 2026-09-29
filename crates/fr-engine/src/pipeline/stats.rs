@@ -21,6 +21,8 @@ use super::history::board_hash;
 #[derive(Default)]
 pub struct StatsCache {
     last: Option<(u64, BoardStatistics)>,
+    /// fastroute: report the optimizer score without the clamp at 0.
+    pub unclamped_optimizer_score: bool,
 }
 
 /// The values of a full statistics used by the pipeline.
@@ -49,10 +51,15 @@ impl StatsCache {
 
     /// The scores of `new BoardStatistics(board)`.
     pub fn score(&mut self, board: &BasicBoard, settings: &RouterSettings) -> Score {
+        let unclamped = self.unclamped_optimizer_score;
         let s = self.statistics(board);
         Score {
             router_score: s.get_router_score(Some(settings)),
-            optimizer_score: s.get_optimizer_score(Some(settings)),
+            optimizer_score: if unclamped {
+                s.get_optimizer_score_unclamped(Some(settings))
+            } else {
+                s.get_optimizer_score(Some(settings))
+            },
             incomplete_count: s.connections.incomplete_count.unwrap_or(0),
             clearance_violation_count: s.clearance_violations.total_count.unwrap_or(0),
         }

@@ -610,7 +610,23 @@ impl BoardStatistics {
         }
     }
 
+    /// fastroute: the V2 optimizer score without the clamp at 0, so improvements stay visible on
+    /// boards whose excess length/vias/bends push the score below 0 (e.g. DAC2020 bm01).
+    /// Other scoring versions return the regular score.
+    pub fn get_optimizer_score_unclamped(&self, settings: Option<&RouterSettings>) -> f32 {
+        match settings {
+            Some(s) if s.optimizer_scoring.version == Some(OptimizerScoringVersion::V2LowerBound) => {
+                self.v2_optimizer_score_raw(&s.optimizer_scoring) as f32
+            }
+            _ => self.get_optimizer_score(settings),
+        }
+    }
+
     fn v2_optimizer_score(&self, settings: &OptimizerScoreSettings) -> f32 {
+        java_max(0.0, self.v2_optimizer_score_raw(settings)) as f32
+    }
+
+    fn v2_optimizer_score_raw(&self, settings: &OptimizerScoreSettings) -> f64 {
         let difficulty = self.difficulty.difficulty_d.map_or(1.0, |d| java_max(1.0, d as f64));
         let min_trace_length = self.bounds.min_trace_length_mm.map_or(0.0, |v| java_max(0.0, v as f64));
         let min_via_count = self.bounds.min_via_count.map_or(0.0, |v| 0.max(v) as f64);
@@ -627,7 +643,7 @@ impl BoardStatistics {
             / java_max(difficulty, difficulty_floor);
         let bend_penalty = value_or_default(settings.excess_bend_weight, 500.0) as f64 * java_max(0.0, actual_bend_count - min_bend_count)
             / java_max(difficulty, difficulty_floor);
-        java_max(0.0, 1000.0 - length_penalty - via_penalty - bend_penalty) as f32
+        1000.0 - length_penalty - via_penalty - bend_penalty
     }
 }
 

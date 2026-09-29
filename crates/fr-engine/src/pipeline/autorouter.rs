@@ -46,6 +46,9 @@ pub struct BatchAutorouter {
     pub trace_pull_tight_accuracy: i32,
     pub total_items_routed: i32,
     pub is_optimizer_autorouter: bool,
+    /// fastroute: when set, a pass only routes items of these nets (the optimizer re-routes
+    /// the nets of the ripped item instead of every unrouted connection on the board).
+    pub net_filter: Option<BTreeSet<NetNo>>,
     pub fanout_timed_out: bool,
     /// Java `initialUnroutedCount`.
     pub initial_unrouted_count: i32,
@@ -105,6 +108,7 @@ impl BatchAutorouter {
             trace_pull_tight_accuracy: pull_tight_accuracy,
             total_items_routed: 0,
             is_optimizer_autorouter: false,
+            net_filter: None,
             fanout_timed_out: false,
             initial_unrouted_count: 0,
             previous_incomplete_nets: BTreeSet::new(),
@@ -256,6 +260,9 @@ impl BatchAutorouter {
 
     fn autoroute_pass_impl(&mut self, board: &mut RoutingBoard, settings: &RouterSettings, pass_no: i32, stop: &StopToken) -> (bool, PassCounters) {
         let mut items = Self::get_autoroute_items(board);
+        if let Some(filter) = &self.net_filter {
+            items.retain(|&k| board.item(k).net_numbers().iter().any(|n| filter.contains(n)));
+        }
         if items.is_empty() {
             return (false, PassCounters::default());
         }
