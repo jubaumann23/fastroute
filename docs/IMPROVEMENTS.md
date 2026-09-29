@@ -65,7 +65,7 @@ all other boards unchanged (no board got worse). Optimizer scores:
 | DAC2020_bm11 | 768 | 859 |
 | interf_u | 585 | 619 |
 | sonde xilinx | 877 | 928 |
-| bm04 / bm05 / CM5 / StickHub (partly routed) | optimizer skipped | 943 / 750 / 898 / 814 |
+| bm04 / bm05 / CM5 / StickHub (partly routed before) | optimizer skipped | 955 / 569 / 905 / 822 (bm05 now has 2 instead of 11 unrouted, so the optimizer works on a different board) |
 | bm01 (score below 0) | no improvement possible (91 s) | −182 → 107 in 4 passes (69 s) |
 | lora_node | 328 (+0.45 %) | 435 (+33 %) |
 
