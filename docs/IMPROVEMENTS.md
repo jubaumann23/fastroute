@@ -61,7 +61,7 @@ unchanged except bm05 (11 → 10 unrouted); optimizer scores:
 | interf_u | 585 | 619 |
 | sonde xilinx | 877 | 928 |
 | bm04 / bm05 / CM5 / StickHub (partly routed) | optimizer skipped | 943 / 750 / 898 / 814 |
-| bm01 (score below 0) | no improvement possible | −182 → 14 after one pass |
+| bm01 (score below 0) | no improvement possible (91 s) | −182 → 107 in 4 passes (69 s) |
 | lora_node | 328 (+0.45 %) | 435 (+33 %) |
 
 ## Open ideas
