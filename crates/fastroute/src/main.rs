@@ -260,6 +260,12 @@ fn run() -> Result<(), String> {
     // HeadlessBoardManager.loadFromSpecctraDsn + RoutingJobScheduler preparation.
     let t = Instant::now();
     let mut board = fr_io::post_load::load_from_specctra_dsn(&data, &mut settings).map_err(|e| format!("{path}: {e:?}"))?;
+    if !args.parity && !args.no_enhancements {
+        let n = fr_io::network::extend_class_pair_clearances(&mut board, &dsn);
+        if n > 0 {
+            log::info!(target: "fastroute", "class-pair clearances applied to {n} pin/SMD clearance class pairs as well");
+        }
+    }
     fr_io::post_load::prepare_for_routing(&mut board, &mut settings, None);
     pipeline::deferred_post_load_processing(&mut board);
     log::info!(

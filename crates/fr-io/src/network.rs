@@ -709,3 +709,55 @@ mod tests {
         assert!(create_ordered_subnets(&[p("U1")]).is_empty());
     }
 }
+
+/// fastroute: applies the `class_class` clearances of a design also to the item clearance
+/// classes of the two net classes. Java only sets the classes named after the net classes, but
+/// pins and SMD pads of a class can use other clearance classes (KiCad's `kicad_default`: its
+/// SMD pads use `smd`), so a class-pair clearance did not keep traces away from those pads.
+/// Values only grow. Returns the number of matrix pairs changed.
+pub fn extend_class_pair_clearances(board: &mut fr_engine::board::RoutingBoard, design: &fr_dsn::Dsn) -> usize {
+    let ct = board.communication.coordinate_transform.clone();
+    let rules = board.rules_mut();
+    let resolve = |rules: &mut BoardRules, name: &str| -> Option<NetClassId> {
+        if is_kicad_default_net_class_name(name) {
+            Some(rules.get_default_net_class())
+        } else {
+            rules.net_classes.get_by_name(name)
+        }
+    };
+    let item_classes = |rules: &BoardRules, c: NetClassId| -> BTreeSet<i32> {
+        let d = &rules.net_classes[c].default_item_clearance_classes;
+        let mut s: BTreeSet<i32> =
+            [ItemClass::Trace, ItemClass::Via, ItemClass::Pin, ItemClass::Smd].iter().map(|&k| d.get(k)).filter(|&n| n > 0).collect();
+        let own = rules.clearance_matrix.get_no(rules.net_classes[c].get_name());
+        if own > 0 {
+            s.insert(own);
+        }
+        s
+    };
+    let mut changed = 0;
+    for cc in &design.network.class_classes {
+        if cc.classes.len() != 2 {
+            continue;
+        }
+        let (Some(a), Some(b)) = (resolve(rules, &cc.classes[0]), resolve(rules, &cc.classes[1])) else { continue };
+        let (sa, sb) = (item_classes(rules, a), item_classes(rules, b));
+        for r in &cc.rules {
+            let Rule::Clearance { value, class_pairs } = r else { continue };
+            if !class_pairs.is_empty() {
+                continue;
+            }
+            let clearance = round_i32(ct.dsn_to_board(*value));
+            for &i in &sa {
+                for &j in &sb {
+                    if rules.clearance_matrix.get_value(i, j, 0, false) < clearance {
+                        rules.clearance_matrix.set_value_all_layers(i, j, clearance);
+                        rules.clearance_matrix.set_value_all_layers(j, i, clearance);
+                        changed += 1;
+                    }
+                }
+            }
+        }
+    }
+    changed
+}
