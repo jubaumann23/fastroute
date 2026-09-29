@@ -275,6 +275,79 @@ def _outline_key(points):
     return frozenset((round(x), round(y)) for x, y in points)
 
 
+_DRU_RULE = re.compile(r"\(rule\s+\"((?:[^\"\\]|\\.)*)\"(.*?)(?=\(rule\s+\"|\Z)", re.S)
+_DRU_TERM = re.compile(r"([AB])\.NetClass\s*(==|!=)\s*'([^']*)'")
+
+
+def add_dru_class_clearances(board, dsn_path):
+    """Carries simple net-class clearance rules of the board's .kicad_dru into the DSN.
+
+    KiCad's DSN export has one clearance per net class; custom rules are lost.
+    Rules whose condition only compares net classes (A.NetClass == 'X' combined
+    with B.NetClass == / != 'Y' terms, joined by &&) and whose constraint is a
+    minimum clearance become Specctra class_class clearances. Returns the rules
+    that were carried over (name, pairs).
+    """
+    try:
+        dru = Path(board.GetFileName()).with_suffix(".kicad_dru")
+        rules_text = dru.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return []
+    text = Path(dsn_path).read_text(encoding="utf-8", errors="replace")
+    classes = re.findall(r"\(class\s+\"?([^\s\"()]+)", text)
+    dsn_name = {c: c for c in classes}
+    dsn_name["Default"] = "kicad_default" if "kicad_default" in classes else "Default"
+    unit_um = 1.0
+    m = re.search(r"\(resolution\s+(\w+)", text)
+    if m and m.group(1) == "mm":
+        unit_um = 1000.0
+    pairs = {}  # (class a, class b) -> clearance in DSN units
+    carried = []
+    for name, body in _DRU_RULE.findall(rules_text):
+        cond = re.search(r"\(condition\s+\"([^\"]*)\"", body)
+        cons = re.search(r"\(constraint\s+clearance\s+\(min\s+([\d.]+)\s*(mm|mil|um)?\)", body)
+        if not cond or not cons:
+            continue
+        terms = [t.strip() for t in cond.group(1).split("&&")]
+        parsed = [_DRU_TERM.fullmatch(t) for t in terms]
+        if not all(parsed):
+            continue
+        a_eq = [p.group(3) for p in parsed if p.group(1) == "A" and p.group(2) == "=="]
+        if len(a_eq) != 1 or any(p.group(1) == "A" and p.group(2) == "!=" for p in parsed):
+            continue
+        b_eq = [p.group(3) for p in parsed if p.group(1) == "B" and p.group(2) == "=="]
+        b_ne = {p.group(3) for p in parsed if p.group(1) == "B" and p.group(2) == "!="}
+        value, unit = float(cons.group(1)), cons.group(2) or "mm"
+        um = value * {"mm": 1000.0, "mil": 25.4, "um": 1.0}[unit]
+        a = dsn_name.get(a_eq[0])
+        others = [dsn_name.get(b) for b in b_eq] if b_eq else [c for c in classes if c not in {dsn_name.get(x) for x in b_ne}]
+        if a is None:
+            continue
+        done = []
+        for b in others:
+            if b is None:
+                continue
+            key = tuple(sorted((a, b)))
+            clearance = um / unit_um
+            if clearance > pairs.get(key, 0.0):
+                pairs[key] = clearance
+            done.append(b)
+        if done:
+            carried.append((name, done))
+    if not pairs:
+        return carried
+    start = text.find("(network")
+    if start < 0:
+        return []
+    end = _scope_end(text, start)
+    block = "".join(
+        f"    (class_class (classes {a} {b}) (rule (clearance {c:g})))\n" for (a, b), c in sorted(pairs.items())
+    )
+    text = text[: end - 1] + block + "  " + text[end - 1 :]
+    Path(dsn_path).write_text(text, encoding="utf-8")
+    return carried
+
+
 def fix_rule_area_keepouts(board, dsn_path):
     """Corrects the keepouts KiCad exports for rule areas.
 
@@ -453,6 +526,7 @@ class Router:
         self.work_dir = Path(work_dir) if work_dir else None
         self._proc = None
         self._cancel = threading.Event()
+        self.dru_rules = []
 
     def cancel(self):
         self._cancel.set()
@@ -489,6 +563,7 @@ class Router:
             result.message = "KiCad could not export the board as Specctra DSN"
             return result
         fix_rule_area_keepouts(self.board, self._dsn)
+        self.dru_rules = add_dru_class_clearances(self.board, self._dsn)
         if self.clear_tracks:
             strip_unlocked_wiring(self._dsn)
         if self.route_zone_nets:

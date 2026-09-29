@@ -197,7 +197,7 @@ impl CliSettings {
 /// `CliSettings.mapFlagToProperty`.
 fn map_flag_to_property(flag: &str) -> Option<&'static str> {
     Some(match flag {
-        "mp" => "router.max_passes",
+        "mp" => "router.autorouter.max_passes",
         "mt" => "router.max_threads",
         "inc" => "router.autorouter.ignore_net_classes",
         "oit" => "router.optimizer.improvement_threshold",

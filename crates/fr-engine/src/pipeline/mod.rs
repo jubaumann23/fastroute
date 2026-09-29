@@ -33,6 +33,7 @@ pub mod autorouter;
 pub mod fanout;
 pub mod history;
 pub mod optimizer;
+mod parallel_pass;
 pub mod stats;
 
 use fr_settings::{RouterSettings, ALGORITHM_CURRENT};
@@ -162,10 +163,13 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
         let routing_start = std::time::Instant::now();
         autorouter.run_batch_loop(board, settings, ctx);
         if let Some(start) = unrouted_board {
+            // the variants route with sequential passes: after a parallel first run they take
+            // several times as long
             let took = routing_start.elapsed();
-            if took > MULTI_START_MAX_FIRST_RUN {
+            let variant_estimate = if autorouter.pass_threads > 1 { took * 3 } else { took };
+            if variant_estimate > MULTI_START_MAX_FIRST_RUN {
                 log::info!(
-                    "Multi-start skipped: the first routing run took {:.0} s (variants run only after runs shorter than {} s).",
+                    "Multi-start skipped: the first routing run took {:.0} s (variants run only if they are expected to take less than {} s).",
                     took.as_secs_f64(),
                     MULTI_START_MAX_FIRST_RUN.as_secs()
                 );
@@ -225,6 +229,7 @@ fn multi_start(board: &mut RoutingBoard, start: &RoutingBoard, settings: &Router
             };
             let mut router = BatchAutorouter::for_job(&b, settings);
             router.order_seed = Some(0x5eed_0000 + v as i64);
+            router.pass_threads = 1; // the variants already run in parallel
             router.run_batch_loop(&mut b, settings, &variant_ctx);
             b.finish_autoroute();
             let s = StatsCache::new().score(&b, settings);

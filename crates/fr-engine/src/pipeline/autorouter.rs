@@ -45,6 +45,10 @@ const SLOW_PASS_SECS: f64 = 20.0;
 /// fastroute: the slow-pass rule stops when the last this-many passes reduced the unrouted
 /// items by less than 2 % (at least one) compared with all passes before.
 const SLOW_STAGNATION_WINDOW: usize = 3;
+/// fastroute: how often a conflicting parallel result is retried in a later batch.
+const PARALLEL_RETRIES: u8 = 2;
+/// fastroute: connections in flight per thread in the parallel pass.
+const PARALLEL_WINDOW_PER_THREAD: usize = 2;
 
 /// Java `BatchAutorouter` (with the state of its `AutoroutePassRunner`).
 pub struct BatchAutorouter {
@@ -60,6 +64,15 @@ pub struct BatchAutorouter {
     pub net_filter: Option<BTreeSet<NetNo>>,
     /// fastroute improvements (see `PipelineContext::enhancements`).
     pub enhancements: bool,
+    /// fastroute: set after a bad pass was undone; failing connections then no longer rip
+    /// their whole net (on large nets that is what makes a pass lose hundreds of connections,
+    /// and the failure counts survive the undo, so the next pass would do it again).
+    pub suppress_net_rip: bool,
+    /// fastroute: threads of the parallel autorouting pass (see `parallel_pass`); 1 = the
+    /// sequential Freerouting pass, 0 = decided by `run_batch_loop` (`autorouter.max_threads`
+    /// with enhancements, else 1).
+    pub pass_threads: usize,
+    pass_pool: Option<std::sync::Arc<rayon::ThreadPool>>,
     /// fastroute multi-start: shuffles the order of the first pass's signal items.
     pub order_seed: Option<i64>,
     pub fanout_timed_out: bool,
@@ -123,6 +136,9 @@ impl BatchAutorouter {
             is_optimizer_autorouter: false,
             net_filter: None,
             enhancements: false,
+            suppress_net_rip: false,
+            pass_threads: 0,
+            pass_pool: None,
             order_seed: None,
             fanout_timed_out: false,
             initial_unrouted_count: 0,
@@ -275,6 +291,9 @@ impl BatchAutorouter {
     }
 
     fn autoroute_pass_impl(&mut self, board: &mut RoutingBoard, settings: &RouterSettings, pass_no: i32, stop: &StopToken) -> (bool, PassCounters) {
+        if self.pass_threads > 1 && !self.is_optimizer_autorouter && self.net_filter.is_none() && !settings.is_strict_drc() {
+            return self.autoroute_pass_parallel(board, settings, pass_no, stop);
+        }
         let mut items = Self::get_autoroute_items(board);
         if let Some(filter) = &self.net_filter {
             items.retain(|&k| board.item(k).net_numbers().iter().any(|n| filter.contains(n)));
@@ -369,7 +388,7 @@ impl BatchAutorouter {
                         // Java rips the whole net after every failure from the second one on; a
                         // connection that can never be routed then tears down its (possibly
                         // large) net every pass. fastroute rips it once.
-                        let rip_net = if self.enhancements { failure_count == 2 } else { failure_count >= 2 };
+                        let rip_net = if self.enhancements { failure_count == 2 && !self.suppress_net_rip } else { failure_count >= 2 };
                         if rip_net {
                             let net_no = board.item(current).net_number(i);
                             let to_rip: Vec<ItemKey> = board
@@ -408,6 +427,338 @@ impl BatchAutorouter {
         (c.routed > 0 || c.not_routed > 0, c)
     }
 
+    /// fastroute: the autorouting pass on several threads (see `super::parallel_pass`).
+    ///
+    /// A rolling window: up to `window` connections are in flight, each routed on a clone of
+    /// the board as it was when the connection was dispatched; results are committed in
+    /// dispatch order, and every commit dispatches the next connection. A slow connection
+    /// therefore only holds back the commits after it, not the other threads. Dispatch
+    /// decisions only depend on the commits, so the result does not depend on thread timing.
+    fn autoroute_pass_parallel(&mut self, board: &mut RoutingBoard, settings: &RouterSettings, pass_no: i32, stop: &StopToken) -> (bool, PassCounters) {
+        use super::parallel_pass as pp;
+        use std::collections::VecDeque;
+        use std::sync::mpsc;
+        let mut items = Self::get_autoroute_items(board);
+        if items.is_empty() {
+            return (false, PassCounters::default());
+        }
+        if pass_no > 1 {
+            self.reorder_items(board, &mut items, pass_no);
+        } else if let Some(seed) = self.order_seed {
+            let (plane, mut signal): (Vec<ItemKey>, Vec<ItemKey>) = items.iter().partition(|&&k| Self::is_plane_item(board, k));
+            let mut rnd = fr_jcompat::random::JavaRandom::new(seed);
+            fr_jcompat::random::shuffle(&mut signal, &mut rnd);
+            items = plane;
+            items.extend(signal);
+        }
+        let params = self.params();
+        let threads = self.pass_threads;
+        let window = threads * PARALLEL_WINDOW_PER_THREAD;
+        // one extra thread: the committing loop runs inside the pool as well
+        let pool = self
+            .pass_pool
+            .get_or_insert_with(|| {
+                std::sync::Arc::new(rayon::ThreadPoolBuilder::new().num_threads(threads + 1).build().expect("autorouter thread pool"))
+            })
+            .clone();
+        let margin = (pp::FOOTPRINT_MARGIN_MM * pp::units_per_mm(board)) as i64;
+        let mut queue: VecDeque<ItemId> = items.iter().map(|&k| board.item(k).id()).collect();
+        let total = queue.len();
+        let mut c = PassCounters::default();
+        let max_items = settings.autorouter.max_items;
+        let pass_start = Instant::now();
+        let mut next_progress = PROGRESS_LOG_INTERVAL_SECS;
+        let (mut copied, mut retried, mut rerouted) = (0usize, 0usize, 0usize);
+        let (mut reject_changed, mut reject_clearance) = (0usize, 0usize);
+        let mut retries: HashMap<i32, u8> = HashMap::new();
+        let mut processed = 0usize;
+        let params_ref = &params;
+
+        /// A finished connection: (ticket, result, ripped count, worker changes and board).
+        type Done = (usize, AutorouteAttemptResult, i32, Option<(pp::Changes, RoutingBoard, RoutingBoard)>);
+
+        pool.install(|| {
+            rayon::scope(|scope| {
+                let (tx, rx) = mpsc::channel::<Done>();
+                // in flight: ticket -> (item, net)
+                let mut in_flight: std::collections::BTreeMap<usize, (ItemId, NetNo)> = std::collections::BTreeMap::new();
+                let mut arrived: HashMap<usize, Done> = HashMap::new();
+                let mut flight_rects: HashMap<usize, pp::Rect> = HashMap::new();
+                let mut footprints: HashMap<i32, Option<pp::Rect>> = HashMap::new();
+                let mut next_ticket = 0usize;
+                let mut next_commit = 0usize;
+                'pass: loop {
+                    if stop.is_stop_autorouter_requested() {
+                        break;
+                    }
+                    // Dispatch until the window is full (never two connections of one net at once).
+                    while in_flight.len() < window && !queue.is_empty() {
+                        let busy: BTreeSet<NetNo> = in_flight.values().map(|&(_, n)| n).collect();
+                        let eligible = |id: ItemId| match board.get_item(id) {
+                            None => true,
+                            Some(k) => {
+                                let it = board.item(k);
+                                it.net_count() != 1 || !busy.contains(&it.net_number(0))
+                            }
+                        };
+                        // prefer a connection away from the ones in flight (fewer conflicts)
+                        let mut pos = None;
+                        for (i, &id) in queue.iter().take(window * 8).enumerate() {
+                            if !eligible(id) {
+                                continue;
+                            }
+                            let fp = match board.get_item(id) {
+                                Some(k) if board.item(k).net_count() == 1 => *footprints
+                                    .entry(id.0)
+                                    .or_insert_with(|| pp::connection_footprint(board, k, board.item(k).net_number(0), margin)),
+                                _ => None,
+                            };
+                            if fp.map_or(true, |r| !flight_rects.values().any(|q| pp::overlaps(q, &r))) {
+                                pos = Some(i);
+                                break;
+                            }
+                        }
+                        let pos = pos.or_else(|| queue.iter().take(window * 8).position(|&id| eligible(id)));
+                        let Some(pos) = pos else { break };
+                        let id = queue.remove(pos).unwrap();
+                        let Some(key) = board.get_item(id) else {
+                            processed += 1;
+                            continue;
+                        };
+                        if board.item(key).net_count() != 1 {
+                            // rare (items of several nets): route it alone, on the board itself
+                            if !in_flight.is_empty() {
+                                queue.push_front(id);
+                                break;
+                            }
+                            let nets_of: Vec<NetNo> = board.item(key).net_numbers().to_vec();
+                            for net in nets_of {
+                                self.route_one(board, settings, params_ref, id, net, pass_no, stop, &mut c);
+                            }
+                            processed += 1;
+                            continue;
+                        }
+                        let net = board.item(key).net_number(0);
+                        let ticket = next_ticket;
+                        next_ticket += 1;
+                        in_flight.insert(ticket, (id, net));
+                        if let Some(Some(r)) = footprints.get(&id.0) {
+                            flight_rects.insert(ticket, *r);
+                        }
+                        let base = board.clone();
+                        let tx = tx.clone();
+                        scope.spawn(move |_| {
+                            let mut w = base.clone();
+                            let done = match w.get_item(id) {
+                                None => (ticket, AutorouteAttemptResult::new(AutorouteAttemptState::Failed), 0, None),
+                                Some(key) => {
+                                    w.start_marking_changed_area();
+                                    let mut ripped = ItemSet::new();
+                                    let mut costs: HashMap<ItemKey, i32> = HashMap::new();
+                                    let outcome =
+                                        route_connection(&mut w, settings, params_ref, key, net, &mut ripped, Some(&mut costs), pass_no, Some(stop));
+                                    let mut result = outcome.result;
+                                    let mut keep = result.state == AutorouteAttemptState::Routed;
+                                    if keep && pass_no >= 3 {
+                                        if let Some(max_id) = outcome.max_item_id_before_route {
+                                            if let Some(rejection) = enforce_strict_drc(&mut w, net, max_id) {
+                                                result = rejection;
+                                                keep = false;
+                                            }
+                                        }
+                                    }
+                                    let changes = keep.then(|| {
+                                        let base_index = pp::index(&base);
+                                        let ch = pp::changes(&base, &base_index, &w, margin, net);
+                                        w.clear_transient_autoroute_state();
+                                        (ch, w, base)
+                                    });
+                                    (ticket, result, ripped.len() as i32, changes)
+                                }
+                            };
+                            let _ = tx.send(done);
+                        });
+                    }
+                    if in_flight.is_empty() {
+                        if queue.is_empty() {
+                            break;
+                        }
+                        continue;
+                    }
+                    // Wait for the oldest ticket, then commit it.
+                    while !arrived.contains_key(&next_commit) {
+                        match rx.recv() {
+                            Ok(d) => {
+                                arrived.insert(d.0, d);
+                            }
+                            Err(_) => break 'pass,
+                        }
+                    }
+                    let (_, result, ripped_count, work) = arrived.remove(&next_commit).unwrap();
+                    let (id, net) = in_flight.remove(&next_commit).unwrap();
+                    flight_rects.remove(&next_commit);
+                    next_commit += 1;
+                    if let Some(m) = max_items {
+                        if m > 0 && self.total_items_routed >= m {
+                            log::info!("Max items limit reached ({m}). Stopping auto-router.");
+                            stop.request_stop();
+                            break 'pass;
+                        }
+                    }
+                    let Some(key) = board.get_item(id) else {
+                        processed += 1;
+                        continue;
+                    };
+                    match result.state {
+                        AutorouteAttemptState::Routed => {
+                            let (ch, w, base) = work.expect("routed worker board");
+                            let applied = if !ch.copyable {
+                                None
+                            } else {
+                                match pp::apply(&ch, &base, &w, board) {
+                                    Ok(b) => Some(b),
+                                    Err(pp::Reject::Changed) => {
+                                        reject_changed += 1;
+                                        None
+                                    }
+                                    Err(pp::Reject::Clearance) => {
+                                        reject_clearance += 1;
+                                        None
+                                    }
+                                }
+                            };
+                            if let Some(next) = applied {
+                                *board = next;
+                                self.total_items_routed += 1;
+                                c.routed += 1;
+                                c.ripped += ripped_count;
+                                copied += 1;
+                                processed += 1;
+                            } else if *retries.entry(id.0).or_insert(0) < PARALLEL_RETRIES {
+                                // routed on a board that changed meanwhile: dispatch it again
+                                *retries.get_mut(&id.0).unwrap() += 1;
+                                retried += 1;
+                                queue.push_front(id);
+                            } else {
+                                rerouted += 1;
+                                self.total_items_routed += 1;
+                                self.route_one(board, settings, params_ref, id, net, pass_no, stop, &mut c);
+                                processed += 1;
+                            }
+                        }
+                        AutorouteAttemptState::AlreadyConnected | AutorouteAttemptState::NoUnconnectedNets | AutorouteAttemptState::ConnectedToPlane => {
+                            self.total_items_routed += 1;
+                            c.skipped += 1;
+                            processed += 1;
+                        }
+                        _ => {
+                            self.total_items_routed += 1;
+                            c.ripped += ripped_count;
+                            self.handle_failure(board, key, 0, pass_no, &result, &mut c);
+                            processed += 1;
+                        }
+                    }
+                    if pass_start.elapsed().as_secs_f64() >= next_progress {
+                        next_progress += PROGRESS_LOG_INTERVAL_SECS;
+                        log::info!(
+                            "Auto-routing pass #{pass_no}: {processed} of {total} items after {:.0} s (routed {}, failed {}, ripped {}; parallel: {copied} copied, {retried} retried, {rerouted} re-routed).",
+                            pass_start.elapsed().as_secs_f64(),
+                            c.routed,
+                            c.not_routed,
+                            c.ripped,
+                        );
+                    }
+                }
+                // (a stop leaves tasks running: they end quickly, their results are dropped)
+                drop(tx);
+            });
+        });
+        log::debug!(
+            target: "fr_engine::pipeline::diag",
+            "parallel pass #{pass_no}: {copied} results copied, {retried} retried, {rerouted} re-routed sequentially (changed items {reject_changed}, clearance {reject_clearance})"
+        );
+        if self.remove_unconnected_vias {
+            self.remove_tails(board, StopConnectionOption::None, Some(stop));
+        } else {
+            self.remove_tails(board, StopConnectionOption::FanoutVia, Some(stop));
+        }
+        let mut current_incomplete_nets = BTreeSet::new();
+        let incomplete = incomplete_count(board, Some(&mut current_incomplete_nets));
+        if self.previous_incomplete_count >= 0 && incomplete >= self.previous_incomplete_count {
+            self.stagnation_count += 1;
+        } else {
+            self.stagnation_count = 0;
+        }
+        self.previous_incomplete_count = incomplete;
+        self.previous_incomplete_nets = current_incomplete_nets;
+        (c.routed > 0 || c.not_routed > 0, c)
+    }
+
+    /// One connection of the parallel pass, routed on the board itself (as in the sequential
+    /// pass, without strict-DRC snapshots, which the parallel pass does not use).
+    #[allow(clippy::too_many_arguments)]
+    fn route_one(
+        &mut self,
+        board: &mut RoutingBoard,
+        settings: &RouterSettings,
+        params: &ConnectionRouterParams,
+        id: ItemId,
+        net: NetNo,
+        pass_no: i32,
+        stop: &StopToken,
+        c: &mut PassCounters,
+    ) {
+        let Some(key) = board.get_item(id) else { return };
+        board.start_marking_changed_area();
+        let mut ripped = ItemSet::new();
+        let mut costs: HashMap<ItemKey, i32> = HashMap::new();
+        let outcome = route_connection(board, settings, params, key, net, &mut ripped, Some(&mut costs), pass_no, Some(stop));
+        let mut result = outcome.result;
+        if result.state == AutorouteAttemptState::Routed && pass_no >= 3 {
+            if let Some(max_id) = outcome.max_item_id_before_route {
+                if let Some(rejection) = enforce_strict_drc(board, net, max_id) {
+                    result = rejection;
+                }
+            }
+        }
+        c.ripped += ripped.len() as i32;
+        match result.state {
+            AutorouteAttemptState::Routed => c.routed += 1,
+            AutorouteAttemptState::AlreadyConnected | AutorouteAttemptState::NoUnconnectedNets | AutorouteAttemptState::ConnectedToPlane => {
+                c.skipped += 1
+            }
+            _ => {
+                if let Some(key) = board.get_item(id) {
+                    let net_index = board.item(key).net_numbers().iter().position(|&n| n == net).unwrap_or(0);
+                    self.handle_failure(board, key, net_index, pass_no, &result, c);
+                }
+            }
+        }
+    }
+
+    /// Failure bookkeeping of a connection (as in the sequential pass): logs it and rips the
+    /// item's net once after its second failure.
+    fn handle_failure(&mut self, board: &mut RoutingBoard, current: ItemKey, net_index: usize, pass_no: i32, result: &AutorouteAttemptResult, c: &mut PassCounters) {
+        record_failure(board, current, pass_no, result);
+        let failure_count = board.failure_log.get_failure_count(&board.basic, current);
+        let rip_net = failure_count == 2 && !self.suppress_net_rip;
+        if rip_net {
+            let net_no = board.item(current).net_number(net_index as i32);
+            let to_rip: Vec<ItemKey> = board
+                .get_connectable_items(net_no)
+                .into_iter()
+                .filter(|&k| {
+                    let it = board.item(k);
+                    (it.is_trace() || it.is_via()) && !it.is_user_fixed() && it.net_count() == 1
+                })
+                .collect();
+            if !to_rip.is_empty() {
+                board.remove_items(to_rip);
+            }
+        }
+        c.not_routed += 1;
+    }
+
     /// Java `autoroutePassesForOptimizingItem(...)` body after the construction: routes up to
     /// `max_pass_count` passes, then removes the tails. Returns the number of passes.
     pub fn autoroute_passes_for_optimizing_item(&mut self, board: &mut RoutingBoard, settings: &RouterSettings, max_pass_count: i32, stop: &StopToken) -> i32 {
@@ -431,6 +782,13 @@ impl BatchAutorouter {
     pub fn run_batch_loop(&mut self, board: &mut RoutingBoard, settings: &RouterSettings, ctx: &PipelineContext) -> bool {
         let stop = &ctx.stop;
         self.enhancements = ctx.enhancements;
+        if self.pass_threads == 0 {
+            self.pass_threads = if ctx.enhancements && !self.is_optimizer_autorouter {
+                settings.autorouter.max_threads.unwrap_or(1).max(1) as usize
+            } else {
+                1
+            };
+        }
         let any_routable = (0..settings.get_layer_count())
             .any(|i| settings.get_layer_active(i) && board.layer_structure.layers.get(i).map(|l| l.is_signal).unwrap_or(false));
         if !any_routable {
@@ -564,8 +922,9 @@ impl BatchAutorouter {
                         self.reset_anti_oscillation_state();
                         after = stats.score(board, settings);
                         rollbacks += 1;
+                        self.suppress_net_rip = true;
                         log::info!(
-                            "Auto-routing pass #{current_pass} left {lost} items unrouted (best so far {fewest_incomplete}): continuing from the best board ({} unrouted).",
+                            "Auto-routing pass #{current_pass} left {lost} items unrouted (best so far {fewest_incomplete}): continuing from the best board ({} unrouted); failing connections no longer rip their whole net.",
                             after.incomplete_count
                         );
                     }

@@ -159,8 +159,8 @@ options:
 common --router.* settings (numbers, true/false, comma-separated lists):
   --router.autorouter.max_passes=N          passes (0 = unlimited)
   --router.autorouter.ignore_net_classes=A,B  net classes left unrouted
-  --router.autorouter.max_threads=N         threads for multi-start variants
-                                            (each autorouting pass is sequential)
+  --router.autorouter.max_threads=N         threads of the parallel autorouting pass
+                                            (1 = sequential pass as in Freerouting)
   --router.optimizer.enabled=true|false     run the optimizer
   --router.optimizer.max_threads=N          optimizer threads
   --router.optimizer.optimization_improvement_threshold=P  stop below P % per pass
@@ -329,7 +329,7 @@ fn run() -> Result<(), String> {
     }
     log::info!(
         target: "fastroute",
-        "threads: each autorouting pass is sequential; threads are used by multi-start variants and the optimizer"
+        "threads: autorouting passes run on router.autorouter.max_threads threads (1 = sequential); the optimizer uses router.optimizer.max_threads"
     );
 
     log::info!(
