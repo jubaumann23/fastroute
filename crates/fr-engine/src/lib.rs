@@ -16,6 +16,7 @@ pub mod drc;
 pub mod ids;
 pub mod library;
 pub mod pipeline;
+pub mod tuning;
 pub mod rules;
 pub mod scoring;
 pub mod structure;

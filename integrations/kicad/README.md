@@ -46,6 +46,16 @@ fastroute rewrites its session file with the best board so far after every
 improvement; if the process ends abnormally (killed, crashed) the router still
 imports that file and sets `result.partial`.
 
+Length matching: if the board's `.kicad_dru` has `skew` or `length (min …)` rules for net
+classes or net names, the plugin passes them to fastroute, which adds meanders after routing
+(see docs/IMPROVEMENTS.md). Example:
+
+```
+(rule "SDRAM data"
+  (condition "A.NetName == '/SD_D*' || A.NetName == '/SD_NBL*'")
+  (constraint skew (max 0.5mm)))
+```
+
 Zones: by default a zone on a *power*-type layer covering at least half of the
 board stays a plane (pads connect with vias, no tracks on that layer); other
 zones are removed for routing and their nets are routed with tracks, then the

@@ -42,6 +42,7 @@ struct Args {
     time_limit_mode: Option<String>,
     time_limit_factor: i64,
     max_time: Option<f64>,
+    tune: Option<String>,
     verbose: bool,
     rest: Vec<String>,
 }
@@ -58,6 +59,7 @@ fn parse_args() -> Result<Args, String> {
         time_limit_mode: None,
         time_limit_factor: fr_engine::datastructures::time_limit::DEFAULT_COUNT_FACTOR,
         max_time: None,
+        tune: None,
         verbose: false,
         rest: Vec::new(),
     };
@@ -116,6 +118,11 @@ fn parse_args() -> Result<Args, String> {
                     i += 1;
                     continue;
                 }
+                if let Some(m) = a.strip_prefix("--tune=") {
+                    args.tune = Some(m.to_string());
+                    i += 1;
+                    continue;
+                }
                 if let Some(m) = a.strip_prefix("--max-time=") {
                     let secs: f64 = m.parse().map_err(|_| format!("bad --max-time '{m}' (seconds)"))?;
                     args.max_time = Some(secs.max(1.0));
@@ -143,6 +150,7 @@ options:
   -do FILE                 output Specctra session (.ses); also rewritten with the best
                            board so far whenever routing/optimizing improves
   -mp N                    maximum autorouter passes (router.autorouter.max_passes)
+  --tune=FILE              length matching after routing (groups of nets, see below)
   --max-time=SECONDS       stop after this wall-clock time and write the best result
                            (Ctrl+C / SIGTERM / Ctrl+Break do the same; a second one exits)
   --multi-start=N          rerun the autorouter with N-1 shuffled orders in parallel if
@@ -155,6 +163,12 @@ options:
   --time-limit-factor=N    count-mode budget factor (default 10)
   --no-time-limits         deterministic limits, no stage wall-clock limits
   -v                       debug output
+
+tune file: one group per `group` line, followed by net names (* = any text):
+  group sdram_data tolerance=0.5            # match to the longest net, -0.5 mm allowed
+    /SD_D*
+    /SD_NBL*
+  group sdram_clk tolerance=0.2 target=40   # fixed target length in mm
 
 common --router.* settings (numbers, true/false, comma-separated lists):
   --router.autorouter.max_passes=N          passes (0 = unlimited)
@@ -186,7 +200,7 @@ impl log::Log for Logger {
             // (the engine warns like the Java FRLogger, e.g. about degenerate polylines)
             log::Level::Warn => ours || self.verbose,
             log::Level::Info => ours || self.verbose,
-            _ => self.verbose && m.target().starts_with("fr_engine::pipeline"),
+            _ => self.verbose && (m.target().starts_with("fr_engine::pipeline") || m.target().starts_with("fastroute")),
         }
     }
     fn log(&self, r: &log::Record) {
@@ -351,6 +365,10 @@ fn run() -> Result<(), String> {
         }
     }
 
+    let tune_groups = match &args.tune {
+        Some(f) => parse_tune_file(f)?,
+        None => Vec::new(),
+    };
     let t = Instant::now();
     pipeline::run_pipeline(&mut board, &mut settings, &ctx);
     log::info!(target: "fastroute", "routing finished in {:.2} s", t.elapsed().as_secs_f64());
@@ -358,6 +376,35 @@ fn run() -> Result<(), String> {
         log::info!(target: "fastroute", "note: a board time limit fired ({mode:?})");
     }
 
+    if !tune_groups.is_empty() && !ctx.stop.is_stop_requested() {
+        let t = Instant::now();
+        let results = fr_engine::tuning::tune_lengths(&mut board, &tune_groups);
+        for g in &results {
+            let (min, max) = g.nets.iter().fold((f64::MAX, 0.0f64), |(lo, hi), n| (lo.min(n.after_mm), hi.max(n.after_mm)));
+            let min_before = g.nets.iter().map(|n| n.before_mm).fold(f64::MAX, f64::min);
+            log::info!(
+                target: "fastroute",
+                "length tuning '{}': {} nets, target {:.2} mm (-{:.2}), before {:.2}..{:.2} mm, after {:.2}..{:.2} mm, {} still short",
+                g.name,
+                g.nets.len(),
+                g.target_mm,
+                g.tolerance_mm,
+                min_before,
+                g.nets.iter().map(|n| n.before_mm).fold(0.0, f64::max),
+                min,
+                max,
+                g.short_nets()
+            );
+            for n in &g.nets {
+                let short = n.after_mm < g.target_mm - g.tolerance_mm - 1e-6;
+                log::debug!(target: "fastroute", "  {:20} {:8.2} -> {:8.2} mm{}", n.net, n.before_mm, n.after_mm, if short { "  (short)" } else { "" });
+                if short {
+                    log::warn!(target: "fastroute", "length tuning '{}': {} is {:.2} mm, {:.2} mm short (no room for meanders)", g.name, n.net, n.after_mm, g.target_mm - g.tolerance_mm - n.after_mm);
+                }
+            }
+        }
+        log::info!(target: "fastroute", "length tuning finished in {:.2} s", t.elapsed().as_secs_f64());
+    }
     report_violations(&board);
     if let Some(out) = args.design_out {
         // The Java CLI names the session after the input file stem.
@@ -433,4 +480,36 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Reads a `--tune` file (see the help text).
+fn parse_tune_file(path: &str) -> Result<Vec<fr_engine::tuning::TuneGroup>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    let mut groups: Vec<fr_engine::tuning::TuneGroup> = Vec::new();
+    for (no, raw) in text.lines().enumerate() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut words = line.split_whitespace();
+        if line.starts_with("group ") {
+            words.next();
+            let name = words.next().ok_or(format!("{path}:{}: group needs a name", no + 1))?.to_string();
+            let mut g = fr_engine::tuning::TuneGroup { name, nets: Vec::new(), tolerance_mm: 0.5, target_mm: None };
+            for w in words {
+                let (k, v) = w.split_once('=').ok_or(format!("{path}:{}: expected key=value, got '{w}'", no + 1))?;
+                let v: f64 = v.trim_end_matches("mm").parse().map_err(|_| format!("{path}:{}: bad number '{v}'", no + 1))?;
+                match k {
+                    "tolerance" => g.tolerance_mm = v,
+                    "target" => g.target_mm = Some(v),
+                    _ => return Err(format!("{path}:{}: unknown key '{k}'", no + 1)),
+                }
+            }
+            groups.push(g);
+        } else {
+            let g = groups.last_mut().ok_or(format!("{path}:{}: net before the first group line", no + 1))?;
+            g.nets.extend(words.map(str::to_string));
+        }
+    }
+    Ok(groups)
 }

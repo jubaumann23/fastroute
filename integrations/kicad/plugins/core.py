@@ -6,6 +6,7 @@ import the SES session back. Only the `pcbnew` Python module is needed, so
 this works both inside the PCB editor and headless (see route_cli.py).
 """
 
+import fnmatch
 import os
 import platform
 import re
@@ -365,6 +366,93 @@ def add_dru_class_clearances(board, dsn_path):
     return carried
 
 
+_DRU_NET_TERM = re.compile(r"A\.(NetClass|NetName)\s*==\s*'([^']*)'")
+
+
+def _net_class_name(net):
+    for getter in ("GetNetClassName", "GetNetClassSlow"):
+        try:
+            v = getattr(net, getter)()
+            return v if isinstance(v, str) else v.GetName()
+        except Exception:
+            continue
+    return ""
+
+
+def write_tune_file(board, path):
+    """Writes a fastroute --tune file from the length rules of the board's .kicad_dru.
+
+    `(constraint skew (max X))` makes the matching nets one group (matched to the longest
+    net, X allowed); `(constraint length (min A) ...)` brings every matching net to at least A.
+    Conditions: A.NetClass == 'X' and A.NetName == 'pattern' (* = any text), joined by &&
+    or ||. Returns the number of groups (0: no file written).
+    """
+    try:
+        dru = Path(board.GetFileName()).with_suffix(".kicad_dru")
+        rules_text = dru.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return 0
+    nets = {}
+    try:
+        for name, net in board.GetNetsByName().items():
+            name = str(name)
+            if name:
+                nets[name] = _net_class_name(net)
+    except Exception:
+        return 0
+
+    def matches(cond, name, cls):
+        for alt in cond.split("||"):
+            terms = [t.strip().strip("()") for t in alt.split("&&")]
+            ok = True
+            for t in terms:
+                m = _DRU_NET_TERM.fullmatch(t)
+                if not m:
+                    return None  # unsupported condition
+                key, val = m.groups()
+                if key == "NetClass":
+                    ok = ok and cls == val
+                else:
+                    ok = ok and fnmatch.fnmatchcase(name, val)
+            if ok:
+                return True
+        return False
+
+    def mm(value, unit):
+        return float(value) * {"mm": 1.0, "mil": 0.0254, "um": 0.001}[unit or "mm"]
+
+    groups = []
+    for rule_name, body in _DRU_RULE.findall(rules_text):
+        cond = re.search(r"\(condition\s+\"([^\"]*)\"", body)
+        skew = re.search(r"\(constraint\s+skew\s+\(max\s+([\d.]+)\s*(mm|mil|um)?\)", body)
+        length = re.search(r"\(constraint\s+length\s+\(min\s+([\d.]+)\s*(mm|mil|um)?\)", body)
+        if not cond or not (skew or length):
+            continue
+        members = []
+        for name, cls in sorted(nets.items()):
+            r = matches(cond.group(1), name, cls)
+            if r is None:
+                members = []
+                break
+            if r:
+                members.append(name)
+        if not members:
+            continue
+        tag = re.sub(r"\W+", "_", rule_name).strip("_") or "rule"
+        if skew:
+            groups.append((tag, f"tolerance={mm(*skew.groups()):g}", members))
+        if length:
+            groups.append((tag + "_min", f"tolerance=0 target={mm(*length.groups()):g}", members))
+    if not groups:
+        return 0
+    lines = []
+    for tag, opts, members in groups:
+        lines.append(f"group {tag} {opts}")
+        lines.extend(f"  {n}" for n in members)
+    Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return len(groups)
+
+
 def fix_rule_area_keepouts(board, dsn_path):
     """Corrects the keepouts KiCad exports for rule areas.
 
@@ -584,6 +672,11 @@ class Router:
             return result
         fix_rule_area_keepouts(self.board, self._dsn)
         self.dru_rules = add_dru_class_clearances(self.board, self._dsn)
+        self._tune = self._dsn.with_name("tune.txt")
+        self._tune.unlink(missing_ok=True)
+        self.tune_groups = 0
+        if not any(a.startswith("--tune=") for a in self.extra_args):
+            self.tune_groups = write_tune_file(self.board, self._tune)
         if self.clear_tracks:
             strip_unlocked_wiring(self._dsn)
         if self.route_zone_nets:
@@ -596,6 +689,8 @@ class Router:
         """Runs fastroute on the exported file (does not touch the board)."""
         result = RouteResult()
         cmd = [str(self.binary), "-de", str(self._dsn), "-do", str(self._ses)] + self.extra_args
+        if getattr(self, "tune_groups", 0):
+            cmd.append(f"--tune={self._tune}")
         kwargs = {}
         if os.name == "nt":
             kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW

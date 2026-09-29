@@ -1,0 +1,310 @@
+//! fastroute: length matching after routing.
+//!
+//! A tuning group is a set of nets that should have (about) the same routed length, e.g. the
+//! data lines of a memory bus. The target is the longest net of the group (or a given
+//! length); every net shorter than `target - tolerance` gets meanders: a straight trace
+//! segment is replaced by a serpentine with the same end points,
+//!
+//! ```text
+//!  ──┐  ┌──┐  ┌──        amplitude a, leg pitch s:
+//!    │  │  │  │          every bump adds 2·a of length
+//!    └──┘  └──┘
+//! ```
+//!
+//! Segments are tried longest first, bumps on either side of the segment or alternating,
+//! with decreasing amplitudes. Every change is made on a clone of the board and kept only if
+//! the new trace has no clearance violation (other nets, keepouts, board edge), so the board
+//! stays DRC-clean. Lengths are trace lengths (vias are not counted: the DSN has no layer
+//! thicknesses).
+
+use crate::board::{ItemKey, RoutingBoard};
+use crate::drc::clearance_violation::clearance_violation_count;
+use crate::ids::{FixedState, NetNo};
+use fr_geom::{IntPoint, Point, Polyline};
+
+/// Extra half width of the clearance check of a meander, micrometres.
+const TUNING_SAFETY_MARGIN_UM: f64 = 5.0;
+
+/// One group of nets to match.
+#[derive(Clone, Debug)]
+pub struct TuneGroup {
+    pub name: String,
+    /// Net names; `*` matches any text.
+    pub nets: Vec<String>,
+    /// Allowed deviation below the target, mm.
+    pub tolerance_mm: f64,
+    /// Target length, mm (`None`: the longest net of the group).
+    pub target_mm: Option<f64>,
+}
+
+/// Result for one net.
+#[derive(Clone, Debug)]
+pub struct NetTuning {
+    pub net: String,
+    pub before_mm: f64,
+    pub after_mm: f64,
+}
+
+/// Result for one group.
+#[derive(Clone, Debug)]
+pub struct GroupTuning {
+    pub name: String,
+    pub target_mm: f64,
+    pub tolerance_mm: f64,
+    pub nets: Vec<NetTuning>,
+}
+
+impl GroupTuning {
+    /// Nets still shorter than `target - tolerance`.
+    pub fn short_nets(&self) -> usize {
+        self.nets.iter().filter(|n| n.after_mm < self.target_mm - self.tolerance_mm - 1e-6).count()
+    }
+}
+
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let parts: Vec<&str> = pattern.split('*').collect();
+    if parts.len() == 1 {
+        return pattern == text;
+    }
+    let mut rest = text;
+    for (i, part) in parts.iter().enumerate() {
+        if i == 0 {
+            if !rest.starts_with(part) {
+                return false;
+            }
+            rest = &rest[part.len()..];
+        } else if i == parts.len() - 1 {
+            return rest.ends_with(part);
+        } else if let Some(p) = rest.find(part) {
+            rest = &rest[p + part.len()..];
+        } else {
+            return false;
+        }
+    }
+    true
+}
+
+fn units_per_mm(board: &RoutingBoard) -> f64 {
+    board.communication.resolution.max(1) as f64 * 1000.0
+}
+
+fn net_traces(board: &RoutingBoard, net: NetNo) -> Vec<ItemKey> {
+    board.get_connectable_items(net).into_iter().filter(|&k| board.item(k).is_trace()).collect()
+}
+
+/// Routed length of a net in board units (sum of its traces).
+pub fn net_length(board: &RoutingBoard, net: NetNo) -> f64 {
+    net_traces(board, net).iter().map(|&k| board.item(k).as_trace().map(|t| t.length()).unwrap_or(0.0)).sum()
+}
+
+/// Tunes all groups; returns what was done.
+pub fn tune_lengths(board: &mut RoutingBoard, groups: &[TuneGroup]) -> Vec<GroupTuning> {
+    let upm = units_per_mm(board);
+    let mut out = Vec::new();
+    for g in groups {
+        let mut nets: Vec<(NetNo, String)> = Vec::new();
+        for n in 1..=board.rules.nets.max_net_number() {
+            if let Some(net) = board.rules.nets.get(n) {
+                if g.nets.iter().any(|p| glob_match(p, &net.name)) {
+                    nets.push((n, net.name.clone()));
+                }
+            }
+        }
+        if nets.is_empty() {
+            log::warn!(target: "fr_engine::pipeline", "length tuning: group '{}' matches no net", g.name);
+            continue;
+        }
+        let before: Vec<f64> = nets.iter().map(|&(n, _)| net_length(board, n)).collect();
+        let longest = before.iter().cloned().fold(0.0, f64::max);
+        let target = g.target_mm.map(|t| t * upm).unwrap_or(longest);
+        let tol = g.tolerance_mm * upm;
+        let mut result = GroupTuning { name: g.name.clone(), target_mm: target / upm, tolerance_mm: g.tolerance_mm, nets: Vec::new() };
+        // two rounds: meanders of one net can free or block space for another; nets furthest
+        // from the target first (they need the most room)
+        let mut order: Vec<usize> = (0..nets.len()).collect();
+        order.sort_by(|&a, &b| before[a].partial_cmp(&before[b]).unwrap_or(std::cmp::Ordering::Equal));
+        for _round in 0..2 {
+            for &i in &order {
+                let now = net_length(board, nets[i].0);
+                if now > 0.0 && now < target - tol {
+                    // aim at the middle of the window so small rounding does not leave it short
+                    tune_net(board, nets[i].0, target - tol / 2.0 - now);
+                }
+            }
+        }
+        for (i, (net, name)) in nets.iter().enumerate() {
+            result.nets.push(NetTuning { net: name.clone(), before_mm: before[i] / upm, after_mm: net_length(board, *net) / upm });
+        }
+        out.push(result);
+    }
+    out
+}
+
+/// Adds about `extra` board units of length to `net` with meanders; returns the added length.
+fn tune_net(board: &mut RoutingBoard, net: NetNo, extra: f64) -> f64 {
+    let upm = units_per_mm(board);
+    let mut need = extra;
+    let mut added = 0.0;
+    // amplitudes to try, mm (large bumps first: fewer corners)
+    const AMPLITUDES_MM: [f64; 8] = [4.0, 3.0, 2.0, 1.4, 1.0, 0.7, 0.45, 0.3];
+    let mut failed_segments: std::collections::HashSet<(i32, i32)> = std::collections::HashSet::new();
+    'outer: while need > 0.02 * upm {
+        // longest straight segments of the net's traces first
+        let mut segs: Vec<(f64, ItemKey, usize)> = Vec::new();
+        for k in net_traces(board, net) {
+            let Some(t) = board.item(k).as_trace() else { continue };
+            let corners = t.polyline().corners();
+            for i in 0..corners.len().saturating_sub(1) {
+                let a = corners[i].to_float();
+                let b = corners[i + 1].to_float();
+                let len = a.distance(&b);
+                if !failed_segments.contains(&(board.item(k).id().0, i as i32)) {
+                    segs.push((len, k, i));
+                }
+            }
+        }
+        segs.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap_or(std::cmp::Ordering::Equal));
+        for (_, key, seg) in segs {
+            let id = board.item(key).id().0;
+            let half_width = board.item(key).as_trace().map(|t| t.half_width()).unwrap_or(0) as f64;
+            let clearance = board.rules.clearance_matrix.get_value(board.item(key).clearance_class(), board.item(key).clearance_class(), board.item(key).as_trace().map(|t| t.layer()).unwrap_or(0), false) as f64;
+            // centre distance of neighbouring legs: 3 widths (the usual crosstalk rule) where it
+            // fits, else one clearance between the copper
+            let pitches = [(6.0 * half_width).max(2.0 * half_width + clearance), 2.0 * half_width + clearance];
+            for pitch in pitches {
+                for amp_mm in AMPLITUDES_MM {
+                    let amp = amp_mm * upm;
+                    if amp < 2.0 * half_width + clearance {
+                        continue;
+                    }
+                    for style in [Side::Left, Side::Right, Side::Alternate] {
+                        if let Some((next, got)) = try_meander(board, key, seg, need, amp, pitch, style) {
+                            if log::log_enabled!(target: "fr_engine::pipeline::diag", log::Level::Debug) {
+                                let real = net_length(&next, net) - net_length(board, net);
+                                log::debug!(target: "fr_engine::pipeline::diag", "meander net {net}: computed {:.3} mm, real {:.3} mm (amp {:.2}, pitch {:.2}, {:?}, traces {} -> {})", got / upm, real / upm, amp / upm, pitch / upm, style, net_traces(board, net).len(), net_traces(&next, net).len());
+                            }
+                            *board = next;
+                            need -= got;
+                            added += got;
+                            continue 'outer;
+                        }
+                    }
+                }
+            }
+            failed_segments.insert((id, seg as i32));
+        }
+        break;
+    }
+    added
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Side {
+    Left,
+    Right,
+    Alternate,
+}
+
+/// Replaces segment `seg` of trace `key` by a serpentine adding up to `need`; returns the new
+/// board and the added length if the result has no new clearance violation.
+fn try_meander(board: &RoutingBoard, key: ItemKey, seg: usize, need: f64, max_amp: f64, pitch: f64, side: Side) -> Option<(RoutingBoard, f64)> {
+    let item = board.item(key);
+    let t = item.as_trace()?;
+    // locked tracks (KiCad "fix") and footprint copper stay as they are; unlocked routed
+    // tracks of an imported board (DSN "route" = USER_FIXED) may be tuned
+    if item.fixed_state() >= FixedState::SystemFixed || item.component_no() > 0 {
+        return None;
+    }
+    let corners = t.polyline().corners();
+    let (a, b) = (&corners[seg], &corners[seg + 1]);
+    let (Point::Int(pa), Point::Int(pb)) = (a, b) else { return None };
+    let (dx, dy) = ((pb.x - pa.x) as i64, (pb.y - pa.y) as i64);
+    // only 45-degree directions: integer unit step e with |e| = 1 or sqrt(2)
+    let (ex, ey) = (dx.signum(), dy.signum());
+    if !(dx == 0 || dy == 0 || dx.abs() == dy.abs()) {
+        return None;
+    }
+    let steps = dx.abs().max(dy.abs()); // segment length in steps of e
+    let step_len = if ex != 0 && ey != 0 { std::f64::consts::SQRT_2 } else { 1.0 };
+    let (nx, ny) = (-ey, ex);
+    let pitch_steps = (pitch / step_len).ceil() as i64;
+    // keep the bumps half a pitch away from the segment's corners
+    let margin = (pitch_steps + 1) / 2;
+    // bumps that fit: 2*margin + (2k - 1) * pitch <= steps
+    let k_cap = (steps - 2 * margin + pitch_steps) / (2 * pitch_steps);
+    if k_cap <= 0 {
+        return None;
+    }
+    let per_bump_max = 2.0 * max_amp;
+    let k = ((need / per_bump_max).ceil() as i64).clamp(1, k_cap);
+    let amp = (need / (2.0 * k as f64)).min(max_amp);
+    let amp_steps = (amp / step_len).round() as i64;
+    if amp_steps <= 0 {
+        return None;
+    }
+    // centre the bumps on the segment
+    let used = (2 * k - 1) * pitch_steps;
+    let start = (steps - used) / 2;
+    let mut pts: Vec<Point> = corners[..=seg].to_vec();
+    let at = |s: i64, o: i64| Point::Int(IntPoint::new((pa.x as i64 + ex * s + nx * o) as i32, (pa.y as i64 + ey * s + ny * o) as i32));
+    let mut s = start;
+    for i in 0..k {
+        let sign = match side {
+            Side::Left => 1,
+            Side::Right => -1,
+            Side::Alternate => {
+                if i % 2 == 0 {
+                    1
+                } else {
+                    -1
+                }
+            }
+        };
+        let o = sign * amp_steps;
+        pts.push(at(s, 0));
+        pts.push(at(s, o));
+        pts.push(at(s + pitch_steps, o));
+        pts.push(at(s + pitch_steps, 0));
+        s += 2 * pitch_steps;
+    }
+    pts.extend_from_slice(&corners[seg + 1..]);
+    let added = 2.0 * (k * amp_steps) as f64 * step_len;
+
+    let mut next = board.clone();
+    let (layer, half_width, nets, class, fixed) =
+        (t.layer(), t.half_width(), item.net_numbers().to_vec(), item.clearance_class(), item.fixed_state());
+    let old = next.get_item(item.id())?;
+    if next.item(old).is_user_fixed() {
+        next.items.get_mut(old).set_fixed_state(FixedState::Unfixed);
+    }
+    next.remove_item(old);
+    if next.get_item(item.id()).is_some() {
+        return None; // not removed: never leave the old and the new trace on top of each other
+    }
+    // The check uses a slightly wider trace: KiCad measures the exact 45-degree geometry and
+    // finds micrometre violations the integer checks here miss (the router keeps the same
+    // safety margin when it routes).
+    let polyline = Polyline::from_points(&pts);
+    let mut probe = next.clone();
+    let margin = (TUNING_SAFETY_MARGIN_UM * next.communication.resolution.max(1) as f64).round() as i32;
+    let probe_key = probe.insert_trace_without_cleaning(polyline.clone(), layer, half_width + margin, &nets, class, fixed)?;
+    if clearance_violation_count(&probe, probe_key) > 0 {
+        return None;
+    }
+    next.insert_trace_without_cleaning(polyline, layer, half_width, &nets, class, fixed)?;
+    Some((next, added))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::glob_match;
+
+    #[test]
+    fn globs() {
+        assert!(glob_match("/SD_D*", "/SD_D12"));
+        assert!(glob_match("*CLK", "/SD_CLK"));
+        assert!(glob_match("/SD_*_N", "/SD_D0_N"));
+        assert!(!glob_match("/SD_D*", "/SD_A1"));
+        assert!(glob_match("/X", "/X"));
+    }
+}

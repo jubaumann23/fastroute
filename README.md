@@ -40,6 +40,7 @@ as `--gui.enabled` are ignored. fastroute adds:
 | `--multi-start=N` | Rerun the autorouter with N−1 shuffled orders in parallel if connections remain unrouted (default 4) |
 | `--no-enhancements` | Freerouting's behaviour without fastroute's routing/optimizer improvements (see [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md)) |
 | `--router.autorouter.max_threads=N` | Threads of the parallel autorouting pass (default: all cores; 1 = sequential pass) |
+| `--tune=FILE` | Length matching after routing: groups of nets matched with meanders (see `fastroute --help`) |
 | `--max-time=SECONDS` | Stop after this time and write the best result so far |
 | `-V`, `--version` | Print the version |
 | `-v` | Verbose progress |

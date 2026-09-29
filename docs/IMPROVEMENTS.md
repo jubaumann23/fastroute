@@ -27,6 +27,21 @@ here. The engine-side ones are active unless `--parity` is given
 | Fanout stops when it only re-fans | A fanout pass that only fans out pins the previous pass fanned out as well (ripped again in between) ends the fanout stage; Java needed 3 identical passes. |
 | Unclamped optimizer score | The V2 score is clamped at 0; on bm01 the excess length/vias push it below 0, so no candidate could ever be accepted. The optimizer compares unclamped values (and the pass improvement relative to the magnitude). |
 
+## Length matching (`--tune`, new)
+
+Freerouting has no length matching. After routing and optimizing, fastroute can match groups
+of nets (e.g. a memory bus): the target is the longest net of a group (or a given length);
+shorter nets get serpentine meanders on their longest straight segments (both sides or
+alternating, amplitudes 2 mm down to 0.45 mm, leg pitch 3× the width where it fits, else
+width + clearance). Every meander is made on a board clone and kept only if a slightly wider
+probe trace (+5 µm) has no clearance violation, so the result stays DRC-clean in KiCad too.
+Lengths count traces only (vias are not in the DSN's geometry). Nets that have no room left
+are reported with the missing length.
+
+The KiCad plugin writes the groups from the board's `.kicad_dru`: `skew` constraints (group
+matched to its longest net) and `length (min …)` constraints, for conditions on
+`A.NetClass == '…'` / `A.NetName == '…'` (wildcards) joined by `&&` / `||`.
+
 ## KiCad plugin
 
 | Change | Why |
