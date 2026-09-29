@@ -18,7 +18,7 @@ use crate::ids::{ItemId, NetNo};
 use super::fanout;
 use super::history::{board_hash, BoardHistory, MAX_HISTORY_SIZE};
 use super::stats::{format_score, incomplete_count, StatsCache};
-use super::PipelineContext;
+use super::{CheckpointKey, PipelineContext};
 
 /// Java `BOARD_RANK_LIMIT`.
 const BOARD_RANK_LIMIT: i32 = MAX_HISTORY_SIZE as i32;
@@ -36,6 +36,15 @@ const STAGNATION_PASS_LIMIT: i32 = 10;
 const FANOUT_RECOVERY_STAGNATION_PASSES: i32 = 3;
 /// Java `STAGNATION_SCORE_THRESHOLD`.
 const STAGNATION_SCORE_THRESHOLD: f32 = 0.5;
+/// fastroute: progress line interval inside a long autorouting pass.
+const PROGRESS_LOG_INTERVAL_SECS: f64 = 30.0;
+/// fastroute: at most this many "undo a bad pass" restores per run.
+const MAX_REGRESSION_ROLLBACKS: i32 = 3;
+/// fastroute: passes at least this long use the slow-pass stagnation rule.
+const SLOW_PASS_SECS: f64 = 20.0;
+/// fastroute: the slow-pass rule stops when the last this-many passes reduced the unrouted
+/// items by less than 2 % (at least one) compared with all passes before.
+const SLOW_STAGNATION_WINDOW: usize = 3;
 
 /// Java `BatchAutorouter` (with the state of its `AutoroutePassRunner`).
 pub struct BatchAutorouter {
@@ -287,11 +296,25 @@ impl BatchAutorouter {
         let mut c = PassCounters::default();
         let max_items = settings.autorouter.max_items;
         let mut item_index = 0;
+        let pass_start = Instant::now();
+        let mut next_progress = PROGRESS_LOG_INTERVAL_SECS;
         while item_index < items.len() {
             let mut current = items[item_index];
             item_index += 1;
             if stop.is_stop_autorouter_requested() {
                 break;
+            }
+            if !self.is_optimizer_autorouter && pass_start.elapsed().as_secs_f64() >= next_progress {
+                next_progress += PROGRESS_LOG_INTERVAL_SECS;
+                log::info!(
+                    "Auto-routing pass #{pass_no}: {} of {} items after {:.0} s (routed {}, failed {}, ripped {}).",
+                    item_index - 1,
+                    items.len(),
+                    pass_start.elapsed().as_secs_f64(),
+                    c.routed,
+                    c.not_routed,
+                    c.ripped
+                );
             }
             let mut i = 0;
             while i < board.item(current).net_count() {
@@ -461,6 +484,9 @@ impl BatchAutorouter {
         let mut global_best_score = f32::NEG_INFINITY;
         let mut pass_of_best_score = 0;
         let mut incomplete_count_at_best_score = 0;
+        let mut fewest_incomplete = i32::MAX;
+        let mut incomplete_history: Vec<i32> = Vec::new();
+        let mut rollbacks = 0;
         while continue_autorouting && !stop.is_stop_autorouter_requested() {
             if let Some(m) = settings.autorouter.max_passes {
                 if m > 0 && current_pass > m {
@@ -513,6 +539,54 @@ impl BatchAutorouter {
                     counters.not_routed,
                     counters.ripped
                 );
+            }
+
+            if !self.is_optimizer_autorouter {
+                ctx.checkpoint(board, CheckpointKey {
+                    incomplete: after.incomplete_count,
+                    violations: after.clearance_violation_count,
+                    stage: 0,
+                    score: after.router_score,
+                });
+            }
+            if ctx.enhancements && !self.is_optimizer_autorouter && continue_autorouting {
+                // fastroute: a pass that loses much more than it gains (ripped nets) is undone:
+                // the next pass starts from the best board so far. Java keeps routing from the
+                // worse board and restores the history only every few passes.
+                let best = fewest_incomplete.min(after.incomplete_count);
+                if current_pass >= 2
+                    && rollbacks < MAX_REGRESSION_ROLLBACKS
+                    && after.incomplete_count > fewest_incomplete + (fewest_incomplete * 3 / 10).max(20)
+                {
+                    if let Some(b) = bh.restore_best_board() {
+                        let lost = after.incomplete_count;
+                        *board = b;
+                        self.reset_anti_oscillation_state();
+                        after = stats.score(board, settings);
+                        rollbacks += 1;
+                        log::info!(
+                            "Auto-routing pass #{current_pass} left {lost} items unrouted (best so far {fewest_incomplete}): continuing from the best board ({} unrouted).",
+                            after.incomplete_count
+                        );
+                    }
+                }
+                fewest_incomplete = best.min(after.incomplete_count);
+                incomplete_history.push(after.incomplete_count);
+                // fastroute: on boards where a pass takes long, stop once the passes no longer
+                // pay off (Java's stagnation rules only start after 8 passes).
+                let n = incomplete_history.len();
+                if pass_start.elapsed().as_secs_f64() >= SLOW_PASS_SECS && n > SLOW_STAGNATION_WINDOW {
+                    let before = *incomplete_history[..n - SLOW_STAGNATION_WINDOW].iter().min().unwrap();
+                    let recent = *incomplete_history[n - SLOW_STAGNATION_WINDOW..].iter().min().unwrap();
+                    if recent > 0 && before - recent < (before / 50).max(1) {
+                        log::info!(
+                            "Stopping the auto-router: the last {SLOW_STAGNATION_WINDOW} passes (about {:.0} s each) reduced the unrouted items only from {before} to {recent}.",
+                            pass_start.elapsed().as_secs_f64()
+                        );
+                        stop.request_stop_autorouter();
+                        break;
+                    }
+                }
             }
 
             if current_pass >= STOP_AT_PASS_MINIMUM && continue_autorouting {

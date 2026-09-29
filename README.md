@@ -18,6 +18,11 @@ cargo build --release -p fastroute          # or scripts/build-pgo.sh (~15 % fas
 target/release/fastroute -de board.dsn -do board.ses
 ```
 
+The session file (`-do`) is rewritten with the best board so far whenever routing or
+optimizing improves, so a run that is stopped or killed still leaves its best result.
+Ctrl+C, SIGTERM and Ctrl+Break stop the run and write the best result (a second signal exits
+at once). `fastroute --help` lists the options and the common `--router.*` settings.
+
 Windows x64 build (cross-compiled with MinGW-w64): `scripts/build-windows.sh` →
 `dist/windows/fastroute.exe`. The KiCad package can bundle several platforms:
 `integrations/kicad/package.sh --bin <macos binary> macos-arm64 --bin dist/windows/fastroute.exe windows-x64`.
@@ -34,6 +39,8 @@ as `--gui.enabled` are ignored. fastroute adds:
 | `--router.min_trace_width_um=<w>` | Never neck traces down below this width |
 | `--multi-start=N` | Rerun the autorouter with N−1 shuffled orders in parallel if connections remain unrouted (default 4) |
 | `--no-enhancements` | Freerouting's behaviour without fastroute's routing/optimizer improvements (see [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md)) |
+| `--max-time=SECONDS` | Stop after this time and write the best result so far |
+| `-V`, `--version` | Print the version |
 | `-v` | Verbose progress |
 
 ## Performance

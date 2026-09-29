@@ -175,6 +175,7 @@ pub fn fanout_board(board: &mut RoutingBoard, settings: &RouterSettings, ctx: &P
     let mut previous_board_state = i64::MIN;
     let mut identical_passes = 0;
     let mut last_board_hash = board_hash(board);
+    let mut previous_fanned: std::collections::BTreeSet<i32> = std::collections::BTreeSet::new();
     for i in 0..max_passes {
         if let Some(d) = state.deadline {
             if Instant::now() >= d {
@@ -188,11 +189,23 @@ pub fn fanout_board(board: &mut RoutingBoard, settings: &RouterSettings, ctx: &P
                 break;
             }
         }
-        let routed_count = fanout_pass(board, settings, ctx, &components, total_smd_pin_count, i, &mut state);
+        let mut fanned = std::collections::BTreeSet::new();
+        let routed_count = fanout_pass(board, settings, ctx, &components, total_smd_pin_count, i, &mut state, &mut fanned);
         completed_passes += 1;
         if routed_count == 0 {
             break;
         }
+        // fastroute: a pass that only fans out pins the previous pass fanned out as well
+        // (ripped again in between) makes no progress; Java needs 3 such passes to notice.
+        if ctx.enhancements && !fanned.is_empty() && fanned.is_subset(&previous_fanned) {
+            log::info!(
+                "Fanout stopped after {completed_passes} passes: the last pass only re-fanned {} pin{} of the previous pass.",
+                fanned.len(),
+                if fanned.len() == 1 { "" } else { "s" }
+            );
+            break;
+        }
+        previous_fanned = fanned;
         let board_state = ((routed_count as i64) << 32) ^ board.get_vias().len() as i64;
         if board_state == previous_board_state {
             identical_passes += 1;
@@ -231,6 +244,7 @@ fn fanout_pass(
     total_smd_pin_count: i32,
     pass_no: i32,
     state: &mut FanoutState,
+    fanned: &mut std::collections::BTreeSet<i32>,
 ) -> i32 {
     let pass_start = Instant::now();
     let mut pins_to_go = total_smd_pin_count;
@@ -275,6 +289,7 @@ fn fanout_pass(
                 AutorouteAttemptState::Routed => {
                     routed += 1;
                     state.total_items_fanouted += 1;
+                    fanned.insert(board.item(pin.key).id().0);
                 }
                 AutorouteAttemptState::Failed => {
                     not_routed += 1;

@@ -413,6 +413,9 @@ class RouteResult:
     def __init__(self):
         self.ok = False
         self.cancelled = False
+        # True if fastroute stopped early (time limit, error) and only its best board so far
+        # (the checkpoint session it keeps rewriting) was imported.
+        self.partial = False
         self.message = ""
         self.score = None
         self.unrouted = None
@@ -434,6 +437,7 @@ class Router:
         text_keepouts=True,
         clear_tracks=False,
         in_editor=False,
+        max_time=None,
     ):
         self.board = board
         self.clear_tracks = clear_tracks
@@ -443,6 +447,9 @@ class Router:
         self.route_zone_nets = route_zone_nets
         self.binary = Path(binary) if binary else find_binary()
         self.extra_args = list(extra_args)
+        if max_time:
+            # fastroute stops by itself and writes its best result (no kill needed)
+            self.extra_args.append(f"--max-time={int(max_time)}")
         self.work_dir = Path(work_dir) if work_dir else None
         self._proc = None
         self._cancel = threading.Event()
@@ -523,6 +530,13 @@ class Router:
         if self._cancel.is_set():
             result.cancelled = True
             result.message = "cancelled"
+        elif code != 0 and self._ses.is_file():
+            # fastroute rewrites the session with its best board after every improvement:
+            # keep that result even if the run ended abnormally (killed, crashed).
+            result.ok = True
+            result.partial = True
+            tail = "\n".join(result.log[-5:])
+            result.message = f"fastroute ended with exit code {code}; imported its best result so far\n{tail}"
         elif code != 0 or not self._ses.is_file():
             tail = "\n".join(result.log[-5:])
             result.message = f"fastroute failed (exit code {code})\n{tail}"
@@ -540,7 +554,8 @@ class Router:
             return result
         if self.refill:
             refill_zones(self.board)
-        result.message = "routed"
+        if not result.partial:
+            result.message = "routed"
         return result
 
 

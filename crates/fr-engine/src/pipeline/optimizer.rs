@@ -661,6 +661,12 @@ impl BatchOptimizer {
                     self.best_incomplete_count = pass_stats.incomplete_count;
                     self.best_clearance_violation_count = pass_stats.clearance_violation_count;
                     self.best_board = Some(board.clone());
+                    ctx.checkpoint(board, super::CheckpointKey {
+                        incomplete: pass_stats.incomplete_count,
+                        violations: pass_stats.clearance_violation_count,
+                        stage: 1,
+                        score: score_after_pass,
+                    });
                 }
                 Some(reason) => {
                     log::info!(

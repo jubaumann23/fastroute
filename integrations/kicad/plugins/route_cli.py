@@ -7,7 +7,8 @@ Run with the Python interpreter that ships with KiCad (it provides `pcbnew`):
     Windows: "C:\\Program Files\\KiCad\\<ver>\\bin\\python.exe"
 
     python3 route_cli.py board.kicad_pcb [-o routed.kicad_pcb] [--clear] [--mode fast|exact|quick]
-                         [--max-passes N] [--threads N] [--fastroute PATH] [-- extra fastroute args]
+                         [--max-passes N] [--threads N] [--max-time SECONDS] [--fastroute PATH]
+                         [-- extra fastroute args, e.g. --router.autorouter.ignore_net_classes=GUC]
 """
 
 import argparse
@@ -47,11 +48,21 @@ def main(argv=None):
     ap.add_argument(
         "--no-text-keepouts", action="store_true", help="do not keep traces away from copper texts"
     )
+    ap.add_argument(
+        "--max-time", type=float, help="stop after this many seconds and keep the best result"
+    )
     ap.add_argument("--fastroute", type=Path, help="path to the fastroute executable")
     ap.add_argument("--work-dir", type=Path, help="keep the DSN/SES files in this directory")
     ap.add_argument("-q", "--quiet", action="store_true")
-    ap.add_argument("extra", nargs="*", help="extra fastroute arguments (after --)")
+    # Everything after "--" goes to fastroute unchanged (argparse cannot mix a positional
+    # argument with a trailing "--" list).
+    argv = list(sys.argv[1:] if argv is None else argv)
+    extra = []
+    if "--" in argv:
+        i = argv.index("--")
+        argv, extra = argv[:i], argv[i + 1:]
     args = ap.parse_args(argv)
+    args.extra = extra
 
     board = pcbnew.LoadBoard(str(args.board))
     if args.work_dir:
@@ -72,6 +83,7 @@ def main(argv=None):
         route_zone_nets=not args.zones_as_planes,
         text_keepouts=not args.no_text_keepouts,
         clear_tracks=args.clear,
+        max_time=args.max_time,
     )
 
     def show(level, text):
@@ -85,6 +97,8 @@ def main(argv=None):
         return 1
     out = args.output or args.board
     pcbnew.SaveBoard(str(out), board)
+    if result.partial:
+        print(f"warning: {result.message.splitlines()[0]}", file=sys.stderr)
     print(
         f"routed in {time.monotonic() - t:.1f} s: score {result.score}, "
         f"{result.unrouted} unrouted, {result.violations} violations -> {out}"

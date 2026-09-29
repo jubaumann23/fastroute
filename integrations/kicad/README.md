@@ -36,7 +36,21 @@ KiCad's Python (it needs the `pcbnew` module):
 ```sh
 PY=/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3
 $PY integrations/kicad/plugins/route_cli.py board.kicad_pcb -o routed.kicad_pcb --clear
+# with a time limit (keeps the best result) and extra fastroute settings after "--"
+$PY integrations/kicad/plugins/route_cli.py board.kicad_pcb -o routed.kicad_pcb --max-time 3000 \
+    -- --router.autorouter.ignore_net_classes=GUC
 ```
+
+From Python, `core.Router(board, extra_args=..., max_time=seconds)` does the same.
+fastroute rewrites its session file with the best board so far after every
+improvement; if the process ends abnormally (killed, crashed) the router still
+imports that file and sets `result.partial`.
+
+Zones: by default a zone on a *power*-type layer covering at least half of the
+board stays a plane (pads connect with vias, no tracks on that layer); other
+zones are removed for routing and their nets are routed with tracks, then the
+zones are refilled. `--zones-as-planes` (`route_zone_nets=False`) keeps every
+zone as a plane instead, like the plain Freerouting flow.
 
 `tests/e2e.sh` routes the KiCad demo boards this way and runs KiCad's DRC on
 the result (optionally side by side with Freerouting via `FREEROUTING_CMD`).

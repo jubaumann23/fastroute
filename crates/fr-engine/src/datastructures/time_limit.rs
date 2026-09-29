@@ -185,6 +185,13 @@ impl StopToken {
         Self::default()
     }
 
+    /// A token that shares this token's full stop (`request_stop`) but has its own
+    /// autorouter stop: parallel autorouter runs stop on their own stagnation rules without
+    /// stopping each other, and all of them stop on a job stop (time limit, Ctrl+C).
+    pub fn child(&self) -> Self {
+        StopToken { stop: self.stop.clone(), stop_autorouter: Arc::new(AtomicBool::new(false)) }
+    }
+
     /// Java `requestStop()`: stops everything (fanout, autorouter and optimizer).
     pub fn request_stop(&self) {
         self.stop.store(true, Ordering::SeqCst);

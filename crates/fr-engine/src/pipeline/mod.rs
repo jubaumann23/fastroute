@@ -46,7 +46,7 @@ pub use optimizer::{BatchOptimizer, OptimizerMode};
 pub use stats::StatsCache;
 
 /// The job state shared by the stages.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PipelineContext {
     /// Java `job.thread` stop requests.
     pub stop: StopToken,
@@ -62,6 +62,54 @@ pub struct PipelineContext {
     /// unrouted, it is rerun this many times in total with shuffled first-pass orders (in
     /// parallel) and the best board is kept. 1 = off.
     pub multi_start: usize,
+    /// Called with the current board whenever a stage reached a new best state (see
+    /// [`CheckpointKey`]); the CLI writes it as the session file, so a run that is stopped or
+    /// killed still leaves its best result behind.
+    pub checkpoint: Option<Checkpoint>,
+}
+
+/// Callback for [`PipelineContext::checkpoint`].
+pub type Checkpoint = std::sync::Arc<dyn Fn(&RoutingBoard, CheckpointKey) + Send + Sync>;
+
+/// How good a checkpointed board is: fewer unrouted connections first, then fewer clearance
+/// violations, then the later stage (the optimizer only accepts non-worse boards), then the
+/// stage's score.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CheckpointKey {
+    pub incomplete: i32,
+    pub violations: i32,
+    /// 0 = routing, 1 = optimizer.
+    pub stage: u8,
+    pub score: f32,
+}
+
+impl CheckpointKey {
+    /// True if `self` is a better board than `other`.
+    pub fn better_than(&self, other: &CheckpointKey) -> bool {
+        (other.incomplete, other.violations, self.stage, ordered_f32(self.score))
+            > (self.incomplete, self.violations, other.stage, ordered_f32(other.score))
+    }
+}
+
+impl std::fmt::Debug for PipelineContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PipelineContext")
+            .field("wall_clock_limits", &self.wall_clock_limits)
+            .field("optimizer_mode", &self.optimizer_mode)
+            .field("enhancements", &self.enhancements)
+            .field("multi_start", &self.multi_start)
+            .field("checkpoint", &self.checkpoint.is_some())
+            .finish()
+    }
+}
+
+impl PipelineContext {
+    /// Reports a board to the checkpoint callback, if any.
+    pub fn checkpoint(&self, board: &RoutingBoard, key: CheckpointKey) {
+        if let Some(cb) = &self.checkpoint {
+            cb(board, key);
+        }
+    }
 }
 
 impl Default for PipelineContext {
@@ -72,9 +120,14 @@ impl Default for PipelineContext {
             optimizer_mode: OptimizerMode::JavaCompat,
             enhancements: false,
             multi_start: 1,
+            checkpoint: None,
         }
     }
 }
+
+/// Multi-start variants run in parallel but each as long as the first run; after a longer
+/// first run they are skipped (a large board then spends an hour more for a few connections).
+const MULTI_START_MAX_FIRST_RUN: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// The outcome of [`run_pipeline`].
 #[derive(Clone, Copy, Debug, Default)]
@@ -106,9 +159,19 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
     let router_enabled = settings.get_run_router() && settings.autorouter.max_passes.map(|m| m >= 0).unwrap_or(true);
     if router_enabled && !ctx.stop.is_stop_autorouter_requested() {
         let unrouted_board = (ctx.enhancements && ctx.multi_start > 1).then(|| board.clone());
+        let routing_start = std::time::Instant::now();
         autorouter.run_batch_loop(board, settings, ctx);
         if let Some(start) = unrouted_board {
-            multi_start(board, &start, settings, ctx);
+            let took = routing_start.elapsed();
+            if took > MULTI_START_MAX_FIRST_RUN {
+                log::info!(
+                    "Multi-start skipped: the first routing run took {:.0} s (variants run only after runs shorter than {} s).",
+                    took.as_secs_f64(),
+                    MULTI_START_MAX_FIRST_RUN.as_secs()
+                );
+            } else {
+                multi_start(board, &start, settings, ctx);
+            }
         }
     } else if settings.is_fanout_enabled() && !ctx.stop.is_stop_autorouter_requested() {
         let original = settings.autorouter.max_passes;
@@ -152,11 +215,13 @@ fn multi_start(board: &mut RoutingBoard, start: &RoutingBoard, settings: &Router
         .map(|v| {
             let mut b = start.clone();
             let variant_ctx = PipelineContext {
-                stop: StopToken::new(),
+                // own autorouter stop (stagnation), shared job stop (time limit, Ctrl+C)
+                stop: ctx.stop.child(),
                 wall_clock_limits: ctx.wall_clock_limits,
                 optimizer_mode: ctx.optimizer_mode,
                 enhancements: true,
                 multi_start: 1,
+                checkpoint: ctx.checkpoint.clone(),
             };
             let mut router = BatchAutorouter::for_job(&b, settings);
             router.order_seed = Some(0x5eed_0000 + v as i64);
