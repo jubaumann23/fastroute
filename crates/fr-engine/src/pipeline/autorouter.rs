@@ -137,6 +137,7 @@ impl BatchAutorouter {
             remove_unconnected_vias: self.remove_unconnected_vias,
             retain_autoroute_database: self.retain_autoroute_database,
             trace_pull_tight_accuracy: self.trace_pull_tight_accuracy,
+            connect_to_planes: self.enhancements,
         }
     }
 

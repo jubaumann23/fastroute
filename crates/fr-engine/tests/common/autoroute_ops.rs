@@ -206,6 +206,7 @@ pub fn execute(board: &mut RoutingBoard, op: &str, t: &mut Tok) -> Option<Vec<St
                 remove_unconnected_vias: true,
                 retain_autoroute_database: RETAIN.with(|x| *x.borrow()),
                 trace_pull_tight_accuracy: s.trace_pull_tight_accuracy.unwrap(),
+                connect_to_planes: false,
             };
             let mut ripped = ItemSet::new();
             let outcome = route_connection(board, &s, &params, item, net_no, &mut ripped, None, pass, None);

@@ -104,7 +104,18 @@ impl AutorouteEngine {
         let Some(autoroute_result) = autoroute_result else {
             return AutorouteAttemptResult::with_details(AutorouteAttemptState::Failed, "Failed to route connection.");
         };
-        if !ctrl.layer_active[autoroute_result.start_layer as usize] || !ctrl.layer_active[autoroute_result.target_layer as usize] {
+        // fastroute: an end on an inactive plane layer is fine if it is the net's plane itself
+        // (the connection is a via into the plane). Java rejects it, so plane nets only got
+        // connected to their plane by the fanout stage.
+        let end_ok = |layer: i32, item: Option<ItemKey>| {
+            ctrl.layer_active[layer as usize]
+                || (ctrl.connect_to_planes
+                    && !board.layer_structure.layers[layer as usize].is_signal
+                    && item.is_some_and(|k| board.item(k).is_conduction_area()))
+        };
+        if !end_ok(autoroute_result.start_layer, autoroute_result.start_item)
+            || !end_ok(autoroute_result.target_layer, autoroute_result.target_item)
+        {
             log::debug!(
                 target: "fr_engine::pipeline::diag",
                 "located connection on inactive layer: start {} target {} active {:?}",
@@ -363,6 +374,9 @@ pub struct ConnectionRouterParams {
     pub retain_autoroute_database: bool,
     /// `router.getTracePullTightAccuracy()`.
     pub trace_pull_tight_accuracy: i32,
+    /// fastroute: a connection may end in a via into the net's plane (see
+    /// [`AutorouteControl::connect_to_planes`]).
+    pub connect_to_planes: bool,
 }
 
 /// The result of [`route_connection`].
@@ -428,6 +442,7 @@ fn route_connection_impl(
     ctrl.ripup_allowed = true;
     ctrl.ripup_costs = params.start_ripup_costs.wrapping_mul(ripup_pass_no);
     ctrl.remove_unconnected_vias = params.remove_unconnected_vias;
+    ctrl.connect_to_planes = params.connect_to_planes;
     let unconnected_set = board.unconnected_set(item, route_net_no);
     if unconnected_set.is_empty() {
         return ConnectionRouteOutcome { result: AutorouteAttemptResult::new(AutorouteAttemptState::NoUnconnectedNets), max_item_id_before_route: None };

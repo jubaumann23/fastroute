@@ -76,6 +76,8 @@ pub struct AutorouteControl {
     pub fanout_start_pin_layer: LayerNo,
     /// Normally true, if the autorouter contains no fanout pass.
     pub remove_unconnected_vias: bool,
+    /// fastroute: accept connections that end in a via into the net's plane on a power layer.
+    pub connect_to_planes: bool,
     /// The possible (partial) vias (Java `viaRule`, a copy of the net class rule).
     pub via_rule: ViaRule,
     pub net_number: NetNo,
@@ -167,6 +169,7 @@ impl AutorouteControl {
             fanout_start_pin_center: None,
             fanout_start_pin_layer: -1,
             remove_unconnected_vias: true,
+            connect_to_planes: false,
             via_rule: ViaRule::empty(),
             net_number: 0,
             via_clearance_class: 0,
