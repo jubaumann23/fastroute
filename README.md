@@ -136,6 +136,13 @@ The parallel optimizer mode is another 1.5–3× faster on most boards.
 How the port was done and how parity is tested: [docs/PORTING.md](docs/PORTING.md).
 The Java reference build and scripts: `scripts/java-parity.sh`, `scripts/parity-route.sh`.
 
+## Support
+
+fastroute is developed in spare time. If it saves you routing hours or a Java setup, you can
+support its development through [GitHub Sponsors](https://github.com/sponsors/parisxmas) or
+[Open Collective](https://opencollective.com/fastroute). Bug reports with a board that shows
+the problem (a `.dsn` file is enough) are just as welcome.
+
 ## License
 
 GPL-3.0-or-later ([LICENSE](LICENSE)). fastroute is a derivative work of Freerouting
