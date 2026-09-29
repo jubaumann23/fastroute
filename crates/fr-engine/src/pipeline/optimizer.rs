@@ -279,6 +279,11 @@ struct CandidateParams<'a> {
     only_item_nets: bool,
 }
 
+/// Greedy phase limits (see [`BatchOptimizer::apply_greedy`]).
+const GREEDY_MAX_REJECTED_IN_ROW: usize = 10;
+const GREEDY_MIN_BUDGET: Duration = Duration::from_secs(2);
+const GREEDY_MAX_BUDGET: Duration = Duration::from_secs(60);
+
 fn deadline_passed(deadline: Option<Instant>) -> bool {
     deadline.map(|d| Instant::now() >= d).unwrap_or(false)
 }
@@ -746,15 +751,33 @@ impl BatchOptimizer {
         stats: &mut StatsCache,
         params: &CandidateParams<'_>,
         mut candidates: Vec<ItemRouteResult>,
+        budget: Duration,
     ) -> usize {
         // compare_to orders better results first (fewer incompletes, vias, length; then id).
         candidates.sort_by(|a, b| a.compare_to(b));
+        // Every trial clones the board and re-routes one item on this thread, which takes
+        // seconds on large boards: the phase gets at most the pass's evaluation time and ends
+        // after a run of rejected candidates (they are sorted best-first).
+        let start = Instant::now();
+        let total = candidates.len();
         let mut applied = 0;
+        let mut tried = 0;
+        let mut rejected_in_row = 0;
         let mut current = stats.score(board, settings);
         for c in candidates {
             if ctx.stop.is_stop_requested() || deadline_passed(self.deadline) {
                 break;
             }
+            if start.elapsed() >= budget || rejected_in_row >= GREEDY_MAX_REJECTED_IN_ROW {
+                log::info!(
+                    "Optimizer greedy phase stopped after {tried} of {total} candidates ({:.1} s, {}).",
+                    start.elapsed().as_secs_f64(),
+                    if rejected_in_row >= GREEDY_MAX_REJECTED_IN_ROW { "no further improvements" } else { "time budget used" }
+                );
+                break;
+            }
+            tried += 1;
+            rejected_in_row += 1;
             let mut trial = board.clone();
             let Some(key) = trial.get_item(ItemId(c.item_id)) else { continue };
             let p = CandidateParams { baseline_trace_length: light_statistics(&trial).1 as f64, ..*params };
@@ -773,6 +796,7 @@ impl BatchOptimizer {
                 *board = trial;
                 current = s;
                 applied += 1;
+                rejected_in_row = 0;
             }
         }
         if applied > 0 {
@@ -932,7 +956,8 @@ impl BatchOptimizer {
                     if ctx.enhancements {
                         let mut rest = std::mem::take(&mut consumer.improving);
                         rest.retain(|r| r.item_id != winner_id);
-                        let applied = self.apply_greedy(board, settings, ctx, stats, &params, rest);
+                        let budget = pass_start.elapsed().clamp(GREEDY_MIN_BUDGET, GREEDY_MAX_BUDGET);
+                        let applied = self.apply_greedy(board, settings, ctx, stats, &params, rest, budget);
                         if applied > 0 {
                             log::info!("Optimizer pass #{pass_no}: applied {applied} more improving candidate(s).");
                         }
