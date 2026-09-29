@@ -1,5 +1,9 @@
 # fastroute
 
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-db61a2?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/parisxmas)
+[![Open Collective](https://img.shields.io/badge/Open%20Collective-support-7FADF2?logo=opencollective&logoColor=white)](https://opencollective.com/fastroute)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+
 **PCB autorouter for KiCad and Specctra DSN** — a Rust port of the
 [Freerouting](https://github.com/freerouting/freerouting) PCB autorouter.
 (Not related to the FastRoute global router for IC design used in OpenROAD.)
