@@ -69,8 +69,11 @@ unchanged except bm05 (11 → 10 unrouted); optimizer scores:
 
 ## Open ideas
 
-- Ripup passes oscillate: on dense boards the best result comes from pass 1 and
-  later passes (history restore) keep returning to it. Try alternative orders
-  for the failing nets instead of the same restore point.
+- CLI users feeding KiCad DSN files directly get none of the plugin's export
+  fixes (rule-area keepouts, zone handling, board constraints). A `--kicad`
+  preprocessing mode could apply the DSN-only parts (rule areas cannot be
+  recognised without the board, though).
+- Connections that can never be routed (e.g. an enclosed pin) are retried every
+  pass; they could be skipped after the net was ripped once.
 - Footprint-local clearances (e.g. a 0.5 mm-pitch LGA with 0.127 mm) are not in
   the DSN export; the router uses the net-class clearance there.
