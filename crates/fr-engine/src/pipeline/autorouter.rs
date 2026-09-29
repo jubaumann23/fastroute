@@ -68,6 +68,9 @@ pub struct BatchAutorouter {
     /// their whole net (on large nets that is what makes a pass lose hundreds of connections,
     /// and the failure counts survive the undo, so the next pass would do it again).
     pub suppress_net_rip: bool,
+    /// fastroute (optimizer): item ids not to route (connections that were already unrouted
+    /// when the optimizer started; re-trying them for every candidate only costs time).
+    pub skip_items: Option<HashSet<i32>>,
     /// fastroute: threads of the parallel autorouting pass (see `parallel_pass`); 1 = the
     /// sequential Freerouting pass, 0 = decided by `run_batch_loop` (`autorouter.max_threads`
     /// with enhancements, else 1).
@@ -137,6 +140,7 @@ impl BatchAutorouter {
             net_filter: None,
             enhancements: false,
             suppress_net_rip: false,
+            skip_items: None,
             pass_threads: 0,
             pass_pool: None,
             order_seed: None,
@@ -297,6 +301,9 @@ impl BatchAutorouter {
         let mut items = Self::get_autoroute_items(board);
         if let Some(filter) = &self.net_filter {
             items.retain(|&k| board.item(k).net_numbers().iter().any(|n| filter.contains(n)));
+        }
+        if let Some(skip) = &self.skip_items {
+            items.retain(|&k| !skip.contains(&board.item(k).id().0));
         }
         if items.is_empty() {
             return (false, PassCounters::default());

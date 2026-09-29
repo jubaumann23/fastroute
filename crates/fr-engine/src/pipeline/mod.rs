@@ -157,6 +157,7 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
     let mut outcome = PipelineOutcome::default();
 
     // runRoutingStage
+    let routing_start = std::time::Instant::now();
     let router_enabled = settings.get_run_router() && settings.autorouter.max_passes.map(|m| m >= 0).unwrap_or(true);
     if router_enabled && !ctx.stop.is_stop_autorouter_requested() {
         let unrouted_board = (ctx.enhancements && ctx.multi_start > 1).then(|| board.clone());
@@ -195,6 +196,11 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
     // runOptimizationStage
     if run_optimizer && !ctx.stop.is_stop_requested() {
         let mut optimizer = BatchOptimizer::new(ctx.optimizer_mode);
+        if ctx.enhancements {
+            // without an explicit optimizer.timeout the optimizer gets as long as routing took
+            // (at least a minute): on large boards a pass can take a quarter of an hour
+            optimizer.default_budget = Some(routing_start.elapsed().max(std::time::Duration::from_secs(60)));
+        }
         let mut stats = StatsCache::new();
         stats.unclamped_optimizer_score = ctx.enhancements;
         optimizer.run_batch_loop(board, settings, ctx, &mut stats);

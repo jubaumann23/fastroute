@@ -25,6 +25,8 @@ here. The engine-side ones are active unless `--parity` is given
 | Multi-start skipped after long runs | The parallel variants each take as long as the first run; after a first run longer than 10 minutes they are skipped. Variants also stop on a job stop (time limit, Ctrl+C) now. |
 | No fanout on ignored net classes | Pins of classes in `router.autorouter.ignore_net_classes` get no fanout stubs (Java fans them out, so nets that must stay unrouted got 72 stubs on the test board). |
 | Fanout stops when it only re-fans | A fanout pass that only fans out pins the previous pass fanned out as well (ripped again in between) ends the fanout stage; Java needed 3 identical passes. |
+| Optimizer skips connections that were already unrouted | A candidate re-routes the nets of the ripped item; connections of those nets that were unrouted when the optimizer started were re-tried for every candidate (each attempt seconds long on a board with hundreds of failing connections), without changing the comparison. They are skipped now. 6-layer test board: optimizer pass 897 s → 106 s with the same candidates and scores. |
+| Optimizer time budget | Without `router.optimizer.timeout` the optimizer gets as long as the routing stage took (at least 60 s). The test board: whole run 1955 s → 644 s, same DRC result. |
 | Unclamped optimizer score | The V2 score is clamped at 0; on bm01 the excess length/vias push it below 0, so no candidate could ever be accepted. The optimizer compares unclamped values (and the pass improvement relative to the magnitude). |
 
 ## Length matching (`--tune`, new)

@@ -16,7 +16,7 @@
 //!   (rayon). The result does not depend on the thread count, but is not identical to Java.
 
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::time::{Duration, Instant};
 
@@ -277,6 +277,8 @@ struct CandidateParams<'a> {
     deadline: Option<Instant>,
     /// fastroute: re-route only the nets of the ripped item.
     only_item_nets: bool,
+    /// fastroute: items that were unrouted when the optimizer started (not re-tried).
+    skip_items: Option<&'a HashSet<i32>>,
 }
 
 /// Greedy phase limits (see [`BatchOptimizer::apply_greedy`]).
@@ -340,6 +342,7 @@ fn opt_route_item_on_board(board: &mut RoutingBoard, item: ItemKey, p: &Candidat
         }
         router.net_filter = Some(nets);
         router.enhancements = true;
+        router.skip_items = p.skip_items.cloned();
     }
     router.autoroute_passes_for_optimizing_item(board, settings, max_autoroute_passes, p.stop);
 
@@ -451,6 +454,10 @@ pub struct BatchOptimizer {
     best_clearance_violation_count: i32,
     result_map: HashMap<i32, ItemRouteResult>,
     pool: Option<rayon::ThreadPool>,
+    /// fastroute: connections unrouted at the start (see `CandidateParams::skip_items`).
+    unroutable: HashSet<i32>,
+    /// fastroute: stage time budget when no `optimizer.timeout` is set.
+    pub default_budget: Option<Duration>,
 }
 
 impl BatchOptimizer {
@@ -472,6 +479,8 @@ impl BatchOptimizer {
             best_clearance_violation_count: 0,
             result_map: HashMap::new(),
             pool,
+            unroutable: HashSet::new(),
+            default_budget: None,
         }
     }
 
@@ -621,7 +630,19 @@ impl BatchOptimizer {
         if ctx.wall_clock_limits {
             if let Some(s) = settings.optimizer.timeout_string.as_deref().and_then(fr_settings::parse_timespan_string) {
                 self.deadline = Some(stage_start + Duration::from_secs(s.max(0) as u64));
+            } else if let Some(budget) = self.default_budget {
+                self.deadline = Some(stage_start + budget);
+                log::info!(
+                    "Optimizer time budget: {:.0} s (as long as routing took; set router.optimizer.timeout to change).",
+                    budget.as_secs_f64()
+                );
             }
+        }
+        if ctx.enhancements {
+            self.unroutable = super::autorouter::BatchAutorouter::get_autoroute_items(board)
+                .into_iter()
+                .map(|k| board.item(k).id().0)
+                .collect();
         }
         if let Some(threshold) = settings.optimizer.optimization_improvement_threshold {
             if threshold.is_nan() || threshold.is_infinite() || threshold < 0.0 {
@@ -875,6 +896,7 @@ impl BatchOptimizer {
         } else {
             settings.optimizer.max_consecutive_failures.unwrap_or(50)
         };
+        let unroutable = self.unroutable.clone();
         let params = CandidateParams {
             settings,
             baseline_trace_length: self.min_cumulative_trace_length,
@@ -883,6 +905,7 @@ impl BatchOptimizer {
             stop: &ctx.stop,
             deadline: self.deadline,
             only_item_nets: ctx.enhancements,
+            skip_items: (ctx.enhancements && !unroutable.is_empty()).then_some(&unroutable),
         };
         let stop = &ctx.stop;
         let mut consumer = PassConsumer {
