@@ -49,6 +49,8 @@ pub struct BatchAutorouter {
     /// fastroute: when set, a pass only routes items of these nets (the optimizer re-routes
     /// the nets of the ripped item instead of every unrouted connection on the board).
     pub net_filter: Option<BTreeSet<NetNo>>,
+    /// fastroute improvements (see `PipelineContext::enhancements`).
+    pub enhancements: bool,
     pub fanout_timed_out: bool,
     /// Java `initialUnroutedCount`.
     pub initial_unrouted_count: i32,
@@ -109,6 +111,7 @@ impl BatchAutorouter {
             total_items_routed: 0,
             is_optimizer_autorouter: false,
             net_filter: None,
+            enhancements: false,
             fanout_timed_out: false,
             initial_unrouted_count: 0,
             previous_incomplete_nets: BTreeSet::new(),
@@ -330,7 +333,11 @@ impl BatchAutorouter {
                     _ => {
                         record_failure(board, current, pass_no, &result);
                         let failure_count = board.failure_log.get_failure_count(&board.basic, current);
-                        if failure_count >= 2 {
+                        // Java rips the whole net after every failure from the second one on; a
+                        // connection that can never be routed then tears down its (possibly
+                        // large) net every pass. fastroute rips it once.
+                        let rip_net = if self.enhancements { failure_count == 2 } else { failure_count >= 2 };
+                        if rip_net {
                             let net_no = board.item(current).net_number(i);
                             let to_rip: Vec<ItemKey> = board
                                 .get_connectable_items(net_no)
@@ -390,6 +397,7 @@ impl BatchAutorouter {
     #[allow(clippy::collapsible_if)]
     pub fn run_batch_loop(&mut self, board: &mut RoutingBoard, settings: &RouterSettings, ctx: &PipelineContext) -> bool {
         let stop = &ctx.stop;
+        self.enhancements = ctx.enhancements;
         let any_routable = (0..settings.get_layer_count())
             .any(|i| settings.get_layer_active(i) && board.layer_structure.layers.get(i).map(|l| l.is_signal).unwrap_or(false));
         if !any_routable {

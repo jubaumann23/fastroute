@@ -334,6 +334,7 @@ fn opt_route_item_on_board(board: &mut RoutingBoard, item: ItemKey, p: &Candidat
             nets.extend(board.item(k).net_numbers().iter().copied());
         }
         router.net_filter = Some(nets);
+        router.enhancements = true;
     }
     router.autoroute_passes_for_optimizing_item(board, settings, max_autoroute_passes, p.stop);
 
