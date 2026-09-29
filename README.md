@@ -87,8 +87,10 @@ Ctrl+C, SIGTERM and Ctrl+Break stop the run and write the best result (a second 
 at once). `fastroute --help` lists the options and the common `--router.*` settings.
 
 Windows x64 build (cross-compiled with MinGW-w64): `scripts/build-windows.sh` →
-`dist/windows/fastroute.exe`. The KiCad package can bundle several platforms:
-`integrations/kicad/package.sh --bin <macos binary> macos-arm64 --bin dist/windows/fastroute.exe windows-x64`.
+`dist/windows/fastroute.exe`. Linux x64 and arm64 builds (cargo-zigbuild, glibc 2.17):
+`scripts/build-linux.sh` → `dist/linux-*/fastroute`. The KiCad package can bundle several
+platforms: `integrations/kicad/package.sh --bin <macos binary> macos-arm64 --bin
+dist/windows/fastroute.exe windows-x64 --bin dist/linux-x64/fastroute linux-x64 ...`.
 
 Freerouting's options are accepted: `-mp <passes>`, `--router.<path>=<value>` (e.g.
 `--router.optimizer.enabled=false`, `--router.scoring.via_costs=80`); GUI/API options such
