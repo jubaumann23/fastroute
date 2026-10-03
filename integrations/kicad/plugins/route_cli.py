@@ -53,6 +53,12 @@ def main(argv=None):
     )
     ap.add_argument("--fastroute", type=Path, help="path to the fastroute executable")
     ap.add_argument("--work-dir", type=Path, help="keep the DSN/SES files in this directory")
+    ap.add_argument(
+        "--export-only",
+        action="store_true",
+        help="only write the prepared DSN (and tune/pairs files) to --work-dir and "
+        "the fastroute arguments to args.txt there; do not route",
+    )
     ap.add_argument("-q", "--quiet", action="store_true")
     # Everything after "--" goes to fastroute unchanged (argparse cannot mix a positional
     # argument with a trailing "--" list).
@@ -95,6 +101,19 @@ def main(argv=None):
     def show(level, text):
         if not args.quiet or level in ("WARN", "ERROR"):
             print(f"{level:5} {text}", file=sys.stderr)
+
+    if args.export_only:
+        if not args.work_dir:
+            print("error: --export-only needs --work-dir", file=sys.stderr)
+            return 2
+        failed = router.prepare()
+        if failed is not None:
+            print(f"error: {failed.message}", file=sys.stderr)
+            return 1
+        # the arguments after the binary, one per line (paths as written in work_dir)
+        (args.work_dir / "args.txt").write_text("\n".join(router.command()[1:]) + "\n")
+        print(f"exported to {args.work_dir}")
+        return 0
 
     t = time.monotonic()
     result = router.run(show)

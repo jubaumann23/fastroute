@@ -835,9 +835,8 @@ class Router:
             add_copper_text_keepouts(self.board, self._dsn)
         return None
 
-    def route(self, on_line=None):
-        """Runs fastroute on the exported file (does not touch the board)."""
-        result = RouteResult()
+    def command(self):
+        """The fastroute command line for the exported file (after `prepare()`)."""
         cmd = [str(self.binary), "-de", str(self._dsn), "-do", str(self._ses)] + self.extra_args
         classes = sorted({c for c, _, _ in getattr(self, "layer_widths", [])})
         if classes and not any(x.startswith("--no-neckdown-classes=") for x in self.extra_args):
@@ -849,6 +848,12 @@ class Router:
                 cmd.append("--layer-heights=" + ",".join(f"{h:.4f}" for h in heights))
         if getattr(self, "diff_pairs", 0):
             cmd.append(f"--pairs={self._pairs}")
+        return cmd
+
+    def route(self, on_line=None):
+        """Runs fastroute on the exported file (does not touch the board)."""
+        result = RouteResult()
+        cmd = self.command()
         kwargs = {}
         if os.name == "nt":
             kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW

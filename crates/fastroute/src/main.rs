@@ -13,11 +13,15 @@
 //! * `--no-time-limits`: count-mode board limits and no stage wall clock limits, without
 //!   changing the optimizer mode.
 //! * `--max-time=SECONDS`: stop after this wall-clock time and write the best result.
+//! * `--initial-session=FILE`: start from the wiring of a session file.
+//! * `--report=FILE` (+ `--diagnose`): JSON summary of the result, see [`report`].
 //! * `-v`: debug output.
 //!
 //! The session file (`-do`) is also written whenever routing or optimizing reaches a new best
 //! board, so a run that is stopped (Ctrl+C / SIGTERM / Ctrl+Break: stop and write the best
 //! result; a second signal exits at once) or killed leaves its best result behind.
+
+mod report;
 
 use std::io::Write as _;
 use std::process::ExitCode;
@@ -45,6 +49,9 @@ struct Args {
     tune: Option<String>,
     pairs: Option<String>,
     no_neckdown_classes: Vec<String>,
+    report: Option<String>,
+    diagnose: bool,
+    initial_session: Option<String>,
     verbose: bool,
     rest: Vec<String>,
 }
@@ -64,6 +71,9 @@ fn parse_args() -> Result<Args, String> {
         tune: None,
         pairs: None,
         no_neckdown_classes: Vec::new(),
+        report: None,
+        diagnose: false,
+        initial_session: None,
         verbose: false,
         rest: Vec::new(),
     };
@@ -96,6 +106,11 @@ fn parse_args() -> Result<Args, String> {
                     .parse::<usize>()
                     .map_err(|_| format!("bad value in {a}"))?
                     .max(1);
+                i += 1;
+                continue;
+            }
+            "--diagnose" => {
+                args.diagnose = true;
                 i += 1;
                 continue;
             }
@@ -135,6 +150,16 @@ fn parse_args() -> Result<Args, String> {
                 }
                 if let Some(m) = a.strip_prefix("--pairs=") {
                     args.pairs = Some(m.to_string());
+                    i += 1;
+                    continue;
+                }
+                if let Some(m) = a.strip_prefix("--initial-session=") {
+                    args.initial_session = Some(m.to_string());
+                    i += 1;
+                    continue;
+                }
+                if let Some(m) = a.strip_prefix("--report=") {
+                    args.report = Some(m.to_string());
                     i += 1;
                     continue;
                 }
@@ -178,6 +203,12 @@ options:
   --tune=FILE              length matching after routing (groups of nets, see below)
   --max-time=SECONDS       stop after this wall-clock time and write the best result
                            (Ctrl+C / SIGTERM / Ctrl+Break do the same; a second one exits)
+  --initial-session=FILE   start from the wiring of a session (.ses), e.g. a checkpoint of an
+                           earlier run, instead of the wiring in the design
+  --report=FILE            write a JSON summary: statistics, timings, unrouted connections
+                           and clearance violations
+  --diagnose               with --report: route every unrouted connection alone on the
+                           loaded board (congestion vs. blocked by geometry/rules)
   --multi-start=N          rerun the autorouter with N-1 shuffled orders in parallel if
                            connections stay unrouted (default 4; skipped after a first run
                            longer than 10 minutes)
@@ -267,6 +298,7 @@ fn run() -> Result<(), String> {
     let Some(path) = args.design_in else {
         return Err("no input design given (-de board.dsn)".into());
     };
+    let t_start = Instant::now();
     let t = Instant::now();
     let data = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
     let dsn = fr_dsn::Dsn::parse(&data).map_err(|e| format!("{path}: {e}"))?;
@@ -309,7 +341,28 @@ fn run() -> Result<(), String> {
             }
         }
     }
-    fr_io::post_load::prepare_for_routing(&mut board, &mut settings, None);
+    let initial = match &args.initial_session {
+        Some(f) => Some(std::fs::read(f).map_err(|e| format!("{f}: {e}"))?),
+        None => None,
+    };
+    let wiring_ids = |b: &RoutingBoard| -> std::collections::HashSet<fr_engine::ids::ItemId> {
+        b.get_items().into_iter().filter(|&k| b.item(k).is_trace() || b.item(k).is_via()).map(|k| b.item(k).id()).collect()
+    };
+    let before = wiring_ids(&board);
+    if let Some(summary) = fr_io::post_load::prepare_for_routing(&mut board, &mut settings, initial.as_deref()) {
+        // the session reader fixes what it imports (as Freerouting does); here the session is
+        // a starting point that may be ripped and optimized like routed wiring
+        let imported: Vec<_> = wiring_ids(&board).difference(&before).copied().collect();
+        fr_engine::diffpair::release_pairs(&mut board, &imported);
+        log::info!(
+            target: "fastroute",
+            "initial session '{}': {} wires and {} vias imported ({} errors)",
+            args.initial_session.as_deref().unwrap_or(""),
+            summary.wires_imported,
+            summary.vias_imported,
+            summary.errors_encountered
+        );
+    }
     pipeline::deferred_post_load_processing(&mut board);
     log::info!(
         target: "fastroute",
@@ -439,6 +492,9 @@ fn run() -> Result<(), String> {
         log::info!(target: "fastroute", "diff pairs pre-routed in {:.2} s ({} items fixed during routing)", t.elapsed().as_secs_f64(), fixed.len());
         pair_items = fixed;
     }
+    let load_s = t_start.elapsed().as_secs_f64();
+    // the board as loaded, for routing unrouted connections alone afterwards (--diagnose)
+    let loaded = (args.report.is_some() && args.diagnose).then(|| board.clone());
     let t = Instant::now();
     pipeline::run_pipeline(&mut board, &mut settings, &ctx);
     if !pair_items.is_empty() {
@@ -451,7 +507,8 @@ fn run() -> Result<(), String> {
             pipeline::run_pipeline(&mut board, &mut settings, &ctx);
         }
     }
-    log::info!(target: "fastroute", "routing finished in {:.2} s", t.elapsed().as_secs_f64());
+    let route_s = t.elapsed().as_secs_f64();
+    log::info!(target: "fastroute", "routing finished in {route_s:.2} s");
     if fired.load(Ordering::SeqCst) {
         log::info!(target: "fastroute", "note: a board time limit fired ({mode:?})");
     }
@@ -498,6 +555,12 @@ fn run() -> Result<(), String> {
         let bytes = fr_io::ses_writer::ses_bytes(&board, &design_name);
         write_ses_atomically(&out, &bytes).map_err(|e| format!("{out}: {e}"))?;
         log::info!(target: "fastroute", "saved '{out}' ({} bytes)", bytes.len());
+    }
+    if let Some(out) = &args.report {
+        let timings = report::Timings { load_s, route_s, total_s: t_start.elapsed().as_secs_f64() };
+        let unclamped = !args.parity && !args.no_enhancements;
+        report::write_report(out, &path, &board, loaded.as_ref(), &settings, unclamped, &timings).map_err(|e| format!("{out}: {e}"))?;
+        log::info!(target: "fastroute", "report written to '{out}'");
     }
     Ok(())
 }
@@ -556,10 +619,17 @@ fn describe_item(board: &BasicBoard, key: ItemKey) -> String {
 
 /// mimalloc is noticeably faster than the system allocator for the many small, short-lived
 /// allocations of the geometry code (see docs/PERFORMANCE.md).
+#[cfg(not(feature = "dhat-heap"))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static GLOBAL: dhat::Alloc = dhat::Alloc;
+
 fn main() -> ExitCode {
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::new_heap();
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

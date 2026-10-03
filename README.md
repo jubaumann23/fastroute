@@ -1,7 +1,7 @@
 # fastroute
 
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-db61a2?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/parisxmas)
-[![Open Collective](https://img.shields.io/badge/Open%20Collective-support-7FADF2?logo=opencollective&logoColor=white)](https://opencollective.com/fastroute)
+[![Open Collective](https://img.shields.io/badge/Open%20Collective-support-7FADF2?logo=opencollective&logoColor=white)](https://opencollective.com/parismxas)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 **PCB autorouter for KiCad and Specctra DSN** — a Rust port of the
@@ -110,6 +110,9 @@ as `--gui.enabled` are ignored. fastroute adds:
 | `--pairs=FILE` | Differential pairs: routed first, the second net following the first at the pair gap |
 | `--no-neckdown-classes=A,B` | Keep the full trace width of these classes at pins (controlled impedance) |
 | `--max-time=SECONDS` | Stop after this time and write the best result so far |
+| `--initial-session=FILE` | Start from the wiring of a session file (e.g. a checkpoint of an earlier run) and continue routing and optimizing it |
+| `--report=FILE` | Write a JSON summary: statistics, timings, every unrouted connection and clearance violation |
+| `--diagnose` | With `--report`: route each unrouted connection alone on the loaded board, classifying it as congestion (other traces in the way) or blocked (geometry or rules) |
 | `-V`, `--version` | Print the version |
 | `-v` | Verbose progress |
 
@@ -146,7 +149,7 @@ The Java reference build and scripts: `scripts/java-parity.sh`, `scripts/parity-
 
 fastroute is developed in spare time. If it saves you routing hours or a Java setup, you can
 support its development through [GitHub Sponsors](https://github.com/sponsors/parisxmas) or
-[Open Collective](https://opencollective.com/fastroute). Bug reports with a board that shows
+[Open Collective](https://opencollective.com/parismxas). Bug reports with a board that shows
 the problem (a `.dsn` file is enough) are just as welcome.
 
 ## License
