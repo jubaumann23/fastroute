@@ -1100,18 +1100,42 @@ fn stream_parallel(
                     limit.store(0, AtOrd::SeqCst);
                     break;
                 }
-                let r = evaluate_fresh(baseline, candidates[i], params);
+                let mut r = evaluate_fresh(baseline, candidates[i], params);
                 let mut sh = shared.lock().unwrap();
+                // fastroute: results wait for their turn in `slots`, improved ones with their
+                // whole board (behind one slow candidate, hundreds of boards piled up: 1.7 GB live
+                // on a 265-part board). Only a candidate better than the current winner can
+                // become the winner (the winner only gets better and `improved_over` is a strict
+                // total order), so the others need no board.
+                if let (Some(c), Some(w)) = (r.as_mut(), sh.consumer.winning.as_ref()) {
+                    if c.board.is_some() && !c.result.improved_over(&w.result) {
+                        c.board = None;
+                    }
+                }
                 sh.slots[i] = Some(r);
+                let mut new_winner = false;
                 while sh.interrupted.is_none() && sh.pos < n && !sh.consumer.done && sh.slots[sh.pos].is_some() {
                     let pos = sh.pos;
                     let r = sh.slots[pos].take().unwrap();
                     sh.pos += 1;
-                    if sh.consumer.consume(r) {
+                    let before = sh.consumer.winning.as_ref().map(|w| w.result.item_id);
+                    let stop = sh.consumer.consume(r);
+                    new_winner |= sh.consumer.winning.as_ref().map(|w| w.result.item_id) != before;
+                    if stop {
                         limit.store(sh.pos, AtOrd::SeqCst);
                         // drop the results evaluated beyond the stop point
                         for slot in sh.slots.iter_mut().skip(pos + 1) {
                             *slot = None;
+                        }
+                    }
+                }
+                if new_winner {
+                    let sh = &mut *sh;
+                    if let Some(w) = sh.consumer.winning.as_ref() {
+                        for c in sh.slots[sh.pos..].iter_mut().flatten().flatten() {
+                            if c.board.is_some() && !c.result.improved_over(&w.result) {
+                                c.board = None;
+                            }
                         }
                     }
                 }

@@ -112,7 +112,7 @@ autorouter `-mp 3` / bm04 autorouter (all byte-identical to their references).
 |---|---|---|---|
 | R2.1 | Restored the mimalloc `#[global_allocator]` (lost in round 1) | `fastroute/src/main.rs` | bm05 full 15.22 → 13.78 s, interf_u full 17.15 → 15.91 s (wall) |
 | R2.2 | Intersection of two simplices: the two line arrays are already sorted, so Java's TimSort of the concatenation equals the stable merge of the two runs whenever `Line.compareTo` is exact and consistent (non-zero directions with components < 2^26: the `f64` determinant is exact, the comparator is the angle order). Checked per call, otherwise TimSort; unit test against TimSort | `fr-geom/simplex.rs` (`merge_sorted_runs`) | 13.57/15.30/8.49/23.45 → 13.26/15.11/8.25/22.79 |
-| R2.3 | Cloning a `MinAreaTree` no longer copies the grid index (rebuilt lazily; board snapshots and deep copies are rarely queried) | `min_area_tree.rs` | CM5 full peak RSS 361 → 325 MB |
+| R2.3 | Cloning a `MinAreaTree` no longer copies the grid index (rebuilt lazily; board snapshots and deep copies are rarely queried) | `min_area_tree.rs` | CM5 full peak RSS 361 → 325 MB (superseded: the grid is now shared, see "Memory in parallel mode") |
 | R2.4 | Parallel optimizer: candidates are claimed in order by the workers (shared counter) and results consumed strictly in candidate order as soon as available, instead of fixed chunks with a barrier; nothing after the stop point is consumed, so the result is unchanged for any thread count | `pipeline/optimizer.rs` (`stream_parallel`, `PassConsumer`) | 8 threads: interf_u 9.74 → 7.93 s, bm06 2.89 → 1.65 s, bm11 1.50 → 1.46 s (wall) |
 | R2.5 | 45-degree `completeShape`/`restrainShape` on plain `(IntOctagon, IntOctagon)` pairs with two reused buffers (no `TileShape`/`Vec` per obstacle and room); the bounding union only adds the new rooms (the component-wise union is idempotent) | `complete_shape.rs` | 13.26/15.18/8.26/22.76 → 12.99/14.68/8.11/22.57 |
 | R2.6 | Redundant-line removal reads each line's int direction once into a stack array | `simplex.rs` | → 12.89/14.65/8.05/22.39 |
@@ -176,12 +176,64 @@ bm04 342 → 201 MB, multichannel_mixer 540 → 120 MB). The 8-thread parallel r
 (interf_u 345 → 535 MB): mimalloc keeps per-thread heaps for the 8 concurrent board clones
 (chunked evaluation with mimalloc: 516 MB, so it is the allocator, not the streaming).
 
+## Memory in parallel mode
+
+The default (parallel) mode used far more memory than the exact mode: 2.6 GB for the routing
+stage and 4.1 GB in total on an 874-part 6-layer board, 3.7–4.8 GB on lora_node and some
+PCBench boards. Measured with `--report` peak RSS, a sampling RSS trace per stage, dhat
+(`cargo build --features dhat-heap`, writes `dhat-heap.json`) and a counting allocator:
+
+* A board clone was a deep copy (37 MB on the 874-part board: item slots 9 MB, three search
+  trees 7–13 MB each). The parallel pass took two per connection (the batch-start board and the
+  worker board) and kept both until the result was committed in pass order: 18 connections in
+  flight × 2 × 37 MB, the +1.3 GB jump within a second of the pass start.
+* A maze search kept every element it ever queued; searches over the whole board (failing
+  connections) reached ~88 MB each, on every worker thread.
+* Every clone rebuilt the grid index of its trees on its first query.
+* The parallel optimizer consumes candidate results in candidate order; the results evaluated
+  ahead wait in a buffer, improved ones with their whole board. Behind one slow candidate,
+  hundreds of boards piled up: 1.77 GB live (2.9 GB RSS) in one pass on the 265-part gs board.
+* The rest is mimalloc's per-thread retention (peak live heap 332 MB vs. 811 MB RSS in the
+  lora_node optimizer); its purge options did not change the peak.
+
+Changes (results unchanged: byte-identical SES with and without `--parity`, all 20 parity
+boards, full pipeline with the optimizer):
+
+| Change | Where |
+|---|---|
+| A worker keeps only its changes and copies of the items involved; the connections dispatched before the board changes share one snapshot | `parallel_pass.rs` (`Condensed`), `autorouter.rs` |
+| Item slots, tree nodes and the per-item tree info in `CowVec` (chunks of 64 behind `Arc`s, copied on write): a clone costs ~1–3 MB instead of 37 MB | `datastructures/cow_vec.rs`, `item_list.rs`, `min_area_tree.rs`, `search_tree.rs` |
+| The traversal array (`hot`) and the grid index shared whole behind an `Arc` (copied by the first change of a clone): clones keep the grid instead of rebuilding it, and the hottest reads stay plain slice reads | `min_area_tree.rs` |
+| Maze element slots reused once taken from the queue (the comparator does not depend on the index) | `maze.rs` |
+| Optimizer: a buffered result keeps its board only while it can still become the pass winner (better than the current winner; `improved_over` is a strict total order and the winner only improves). A window limiting how far workers run ahead saved slightly more memory but made the pass up to 60 % slower | `optimizer.rs` (`stream_parallel`) |
+
+Peak RSS before → after (routing stage `-mp 3`, optimizer off; full pipeline where noted):
+
+| Board | Before | After |
+|---|---|---|
+| 874-part 6-layer board | 2593 MB (69.6 s) | 1103 MB (61.8 s) |
+| CM5_MINIMA_3 | 851 MB | 445 MB |
+| DAC2020_bm04 | 569 MB | 274 MB |
+| interf_u | 445 MB | 189 MB |
+| interf_u, full pipeline | 880 MB | 511 MB |
+| DAC2020_bm11, full pipeline | 805 MB | 446 MB |
+| gs (265 parts), optimizer from a routed session | 2947 MB | 1218 MB (pass time unchanged) |
+
+Over the 92 boards of `scripts/bench.py --suite dac,kicad,dir:...,pcbench:60` (before the
+optimizer change): sum of peak RSS 57.3 → 39.1 GB, total time 2888 → 2682 s, same unrouted
+and violation totals.
+
+Time: parallel mode unchanged or faster; exact mode (single thread) +3–4 % (CM5 23.8 → 24.5 s,
+interf_u 14.8 → 15.4 s) from the chunked node and slot reads. Storing the traversal array and
+the grid chunked as well cost +9–14 %, which is why they are shared whole.
+
 ## Next ideas
 
 * 45-degree `completeShape` tree walk (~9 % self) and grid scans (~6 %) remain the largest
   single items; everything else is ≤ 5 %.
 * Maze `TreeSet`: door ids are recomputed through room lookups on every comparison; caching
   them needs invalidation whenever a room is completed.
-* Parallel mode: cap mimalloc's per-thread retention (e.g. `mi_collect` after each candidate)
-  if memory matters more than ~2 % speed.
+* Parallel mode: the remaining gap between live heap and RSS is mimalloc's per-thread
+  retention (e.g. `mi_collect` after each candidate, if memory matters more than ~2 % speed);
+  multi-start variants still hold one board and routing state each.
 * Make PGO the default release pipeline (CI step running `scripts/build-pgo.sh`).

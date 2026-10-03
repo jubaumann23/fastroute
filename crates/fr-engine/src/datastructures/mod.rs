@@ -14,6 +14,7 @@
 //! `Vec` is used as the reusable traversal stack; Java's 40 000 element depth limit, which throws
 //! `IllegalStateException`, is not reproduced).
 
+pub mod cow_vec;
 pub mod id_generator;
 pub mod identifier_type;
 pub mod indent_file_writer;

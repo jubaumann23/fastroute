@@ -17,6 +17,7 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Bound;
 
+use crate::datastructures::cow_vec::CowVec;
 use crate::ids::{ComponentNo, ItemId, NetNo};
 
 use super::item::{Item, ItemKey};
@@ -127,7 +128,7 @@ pub struct ItemListCursor {
 /// Arena + item list + indexes (Java `UndoableObjects` + `BoardItemRepository` scans).
 #[derive(Clone, Debug, Default)]
 pub struct ItemRepository {
-    slots: Vec<Slot>,
+    slots: CowVec<Slot>,
     free: Vec<u32>,
     list: IdOrderedMap,
     by_id: HashMap<i32, ItemKey>,

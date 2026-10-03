@@ -126,8 +126,11 @@ pub struct MazeSearchEngine<'a> {
     pub eng: &'a mut AutorouteEngine,
     pub board: &'a mut RoutingBoard,
     pub ctrl: &'a AutorouteControl,
-    /// All elements ever added (the queue holds indices).
+    /// The elements (the queue holds indices). fastroute: the slot of an element taken from the
+    /// queue is reused (its data is copied to its door section when it is taken), so the list
+    /// only grows to the largest queue size; a search over the whole board added millions.
     pub elements: Vec<MazeListElement>,
+    free_elements: Vec<usize>,
     /// Java `mazeExpansionList` (a `TreeSet`).
     pub queue: JavaTreeSet<usize>,
     /// If set, the indices of the elements added to the queue are recorded (debugging aid).
@@ -149,6 +152,7 @@ impl<'a> MazeSearchEngine<'a> {
             board,
             ctrl,
             elements: Vec::new(),
+            free_elements: Vec::new(),
             queue: JavaTreeSet::new(fr_jcompat::treemap::NaturalOrder),
             trace_added: None,
             destination_distance,
@@ -202,8 +206,16 @@ impl<'a> MazeSearchEngine<'a> {
                 }
             }
         }
-        let index = self.elements.len();
-        self.elements.push(element);
+        let index = match self.free_elements.pop() {
+            Some(i) => {
+                self.elements[i] = element;
+                i
+            }
+            None => {
+                self.elements.push(element);
+                self.elements.len() - 1
+            }
+        };
         let elements = &self.elements;
         let eng: &AutorouteEngine = self.eng;
         let added = self.queue.add_by(index, |a, b| compare_elements(&elements[*a], &elements[*b], eng));
@@ -211,6 +223,9 @@ impl<'a> MazeSearchEngine<'a> {
             if let Some(t) = &mut self.trace_added {
                 t.push(index);
             }
+        } else if self.trace_added.is_none() {
+            // an equal element is queued already: the slot is free again
+            self.free_elements.push(index);
         }
     }
 
@@ -244,6 +259,10 @@ impl<'a> MazeSearchEngine<'a> {
             }
             let index = self.queue.poll_first().unwrap();
             let e = self.elements[index].clone();
+            // (kept while tracing: the trace reads the elements after the search)
+            if self.trace_added.is_none() {
+                self.free_elements.push(index);
+            }
             if !self.eng.element(e.door, e.section_no_of_door).is_occupied {
                 list_element = Some(e);
                 break;

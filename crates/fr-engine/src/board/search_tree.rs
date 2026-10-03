@@ -25,6 +25,7 @@ use fr_geom::{
 };
 
 use crate::autoroute::rooms::RoomKey;
+use crate::datastructures::cow_vec::CowVec;
 use crate::datastructures::{LeafId, MinAreaTree};
 use crate::ids::{AngleRestriction, ClearanceClassNo, LayerNo, NetNo};
 use crate::rules::BoardRules;
@@ -124,7 +125,7 @@ pub struct ShapeSearchTree {
     /// The clearance class for which the shapes of this tree are compensated (0 = none).
     pub compensated_clearance_class_no: ClearanceClassNo,
     pub(crate) tree: MinAreaTree<TreeObject>,
-    item_info: Vec<Option<ItemTreeInfo>>,
+    item_info: CowVec<Option<ItemTreeInfo>>,
     rooms: HashMap<RoomKey, RoomTreeInfo>,
     /// Content epoch of the item entries (leaves, shapes, side table; not the rooms), see
     /// [`super::epoch`].
@@ -141,7 +142,7 @@ impl ShapeSearchTree {
             kind,
             compensated_clearance_class_no,
             tree: MinAreaTree::new(dirs),
-            item_info: Vec::new(),
+            item_info: CowVec::new(),
             rooms: HashMap::new(),
             item_epoch: super::epoch::next_epoch(),
         }

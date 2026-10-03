@@ -4,6 +4,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::Arc;
 use std::time::Instant;
 
 use fr_settings::{ExpansionCostFactor, RouterSettings};
@@ -481,8 +482,8 @@ impl BatchAutorouter {
         let mut processed = 0usize;
         let params_ref = &params;
 
-        /// A finished connection: (ticket, result, ripped count, worker changes and board).
-        type Done = (usize, AutorouteAttemptResult, i32, Option<(pp::Changes, RoutingBoard, RoutingBoard)>);
+        /// A finished connection: (ticket, result, ripped count, the worker's condensed changes).
+        type Done = (usize, AutorouteAttemptResult, i32, Option<pp::Condensed>);
 
         pool.install(|| {
             rayon::scope(|scope| {
@@ -494,6 +495,9 @@ impl BatchAutorouter {
                 let mut footprints: HashMap<i32, Option<pp::Rect>> = HashMap::new();
                 let mut next_ticket = 0usize;
                 let mut next_commit = 0usize;
+                // The board as it is now, shared by all connections dispatched before the next
+                // change of the board (cleared whenever the board may have changed).
+                let mut snapshot: Option<Arc<RoutingBoard>> = None;
                 'pass: loop {
                     if stop.is_stop_autorouter_requested() {
                         break;
@@ -539,6 +543,7 @@ impl BatchAutorouter {
                                 break;
                             }
                             let nets_of: Vec<NetNo> = board.item(key).net_numbers().to_vec();
+                            snapshot = None;
                             for net in nets_of {
                                 self.route_one(board, settings, params_ref, id, net, pass_no, stop, &mut c);
                             }
@@ -552,10 +557,10 @@ impl BatchAutorouter {
                         if let Some(Some(r)) = footprints.get(&id.0) {
                             flight_rects.insert(ticket, *r);
                         }
-                        let base = board.clone();
+                        let base = snapshot.get_or_insert_with(|| Arc::new(board.clone())).clone();
                         let tx = tx.clone();
                         scope.spawn(move |_| {
-                            let mut w = base.clone();
+                            let mut w = (*base).clone();
                             let done = match w.get_item(id) {
                                 None => (ticket, AutorouteAttemptResult::new(AutorouteAttemptState::Failed), 0, None),
                                 Some(key) => {
@@ -574,11 +579,12 @@ impl BatchAutorouter {
                                             }
                                         }
                                     }
+                                    // only the changes are kept: the worker board and (unless
+                                    // shared) the batch-start board are dropped here
                                     let changes = keep.then(|| {
                                         let base_index = pp::index(&base);
                                         let ch = pp::changes(&base, &base_index, &w, margin, net);
-                                        w.clear_transient_autoroute_state();
-                                        (ch, w, base)
+                                        pp::condense(ch, &base, &w)
                                     });
                                     (ticket, result, ripped.len() as i32, changes)
                                 }
@@ -602,6 +608,8 @@ impl BatchAutorouter {
                         }
                     }
                     let (_, result, ripped_count, work) = arrived.remove(&next_commit).unwrap();
+                    // whatever follows may change the board
+                    snapshot = None;
                     let (id, net) = in_flight.remove(&next_commit).unwrap();
                     flight_rects.remove(&next_commit);
                     next_commit += 1;
@@ -618,11 +626,11 @@ impl BatchAutorouter {
                     };
                     match result.state {
                         AutorouteAttemptState::Routed => {
-                            let (ch, w, base) = work.expect("routed worker board");
-                            let applied = if !ch.copyable {
+                            let cd = work.expect("routed worker changes");
+                            let applied = if !cd.changes.copyable {
                                 None
                             } else {
-                                match pp::apply(&ch, &base, &w, board) {
+                                match pp::apply(&cd, board) {
                                     Ok(b) => Some(b),
                                     Err(pp::Reject::Changed) => {
                                         reject_changed += 1;

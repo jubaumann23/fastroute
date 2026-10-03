@@ -3,8 +3,11 @@
 //! Freerouting routes the connections of a pass one after the other on one board. Here the
 //! pass is processed in batches: each batch takes the next connections (in pass order) whose
 //! surroundings do not overlap and whose nets differ, routes each of them on its own clone of
-//! the board state at batch start (in parallel; clones share their data and cost well under a
-//! millisecond), and then commits the results in pass order. A result is committed by copying
+//! the board state at batch start (in parallel; the connections dispatched before the board
+//! changes share one snapshot, and a clone shares the item and tree storage with it until it
+//! writes, see [`crate::datastructures::cow_vec`]), and then commits the results in pass order.
+//! A worker keeps only its changes and copies of the items involved ([`Condensed`]), so no
+//! board stays alive while its result waits for its turn. A result is committed by copying
 //! its changes (inserted, removed and changed traces/vias, found by comparing item ids and
 //! content versions with the batch-start board) onto the board, if
 //! * it only changed traces and vias,
@@ -150,8 +153,29 @@ pub(super) fn changes(base: &RoutingBoard, base_index: &BoardIndex, worker: &Rou
     c
 }
 
-/// Copies `c` (made by `worker`) onto a clone of `board`. `None` if the items it replaces were
-/// changed on `board` in the meantime or the copied items violate a clearance.
+/// A worker's changes with copies of the items involved, so that the worker board and the
+/// batch-start board can be dropped as soon as the worker is done (two full boards per
+/// connection in flight otherwise; a board copy is tens of MB on large boards).
+pub(super) struct Condensed {
+    pub changes: Changes,
+    /// The batch-start items of `changes.removed` (same order).
+    removed_items: Vec<Item>,
+    /// The items to copy (`changes.inserted` order): the worker item, whether it keeps its id,
+    /// and its clearance violation count on the worker board.
+    inserted_items: Vec<(Item, bool, usize)>,
+}
+
+/// Takes what [`apply`] needs from `base` and `worker`.
+pub(super) fn condense(changes: Changes, base: &RoutingBoard, worker: &RoutingBoard) -> Condensed {
+    let removed_items = changes.removed.iter().map(|&(_, bk, _)| base.item(bk).clone()).collect();
+    let inserted_items = changes
+        .inserted
+        .iter()
+        .map(|&(wk, keep_id)| (worker.item(wk).clone(), keep_id, clearance_violation_count(worker, wk)))
+        .collect();
+    Condensed { changes, removed_items, inserted_items }
+}
+
 /// Why a result could not be copied (statistics).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Reject {
@@ -174,14 +198,17 @@ fn same_content(a: &Item, b: &Item) -> bool {
     }
 }
 
-pub(super) fn apply(c: &Changes, base: &RoutingBoard, worker: &RoutingBoard, board: &RoutingBoard) -> Result<RoutingBoard, Reject> {
-    for &(id, bk, bv) in &c.removed {
+/// Copies the condensed changes onto a clone of `board`. `Err` if the items they replace were
+/// changed on `board` in the meantime or the copied items violate a clearance.
+pub(super) fn apply(cd: &Condensed, board: &RoutingBoard) -> Result<RoutingBoard, Reject> {
+    let c = &cd.changes;
+    for (&(id, bk, bv), base_item) in c.removed.iter().zip(&cd.removed_items) {
         match board.get_item(ItemId(id)) {
             Some(k) if k == bk && board.items.version(k) == bv => {}
-            Some(k) if same_content(board.item(k), base.item(bk)) => {}
+            Some(k) if same_content(board.item(k), base_item) => {}
             other => {
                 if log::log_enabled!(target: "fr_engine::pipeline::diag", log::Level::Debug) {
-                    let bi = base_item(worker, bk);
+                    let bi = base_item;
                     let why = match other {
                         None => "gone".to_string(),
                         Some(k) if k != bk => "other key".to_string(),
@@ -201,21 +228,16 @@ pub(super) fn apply(c: &Changes, base: &RoutingBoard, worker: &RoutingBoard, boa
     if !keys.is_empty() {
         m.remove_items(keys);
     }
-    let mut new_keys = Vec::with_capacity(c.inserted.len());
-    for &(wk, keep_id) in &c.inserted {
-        let item = worker.item(wk);
-        let id = if keep_id { item.id() } else { ItemId(m.communication.id_generator.new_id()) };
-        new_keys.push((m.insert_item(item.copy_with_id(id)), wk));
+    let mut new_keys = Vec::with_capacity(cd.inserted_items.len());
+    for (item, keep_id, worker_violations) in &cd.inserted_items {
+        let id = if *keep_id { item.id() } else { ItemId(m.communication.id_generator.new_id()) };
+        new_keys.push((m.insert_item(item.copy_with_id(id)), *worker_violations));
     }
     // no violations beyond the ones the item already had on the worker board
-    for (k, wk) in new_keys {
-        if clearance_violation_count(&m, k) > clearance_violation_count(worker, wk) {
+    for (k, worker_violations) in new_keys {
+        if clearance_violation_count(&m, k) > worker_violations {
             return Err(Reject::Clearance);
         }
     }
     Ok(m)
-}
-
-fn base_item(worker: &RoutingBoard, key: ItemKey) -> &crate::board::Item {
-    worker.items.get(key)
 }

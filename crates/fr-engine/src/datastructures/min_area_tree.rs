@@ -25,10 +25,11 @@
 //! reproduces that traversal (`ArrayStack` LIFO order: second child popped first).
 
 use std::cmp::Ordering;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use fr_geom::{IntBox, RegularTileShape, ShapeBoundingDirections, TileShape};
 
+use super::cow_vec::CowVec;
 use super::leaf_grid::{xy_range, LayeredGrid};
 
 /// Minimum number of leaves for building the secondary grid index.
@@ -148,7 +149,7 @@ pub struct TreeStatistics {
 #[derive(Debug)]
 pub struct MinAreaTree<O> {
     bounding_directions: ShapeBoundingDirections,
-    nodes: Vec<Node<O>>,
+    nodes: CowVec<Node<O>>,
     free_head: u32,
     root: u32,
     leaf_count: i32,
@@ -156,16 +157,17 @@ pub struct MinAreaTree<O> {
     revision: u64,
     /// Compact copy of the data the traversals read (bounds parameters, mask, children), kept in
     /// sync with `nodes` by [`Self::sync_hot`].
-    hot: Vec<HotNode>,
+    hot: Arc<Vec<HotNode>>,
     /// The variant of all bounding shapes (see [`BoundsKind`]).
     bounds_kind: BoundsKind,
     /// Secondary index over the leaves for [`Self::overlapping_leaves_indexed`], built lazily by
     /// the first query and maintained by insert/remove (dropped when the tree has grown a lot).
-    grid: OnceLock<LayeredGrid>,
+    grid: OnceLock<Arc<LayeredGrid>>,
 }
 
-/// Cloning does not copy the secondary grid index (it is rebuilt lazily by the first indexed
-/// query of the clone): most clones (board snapshots, deep copies) are never queried.
+/// Cloning shares the node storage and the secondary grid index with the original until either
+/// is changed: the nodes in chunks ([`CowVec`]), the traversal array and the grid, which the
+/// queries read most, as a whole (copied by the first change of a clone).
 impl<O: Clone> Clone for MinAreaTree<O> {
     fn clone(&self) -> Self {
         MinAreaTree {
@@ -177,7 +179,7 @@ impl<O: Clone> Clone for MinAreaTree<O> {
             revision: self.revision,
             hot: self.hot.clone(),
             bounds_kind: self.bounds_kind,
-            grid: OnceLock::new(),
+            grid: self.grid.clone(),
         }
     }
 }
@@ -211,12 +213,12 @@ impl<O: Copy> MinAreaTree<O> {
     pub fn new(bounding_directions: ShapeBoundingDirections) -> Self {
         MinAreaTree {
             bounding_directions,
-            nodes: Vec::new(),
+            nodes: CowVec::new(),
             free_head: NONE,
             root: NONE,
             leaf_count: 0,
             revision: 0,
-            hot: Vec::new(),
+            hot: Arc::new(Vec::new()),
             bounds_kind: BoundsKind::None,
             grid: OnceLock::new(),
         }
@@ -263,7 +265,7 @@ impl<O: Copy> MinAreaTree<O> {
             let idx = u32::try_from(self.nodes.len()).expect("MinAreaTree: too many nodes");
             assert!(idx != NONE, "MinAreaTree: too many nodes");
             self.nodes.push(Node { bounds, mask, parent, generation: 0, kind });
-            self.hot.push(HotNode { p: [0; 8], mask: 0, first: NONE, second: NONE });
+            Arc::make_mut(&mut self.hot).push(HotNode { p: [0; 8], mask: 0, first: NONE, second: NONE });
             self.sync_hot(idx);
             idx
         }
@@ -278,11 +280,11 @@ impl<O: Copy> MinAreaTree<O> {
             _ => (NONE, NONE),
         };
         if matches!(node.kind, NodeKind::Free { .. }) {
-            self.hot[idx as usize] = HotNode { p: [0; 8], mask: 0, first, second };
+            Arc::make_mut(&mut self.hot)[idx as usize] = HotNode { p: [0; 8], mask: 0, first, second };
             return;
         }
         let (p, kind) = params(&node.bounds);
-        self.hot[idx as usize] = HotNode { p, mask: node.mask, first, second };
+        Arc::make_mut(&mut self.hot)[idx as usize] = HotNode { p, mask: node.mask, first, second };
         if self.bounds_kind != kind {
             self.bounds_kind = if self.bounds_kind == BoundsKind::None { kind } else { BoundsKind::Mixed };
         }
@@ -430,7 +432,8 @@ impl<O: Copy> MinAreaTree<O> {
             if self.leaf_count > 4 * grid.built_leaf_count.max(GRID_MIN_LEAVES) {
                 self.grid = OnceLock::new();
             } else {
-                grid.insert(leaf, &self.nodes[leaf as usize].bounds, self.nodes[leaf as usize].mask);
+                // (copies the grid first if a clone still shares it)
+                Arc::make_mut(grid).insert(leaf, &self.nodes[leaf as usize].bounds, self.nodes[leaf as usize].mask);
             }
         }
 
@@ -524,7 +527,7 @@ impl<O: Copy> MinAreaTree<O> {
         self.revision += 1;
         self.leaf_count -= 1;
         if let Some(grid) = self.grid.get_mut() {
-            grid.remove(leaf, &self.nodes[leaf as usize].bounds, self.nodes[leaf as usize].mask);
+            Arc::make_mut(grid).remove(leaf, &self.nodes[leaf as usize].bounds, self.nodes[leaf as usize].mask);
         }
         self.free(leaf);
         if parent == NONE {
@@ -738,7 +741,7 @@ impl<O: Copy> MinAreaTree<O> {
             self.overlapping_leaves_masked(shape, mask, stack, out);
             return;
         }
-        let grid = self.grid.get_or_init(|| self.build_grid());
+        let grid = self.grid.get_or_init(|| Arc::new(self.build_grid()));
         let supported = grid.candidates(shape, mask, |n| {
             let node = &self.nodes[n as usize];
             if regular_intersects(&node.bounds, shape) {
@@ -753,7 +756,7 @@ impl<O: Copy> MinAreaTree<O> {
     fn build_grid(&self) -> LayeredGrid {
         let extent = xy_range(&self.nodes[self.root as usize].bounds);
         let mut counts = [0i64; 65];
-        for node in &self.nodes {
+        for node in self.nodes.iter() {
             if let NodeKind::Leaf { .. } = node.kind {
                 if node.mask.count_ones() == 1 {
                     counts[node.mask.trailing_zeros() as usize] += 1;
