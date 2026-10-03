@@ -118,6 +118,8 @@ pub enum KeepoutKind {
     Keepout,
     ViaKeepout,
     PlaceKeepout,
+    /// fastroute: `wire_keepout` blocks traces only (Freerouting reads it as a `keepout`).
+    WireKeepout,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -655,6 +657,7 @@ fn read_structure(l: &List, skip_plane_windows: bool, warnings: &mut Vec<String>
                 let kind = match head.to_ascii_lowercase().as_str() {
                     "via_keepout" => KeepoutKind::ViaKeepout,
                     "place_keepout" => KeepoutKind::PlaceKeepout,
+                    "wire_keepout" => KeepoutKind::WireKeepout,
                     _ => KeepoutKind::Keepout,
                 };
                 if let Some(area) = read_area(sub, false, warnings) {

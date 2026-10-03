@@ -94,6 +94,17 @@ zones are removed for routing and their nets are routed with tracks, then the
 zones are refilled. `--zones-as-planes` (`route_zone_nets=False`) keeps every
 zone as a plane instead, like the plain Freerouting flow.
 
+Other `route_cli.py` options:
+
+| Option | What it does |
+|---|---|
+| `--obstacle-zones=GND,GUC` | zones of these nets / net classes (`*`, `?` allowed) stay fixed copper that other nets must not cross; their fill (not the outline) is the obstacle |
+| `--clearance-margin-um=5` | added to every clearance for the router (KiCad measures exact via circles); 0 turns it off |
+| `--export-only --work-dir DIR` | only writes the prepared DSN and the fastroute arguments (`args.txt`) |
+
+`.kicad_dru` rules the plugin cannot carry over are listed as warnings before routing, with the
+reason; nets longer than a `length (max …)` rule are listed after routing.
+
 `tests/e2e.sh` routes the KiCad demo boards this way and runs KiCad's DRC on
 the result (optionally side by side with Freerouting via `FREEROUTING_CMD`).
 

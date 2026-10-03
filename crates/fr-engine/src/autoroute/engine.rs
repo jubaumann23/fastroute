@@ -1344,7 +1344,9 @@ impl AutorouteEngine {
             for entry in overlaps {
                 let Some(key) = entry.object.item() else { continue };
                 let item = board.item(key);
-                if item.is_drillable(net_number) {
+                // (a via in a trace-only keepout only helps if two other layers can take its
+                // traces: not on two-layer boards, where it only produced failing attempts)
+                if item.is_drillable(net_number) && !(item.is_wire_obstacle_area() && board.layer_count() <= 2) {
                     continue;
                 }
                 if item.is_pin() && attach_smd && item.drill_allowed(board) && item.contains_net(net_number) {

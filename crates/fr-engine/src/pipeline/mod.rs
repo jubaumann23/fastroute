@@ -217,7 +217,8 @@ fn multi_start(board: &mut RoutingBoard, start: &RoutingBoard, settings: &Router
     use rayon::prelude::*;
     let mut stats = StatsCache::new();
     let first = stats.score(board, settings);
-    if first.incomplete_count == 0 || ctx.stop.is_stop_requested() {
+    // connections of ignored net classes are never routed: no variant would do better
+    if first.incomplete_count - stats::ignored_incomplete_count(board) <= 0 || ctx.stop.is_stop_requested() {
         return;
     }
     let variants: Vec<(usize, RoutingBoard, stats::Score)> = (1..ctx.multi_start)

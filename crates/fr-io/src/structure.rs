@@ -305,9 +305,12 @@ impl Loader<'_> {
             KeepoutKind::PlaceKeepout,
         ] {
             for (idx, (k, area)) in s.keepouts.iter().enumerate() {
-                if *k != kind {
+                // wire keepouts are keepouts in Freerouting: same list, same order
+                let list_kind = if *k == KeepoutKind::WireKeepout { KeepoutKind::Keepout } else { *k };
+                if list_kind != kind {
                     continue;
                 }
+                let kind = *k;
                 let n = valid_prefix(self.order.keepout_layers_before[idx]);
                 let pls = &self.parser_layers[..n];
                 let resolved: Vec<Option<PShape<'_>>> = area
@@ -648,6 +651,7 @@ impl Loader<'_> {
                 KeepoutKind::ViaKeepout => InsertRequest::ViaObstacle(req),
                 KeepoutKind::PlaceKeepout => InsertRequest::ComponentObstacle(req),
                 KeepoutKind::Keepout => InsertRequest::Obstacle(req),
+                KeepoutKind::WireKeepout => InsertRequest::WireObstacle(req),
             });
         }
         Ok(())

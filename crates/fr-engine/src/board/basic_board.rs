@@ -86,6 +86,9 @@ pub struct BasicBoard {
     /// fastroute: pins and vias of a net whose copper overlaps on a common layer are in contact
     /// (Freerouting requires equal centers). See [`Self::set_overlap_contacts`].
     pub(crate) overlap_contacts: bool,
+    /// fastroute: the fanout's fallback to the board's default vias only takes vias of the
+    /// net's own via clearance class (see `RoutingBoard::fanout`).
+    pub fallback_vias_own_class: bool,
     /// Undo bookkeeping of the item list (Java `UndoableObjects` levels), see [`super::undo`].
     pub(crate) undo: super::undo::UndoJournal,
 }
@@ -118,6 +121,20 @@ impl BasicBoard {
     /// fastroute: counts overlapping copper of a net's pins and vias as contact (see
     /// `overlap_contacts`); renews the content epochs, so no cached contact or unrouted count
     /// of the other rule is used afterwards.
+    /// Freerouting reads a `wire_keepout` as a plain keepout (also blocking vias): turns the
+    /// trace-only keepouts into keepouts (`--parity`, `--no-enhancements`).
+    pub fn wire_keepouts_as_keepouts(&mut self) {
+        let keys: Vec<ItemKey> = self.items.iter().collect();
+        for k in keys {
+            if let super::item::ItemKind::ObstacleArea(a) = &mut self.items.get_mut(k).kind {
+                if a.kind == super::item::ObstacleKind::WireKeepout {
+                    a.kind = super::item::ObstacleKind::Keepout;
+                }
+            }
+        }
+        self.items.touch_global();
+    }
+
     pub fn set_overlap_contacts(&mut self, on: bool) {
         self.overlap_contacts = on;
         self.items.touch_global();
@@ -157,6 +174,7 @@ impl BasicBoard {
             autoroute_maintenance: None,
             java_variant: JavaVariant::Source,
             overlap_contacts: false,
+            fallback_vias_own_class: false,
             undo: super::undo::UndoJournal::default(),
         };
         board.insert_outline(outline_shapes, outline_cl_class_no);

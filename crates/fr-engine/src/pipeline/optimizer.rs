@@ -285,6 +285,8 @@ struct CandidateParams<'a> {
 const GREEDY_MAX_REJECTED_IN_ROW: usize = 10;
 const GREEDY_MIN_BUDGET: Duration = Duration::from_secs(2);
 const GREEDY_MAX_BUDGET: Duration = Duration::from_secs(60);
+/// fastroute: greedy phase after a pass ran out of the optimizer's time budget.
+const GREEDY_AFTER_TIMEOUT_BUDGET: Duration = Duration::from_secs(10);
 
 fn deadline_passed(deadline: Option<Instant>) -> bool {
     deadline.map(|d| Instant::now() >= d).unwrap_or(false)
@@ -779,6 +781,7 @@ impl BatchOptimizer {
         params: &CandidateParams<'_>,
         mut candidates: Vec<ItemRouteResult>,
         budget: Duration,
+        ignore_deadline: bool,
     ) -> usize {
         // compare_to orders better results first (fewer incompletes, vias, length; then id).
         candidates.sort_by(|a, b| a.compare_to(b));
@@ -792,7 +795,7 @@ impl BatchOptimizer {
         let mut rejected_in_row = 0;
         let mut current = stats.score(board, settings);
         for c in candidates {
-            if ctx.stop.is_stop_requested() || deadline_passed(self.deadline) {
+            if ctx.stop.is_stop_requested() || (!ignore_deadline && deadline_passed(self.deadline)) {
                 break;
             }
             if start.elapsed() >= budget || rejected_in_row >= GREEDY_MAX_REJECTED_IN_ROW {
@@ -807,7 +810,8 @@ impl BatchOptimizer {
             rejected_in_row += 1;
             let mut trial = board.clone();
             let Some(key) = trial.get_item(ItemId(c.item_id)) else { continue };
-            let p = CandidateParams { baseline_trace_length: light_statistics(&trial).1 as f64, ..*params };
+            let deadline = if ignore_deadline { None } else { params.deadline };
+            let p = CandidateParams { baseline_trace_length: light_statistics(&trial).1 as f64, deadline, ..*params };
             let ok = catch_unwind(AssertUnwindSafe(|| opt_route_item_on_board(&mut trial, key, &p)))
                 .map(|r| r.improved)
                 .unwrap_or(false);
@@ -918,6 +922,9 @@ impl BatchOptimizer {
             result_map: std::mem::take(&mut self.result_map),
             done: false,
             improving: Vec::new(),
+            candidates: candidates.len(),
+            started: pass_start,
+            next_progress: OPTIMIZER_PROGRESS_SECS,
         };
         let mut stopped_or_timed_out = false;
         match (&self.mode, &self.pool) {
@@ -975,18 +982,31 @@ impl BatchOptimizer {
         let winning = consumer.winning.take();
         let evaluated = consumer.evaluated;
         let mut route_improved = 0.0f32;
-        if !stopped_or_timed_out {
+        // fastroute: a pass cut short by its time budget (or a stop) still applies the best
+        // candidate it found: it was routed on the pass's baseline like any winner. Java drops
+        // it; with a budget shorter than one pass the optimizer then never improved anything.
+        if !stopped_or_timed_out || ctx.enhancements {
             if let Some(w) = winning {
                 if w.result.improved {
                     let winner_id = w.result.item_id;
                     *board = w.board.expect("improved candidate without board");
                     self.min_cumulative_trace_length = light_statistics(board).1 as f64;
                     route_improved = w.result.improvement_percentage;
-                    if ctx.enhancements {
+                    if stopped_or_timed_out {
+                        log::info!("Optimizer pass #{pass_no}: stopped early, applying the best candidate found so far.");
+                    }
+                    // after the optimizer's own time budget ran out (not a stop request), the
+                    // other improving candidates still get a short greedy phase
+                    let budget_only = stopped_or_timed_out && self.timed_out && !ctx.stop.is_stop_requested();
+                    if ctx.enhancements && (!stopped_or_timed_out || budget_only) {
                         let mut rest = std::mem::take(&mut consumer.improving);
                         rest.retain(|r| r.item_id != winner_id);
-                        let budget = pass_start.elapsed().clamp(GREEDY_MIN_BUDGET, GREEDY_MAX_BUDGET);
-                        let applied = self.apply_greedy(board, settings, ctx, stats, &params, rest, budget);
+                        let budget = if budget_only {
+                            GREEDY_AFTER_TIMEOUT_BUDGET
+                        } else {
+                            pass_start.elapsed().clamp(GREEDY_MIN_BUDGET, GREEDY_MAX_BUDGET)
+                        };
+                        let applied = self.apply_greedy(board, settings, ctx, stats, &params, rest, budget, budget_only);
                         if applied > 0 {
                             log::info!("Optimizer pass #{pass_no}: applied {applied} more improving candidate(s).");
                         }
@@ -1023,13 +1043,32 @@ struct PassConsumer {
     done: bool,
     /// fastroute greedy mode: the item ids of all improving candidates.
     improving: Vec<ItemRouteResult>,
+    /// fastroute: progress lines during long passes.
+    candidates: usize,
+    started: Instant,
+    next_progress: f64,
 }
+
+/// fastroute: seconds between the progress lines of an optimizer pass.
+const OPTIMIZER_PROGRESS_SECS: f64 = 30.0;
 
 impl PassConsumer {
     /// Consumes the next result (in candidate order). Returns true if the pass stops here.
     fn consume(&mut self, r: Option<CandidateResult>) -> bool {
         debug_assert!(!self.done);
         self.evaluated += 1;
+        let elapsed = self.started.elapsed().as_secs_f64();
+        if elapsed >= self.next_progress {
+            self.next_progress += OPTIMIZER_PROGRESS_SECS;
+            log::info!(
+                "Optimizer pass #{}: {} of {} candidates after {:.0} s ({} improving so far).",
+                self.pass_no,
+                self.evaluated,
+                self.candidates,
+                elapsed,
+                self.improving.len()
+            );
+        }
         let Some(res) = r else { return false };
         self.total_items_optimized += 1;
         self.result_map.insert(res.result.item_id, res.result.clone());

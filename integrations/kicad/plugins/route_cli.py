@@ -51,6 +51,15 @@ def main(argv=None):
     ap.add_argument(
         "--max-time", type=float, help="stop after this many seconds and keep the best result"
     )
+    ap.add_argument(
+        "--clearance-margin-um", type=float, default=5.0,
+        help="added to every clearance for the router (KiCad measures exact circles; default 5)",
+    )
+    ap.add_argument(
+        "--obstacle-zones", default="",
+        help="comma separated net names or net classes (* and ? allowed) whose zones stay fixed "
+        "copper that other nets must not cross (e.g. a power pour on an outer layer)",
+    )
     ap.add_argument("--fastroute", type=Path, help="path to the fastroute executable")
     ap.add_argument("--work-dir", type=Path, help="keep the DSN/SES files in this directory")
     ap.add_argument(
@@ -96,6 +105,8 @@ def main(argv=None):
         text_keepouts=not args.no_text_keepouts,
         clear_tracks=args.clear,
         max_time=args.max_time,
+        clearance_margin_um=args.clearance_margin_um,
+        obstacle_zones=[p.strip() for p in args.obstacle_zones.split(",")],
     )
 
     def show(level, text):
@@ -110,6 +121,8 @@ def main(argv=None):
         if failed is not None:
             print(f"error: {failed.message}", file=sys.stderr)
             return 1
+        for w in getattr(router, "warnings", []):
+            print(f"WARN  .kicad_dru {w}", file=sys.stderr)
         # the arguments after the binary, one per line (paths as written in work_dir)
         (args.work_dir / "args.txt").write_text("\n".join(router.command()[1:]) + "\n")
         print(f"exported to {args.work_dir}")
@@ -124,6 +137,11 @@ def main(argv=None):
     pcbnew.SaveBoard(str(out), board)
     if result.partial:
         print(f"warning: {result.message.splitlines()[0]}", file=sys.stderr)
+    for w in result.warnings:
+        if not w.startswith(".kicad_dru"):  # (those were shown before routing)
+            print(f"warning: {w}", file=sys.stderr)
+    if result.unrouted_ignored:
+        print(f"{result.unrouted_ignored} of the unrouted connections are in ignored net classes", file=sys.stderr)
     print(
         f"routed in {time.monotonic() - t:.1f} s: score {result.score}, "
         f"{result.unrouted} unrouted, {result.violations} violations -> {out}"

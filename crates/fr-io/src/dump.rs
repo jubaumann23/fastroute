@@ -403,6 +403,7 @@ pub fn dump_items(
             }
             InsertRequest::Obstacle(a)
             | InsertRequest::ViaObstacle(a)
+            | InsertRequest::WireObstacle(a)
             | InsertRequest::ComponentObstacle(a) => {
                 let abs = transformed_area(
                     &a.area,

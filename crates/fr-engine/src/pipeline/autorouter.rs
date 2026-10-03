@@ -90,6 +90,9 @@ pub struct BatchAutorouter {
     /// later passes (each attempt is a search over the whole reachable board).
     blocked: HashSet<i32>,
     blocked_checked: HashSet<i32>,
+    /// fastroute: a parallel pass stops early once its board has more unrouted connections
+    /// than this (the rollback threshold of the batch loop; the pass would be undone anyway).
+    pass_abort_above: Option<i32>,
     // AutoroutePassRunner state
     previous_incomplete_nets: BTreeSet<NetNo>,
     previous_incomplete_count: i32,
@@ -188,6 +191,7 @@ impl BatchAutorouter {
             pristine: None,
             blocked: HashSet::new(),
             blocked_checked: HashSet::new(),
+            pass_abort_above: None,
             previous_incomplete_nets: BTreeSet::new(),
             previous_incomplete_count: -1,
             stagnation_count: 0,
@@ -723,13 +727,22 @@ impl BatchAutorouter {
                     }
                     if pass_start.elapsed().as_secs_f64() >= next_progress {
                         next_progress += PROGRESS_LOG_INTERVAL_SECS;
+                        let now = incomplete_count(board, None);
                         log::info!(
-                            "Auto-routing pass #{pass_no}: {processed} of {total} items after {:.0} s (routed {}, failed {}, ripped {}; parallel: {copied} copied, {retried} retried, {rerouted} re-routed).",
+                            "Auto-routing pass #{pass_no}: {processed} of {total} items after {:.0} s, {now} unrouted (routed {}, failed {}, ripped {}; parallel: {copied} copied, {retried} retried, {rerouted} re-routed).",
                             pass_start.elapsed().as_secs_f64(),
                             c.routed,
                             c.not_routed,
                             c.ripped,
                         );
+                        if let Some(limit) = self.pass_abort_above {
+                            if now > limit {
+                                log::info!(
+                                    "Auto-routing pass #{pass_no}: {now} unrouted, more than the best board so far allows ({limit}): stopping the pass early (it will be undone)."
+                                );
+                                break 'pass;
+                            }
+                        }
                     }
                 }
                 // (a stop leaves tasks running: they end quickly, their results are dropped)
@@ -911,15 +924,18 @@ impl BatchAutorouter {
         }
 
         let current_unrouted = incomplete_count(board, None);
+        // fastroute: unrouted connections of ignored net classes (constant: never routed)
+        let ignored = if ctx.enhancements { super::stats::ignored_incomplete_count(board) } else { 0 };
         let is_router_enabled = settings.get_run_router() && settings.autorouter.max_passes.map(|m| m >= 0).unwrap_or(true);
         let stage_start = Instant::now();
         if is_router_enabled {
             let s = stats.score(board, settings);
             log::info!(
-                "Auto-routing stage started with baseline score {:.2} for {} unrouted item{}.",
+                "Auto-routing stage started with baseline score {:.2} for {} unrouted item{}{}.",
                 s.router_score as f64,
                 current_unrouted,
-                if current_unrouted == 1 { "" } else { "s" }
+                if current_unrouted == 1 { "" } else { "s" },
+                if ignored > 0 { format!(" ({ignored} of them in ignored net classes, not routed)") } else { String::new() }
             );
         }
         let mut continue_autorouting = is_router_enabled;
@@ -946,6 +962,8 @@ impl BatchAutorouter {
                 let b: &RoutingBoard = board;
                 bh.add_with(b, hash, || stats.score(b, settings).router_score);
             }
+            self.pass_abort_above = (ctx.enhancements && !self.is_optimizer_autorouter && current_pass >= 2 && fewest_incomplete != i32::MAX)
+                .then(|| fewest_incomplete + ((fewest_incomplete - ignored) * 3 / 10).max(20));
             let (cont, counters) = self.autoroute_pass(board, settings, current_pass, stop);
             continue_autorouting = cont;
             let mut after = stats.score(board, settings);
@@ -1002,7 +1020,7 @@ impl BatchAutorouter {
                 let best = fewest_incomplete.min(after.incomplete_count);
                 if current_pass >= 2
                     && rollbacks < MAX_REGRESSION_ROLLBACKS
-                    && after.incomplete_count > fewest_incomplete + (fewest_incomplete * 3 / 10).max(20)
+                    && after.incomplete_count > fewest_incomplete + ((fewest_incomplete - ignored) * 3 / 10).max(20)
                 {
                     if let Some(b) = bh.restore_best_board() {
                         let lost = after.incomplete_count;
@@ -1025,7 +1043,7 @@ impl BatchAutorouter {
                 if pass_start.elapsed().as_secs_f64() >= SLOW_PASS_SECS && n > SLOW_STAGNATION_WINDOW {
                     let before = *incomplete_history[..n - SLOW_STAGNATION_WINDOW].iter().min().unwrap();
                     let recent = *incomplete_history[n - SLOW_STAGNATION_WINDOW..].iter().min().unwrap();
-                    if recent > 0 && before - recent < (before / 50).max(1) {
+                    if recent - ignored > 0 && before - recent < ((before - ignored) / 50).max(1) {
                         log::info!(
                             "Stopping the auto-router: the last {SLOW_STAGNATION_WINDOW} passes (about {:.0} s each) reduced the unrouted items only from {before} to {recent}.",
                             pass_start.elapsed().as_secs_f64()
@@ -1127,6 +1145,14 @@ impl BatchAutorouter {
                 stage_start.elapsed().as_secs_f64(),
                 format_score(s.router_score, s.incomplete_count, s.clearance_violation_count)
             );
+            if ignored > 0 {
+                log::info!(
+                    "{} of the {} unrouted connections are in ignored net classes (not routed); {} routable connection(s) left unrouted.",
+                    ignored,
+                    s.incomplete_count,
+                    s.incomplete_count - ignored
+                );
+            }
             if !self.blocked.is_empty() {
                 log::info!(
                     "{} item(s) cannot be routed even on the board as loaded (blocked by pins, keepouts or fixed wiring); they were skipped after their second failure.",

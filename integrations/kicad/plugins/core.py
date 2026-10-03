@@ -295,6 +295,13 @@ def _outline_key(points):
 
 _DRU_RULE = re.compile(r"\(rule\s+\"((?:[^\"\\]|\\.)*)\"(.*?)(?=\(rule\s+\"|\Z)", re.S)
 _DRU_TERM = re.compile(r"([AB])\.NetClass\s*(==|!=)\s*'([^']*)'")
+_DRU_TYPE_TERM = re.compile(r"([AB])\.Type\s*(==|!=)\s*'([^']*)'")
+
+# Names of the .kicad_dru rules the translators below carried into the DSN or the fastroute
+# options (reset by Router.prepare); dru_warnings() reports the other routing rules.
+_HANDLED_RULES = set()
+# clearance rules applied without their A.Type/B.Type terms (to all item types)
+_TYPE_DROPPED_RULES = set()
 
 
 def add_dru_class_clearances(board, dsn_path):
@@ -320,6 +327,20 @@ def add_dru_class_clearances(board, dsn_path):
     if m and m.group(1) == "mm":
         unit_um = 1000.0
     pairs = {}  # (class a, class b) -> clearance in DSN units
+    # KiCad uses the larger clearance of two net classes; Freerouting fills its clearance
+    # matrix class by class, so the class read last wins for a pair (e.g. a 0.2 mm via next
+    # to a 0.15 mm track). Every pair of classes with different clearances gets its maximum.
+    own = {}
+    for m in re.finditer(r"\(class\s+\"?([^\s\"()]+)", text):
+        scope = text[m.start():_scope_end(text, m.start())]
+        c = re.search(r"\(rule\b[^()]*(?:\([^()]*\)[^()]*)*?\(clearance\s+([\d.]+)\)", scope)
+        if c:
+            own.setdefault(m.group(1), float(c.group(1)))
+    names = sorted(own)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            if own[a] != own[b]:
+                pairs[tuple(sorted((a, b)))] = max(own[a], own[b])
     carried = []
     for name, body in _DRU_RULE.findall(rules_text):
         cond = re.search(r"\(condition\s+\"([^\"]*)\"", body)
@@ -327,8 +348,12 @@ def add_dru_class_clearances(board, dsn_path):
         if not cond or not cons:
             continue
         terms = [t.strip() for t in cond.group(1).split("&&")]
+        # A.Type / B.Type terms are dropped: the clearance then applies to all item types,
+        # which is at least as strict as the rule
+        type_terms = [t for t in terms if _DRU_TYPE_TERM.fullmatch(t)]
+        terms = [t for t in terms if not _DRU_TYPE_TERM.fullmatch(t)]
         parsed = [_DRU_TERM.fullmatch(t) for t in terms]
-        if not all(parsed):
+        if not terms or not all(parsed):
             continue
         a_eq = [p.group(3) for p in parsed if p.group(1) == "A" and p.group(2) == "=="]
         if len(a_eq) != 1 or any(p.group(1) == "A" and p.group(2) == "!=" for p in parsed):
@@ -352,6 +377,9 @@ def add_dru_class_clearances(board, dsn_path):
             done.append(b)
         if done:
             carried.append((name, done))
+            _HANDLED_RULES.add(name)
+            if type_terms:
+                _TYPE_DROPPED_RULES.add(name)
     if not pairs:
         return carried
     start = text.find("(network")
@@ -456,6 +484,7 @@ def write_tune_file(board, path):
         if not members:
             continue
         tag = re.sub(r"\W+", "_", rule_name).strip("_") or "rule"
+        _HANDLED_RULES.add(rule_name)
         if skew and re.search(r"\(within_diff_pairs\)", body):
             # KiCad: `(within_diff_pairs)` limits the skew inside each pair; without it the
             # skew is between all matching nets
@@ -524,7 +553,7 @@ def write_pairs_file(board, path):
     except Exception:
         return 0
     pairs = {}  # base -> {"+": name, "-": name, "gap": mm, "layers": {layer: mm}}
-    for _rule_name, body in _DRU_RULE.findall(rules_text):
+    for rule_name, body in _DRU_RULE.findall(rules_text):
         cond = re.search(r"\(condition\s+\"([^\"]*)\"", body)
         gap = re.search(r"\(constraint\s+diff_pair_gap\b([^\n]*)", body)
         if not cond or not gap:
@@ -538,6 +567,7 @@ def write_pairs_file(board, path):
             base, pol = _pair_base(name)
             if base is None or not _dru_matches(cond.group(1), name, cls):
                 continue
+            _HANDLED_RULES.add(rule_name)
             entry = pairs.setdefault(base, {"gap": None, "layers": {}})
             entry[pol] = name
             if mm is not None:
@@ -555,6 +585,210 @@ def write_pairs_file(board, path):
         return 0
     Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
     return len(lines)
+
+
+# constraints that matter for routing (the others, e.g. silk or courtyard, are KiCad's alone)
+_ROUTING_CONSTRAINTS = {
+    "clearance", "track_width", "hole_clearance", "edge_clearance", "length", "skew",
+    "diff_pair_gap", "diff_pair_uncoupled", "via_diameter", "disallow", "hole_to_hole",
+    "physical_clearance", "physical_hole_clearance", "connection_width",
+}
+_UNTRANSLATABLE_TERMS = (
+    ("insideArea", "insideArea()"), ("intersectsArea", "intersectsArea()"), ("enclosedByArea", "enclosedByArea()"),
+    ("memberOfFootprint", "memberOfFootprint()"), ("memberOfGroup", "memberOfGroup()"), (".Type", "A.Type/B.Type"),
+    ("Hole_Size", "Hole_Size"), ("Pad_Type", "Pad_Type"), (".Layer", "Layer"), ("isPlated", "isPlated()"),
+)
+
+
+def dru_warnings(board, layer_widths=()):
+    """One line per routing rule of the board's .kicad_dru that fastroute does not apply
+    (completely or in part), with the reason. Call after the translators."""
+    try:
+        dru = Path(board.GetFileName()).with_suffix(".kicad_dru")
+        rules_text = dru.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return []
+    width_keys = {(c, l) for c, l, _ in layer_widths}
+    out = []
+    for name, body in _DRU_RULE.findall(rules_text):
+        kinds = re.findall(r"\(constraint\s+(\w+)", body)
+        relevant = [k for k in kinds if k in _ROUTING_CONSTRAINTS]
+        if not relevant:
+            continue
+        cond = re.search(r"\(condition\s+\"([^\"]*)\"", body)
+        cond_text = cond.group(1) if cond else ""
+        layer = re.search(r"\(layer\s+\"?([^\"\s)]+)\"?\)", body)
+        handled = name in _HANDLED_RULES
+        if not handled and "track_width" in relevant and layer:
+            cls = re.fullmatch(r"\s*A\.NetClass\s*==\s*'([^']*)'\s*", cond_text)
+            handled = bool(cls) and (cls.group(1), layer.group(1)) in width_keys
+        if handled:
+            if name in _TYPE_DROPPED_RULES:
+                out.append(f"rule '{name}': applied to all item types (its A.Type/B.Type terms cannot be translated; this is stricter)")
+            if "length" in relevant and re.search(r"\(constraint\s+length\s+[^\n]*\(max\s", body):
+                out.append(f"rule '{name}': the maximum length is not enforced (only the minimum by meanders); check it in KiCad's DRC")
+            continue
+        terms = [label for key, label in _UNTRANSLATABLE_TERMS if key in cond_text]
+        if "length" in relevant and not re.search(r"\(min\s", body):
+            reason = "a maximum length is not enforced by the router"
+        elif terms:
+            reason = "its condition uses " + ", ".join(terms)
+        elif set(relevant) <= {"hole_clearance", "edge_clearance", "hole_to_hole", "via_diameter", "disallow", "connection_width", "physical_clearance", "physical_hole_clearance", "diff_pair_uncoupled"}:
+            reason = "the constraint (" + ", ".join(relevant) + ") is not supported"
+        elif not re.search(r"[!=]=|insideArea|memberOf", cond_text) or re.fullmatch(r"\s*A\.(NetClass|NetName)\s*==\s*'[^']*'\s*", cond_text):
+            reason = "the constraint (" + ", ".join(relevant) + ") is not supported in this form"
+        else:
+            reason = "its condition cannot be translated"
+        out.append(f"rule '{name}' ({', '.join(relevant)}) is NOT applied: {reason}")
+    return out
+
+
+class _PadExpr:
+    """Evaluates a .kicad_dru condition for one pad (as item A): A.Type == 'Pad',
+    A.Hole_Size_X/Y compared with a length, A.memberOfFootprint('X1?'), A.NetClass /
+    A.NetName == / != 'pattern', joined by &&, ||, ! and parentheses. `ok` is False if the
+    condition uses anything else."""
+
+    _TOKEN = re.compile(r"\s*(\(|\)|&&|\|\||!(?!=)|A\.[A-Za-z_]+(?:\('[^']*'\))?\s*(?:==|!=|>=|<=|>|<)\s*(?:'[^']*'|[\d.]+\s*(?:mm|mil|um)?)|A\.memberOfFootprint\('[^']*'\))")
+
+    def __init__(self, text):
+        self.tokens, pos, self.ok = [], 0, True
+        text = text.strip()
+        while pos < len(text):
+            m = self._TOKEN.match(text, pos)
+            if not m:
+                self.ok = False
+                return
+            self.tokens.append(m.group(1))
+            pos = m.end()
+
+    def __call__(self, pad):
+        self.i, self.pad = 0, pad
+        try:
+            v = self._or()
+        except Exception:
+            return None
+        return v if self.i == len(self.tokens) else None
+
+    def _peek(self):
+        return self.tokens[self.i] if self.i < len(self.tokens) else None
+
+    def _or(self):
+        v = self._and()
+        while self._peek() == "||":
+            self.i += 1
+            v = self._and() or v
+        return v
+
+    def _and(self):
+        v = self._not()
+        while self._peek() == "&&":
+            self.i += 1
+            v = self._not() and v
+        return v
+
+    def _not(self):
+        if self._peek() == "!":
+            self.i += 1
+            return not self._not()
+        if self._peek() == "(":
+            self.i += 1
+            v = self._or()
+            if self._peek() != ")":
+                raise ValueError("missing )")
+            self.i += 1
+            return v
+        tok = self.tokens[self.i]
+        self.i += 1
+        return self._term(tok)
+
+    def _term(self, tok):
+        pad = self.pad
+        m = re.fullmatch(r"A\.memberOfFootprint\('([^']*)'\)", tok)
+        if m:
+            fp = pad.GetParentFootprint()
+            return bool(fp) and fnmatch.fnmatchcase(fp.GetReference(), m.group(1))
+        m = re.fullmatch(r"A\.([A-Za-z_]+)\s*(==|!=|>=|<=|>|<)\s*(?:'([^']*)'|([\d.]+)\s*(mm|mil|um)?)", tok)
+        if not m:
+            raise ValueError(tok)
+        field, op, text, number, unit = m.groups()
+        if field in ("Type", "NetClass", "NetName"):
+            if field == "Type":
+                value = "Pad"
+            elif field == "NetClass":
+                value = _net_class_name(pad.GetNet()) if pad.GetNet() else ""
+            else:
+                value = pad.GetNetname()
+            hit = fnmatch.fnmatchcase(value, text if text is not None else "")
+            return hit if op == "==" else not hit if op == "!=" else _raise(tok)
+        if field in ("Hole_Size_X", "Hole_Size_Y") and number is not None:
+            size = pad.GetDrillSize()
+            have = (size.x if field.endswith("X") else size.y) / 1e6
+            want = float(number) * {"mm": 1.0, "mil": 0.0254, "um": 0.001}[unit or "mm"]
+            return {"==": have == want, "!=": have != want, ">": have > want, "<": have < want, ">=": have >= want, "<=": have <= want}[op]
+        raise ValueError(tok)
+
+
+def _raise(tok):
+    raise ValueError(tok)
+
+
+def add_hole_clearance_keepouts(board, dsn_path, ignored_classes=()):
+    """Carries `hole_clearance` rules of the .kicad_dru into the DSN as keepout circles
+    around the matching pad holes (hole radius + clearance) on all copper layers.
+
+    A keepout also blocks the pad's own net, so only holes without a net or with a net of an
+    ignored class (routed by hand or a script) are handled; the others stay in the warnings.
+    Returns the number of holes."""
+    try:
+        dru = Path(board.GetFileName()).with_suffix(".kicad_dru")
+        rules_text = dru.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return 0
+    copper = [_dsn_quote(board.GetLayerName(l)) for l in board.GetEnabledLayers().CuStack()]
+    keepouts, holes = [], 0
+    for name, body in _DRU_RULE.findall(rules_text):
+        cons = re.search(r"\(constraint\s+hole_clearance\s+\(min\s+([\d.]+)\s*(mm|mil|um)?\)", body)
+        cond = re.search(r"\(condition\s+\"([^\"]*)\"", body)
+        if not cons or not cond:
+            continue
+        expr = _PadExpr(cond.group(1))
+        if not expr.ok:
+            continue
+        clearance_mm = float(cons.group(1)) * {"mm": 1.0, "mil": 0.0254, "um": 0.001}[cons.group(2) or "mm"]
+        matched, usable = [], True
+        for fp in board.GetFootprints():
+            for pad in fp.Pads():
+                if pad.GetDrillSize().x <= 0:
+                    continue
+                r = expr(pad)
+                if r is None:
+                    usable = False
+                    break
+                if r:
+                    matched.append(pad)
+            if not usable:
+                break
+        if not usable or not matched:
+            continue
+        if any(p.GetNetname() and _net_class_name(p.GetNet()) not in ignored_classes for p in matched):
+            continue
+        for pad in matched:
+            pos = pad.GetPosition()
+            d_um = (max(pad.GetDrillSize().x, pad.GetDrillSize().y) / 1000.0) + 2 * clearance_mm * 1000.0
+            for layer in copper:
+                keepouts.append(f'    (keepout "" (circle {layer} {d_um:.3f} {pos.x / 1000.0:.3f} {-pos.y / 1000.0:.3f}))\n')
+            holes += 1
+        _HANDLED_RULES.add(name)
+    if not keepouts:
+        return 0
+    text = Path(dsn_path).read_text(encoding="utf-8", errors="replace")
+    at = text.find("(boundary")
+    if at < 0:
+        return 0
+    at = text.rfind("\n", 0, at) + 1
+    Path(dsn_path).write_text(text[:at] + "".join(keepouts) + text[at:], encoding="utf-8")
+    return holes
 
 
 def add_dru_layer_widths(board, dsn_path):
@@ -596,6 +830,26 @@ def add_dru_layer_widths(board, dsn_path):
     return done
 
 
+def add_clearance_margin(dsn_path, margin_um):
+    """Adds `margin_um` to every clearance of the DSN. The router models vias and track ends
+    with polygons; KiCad measures the exact circles and found 3-5 um too little next to vias
+    (0.197 mm against 0.2 mm). Returns the number of clearances changed."""
+    if margin_um <= 0:
+        return 0
+    text = Path(dsn_path).read_text(encoding="utf-8", errors="replace")
+    margin = margin_um / 1000.0 if re.search(r"\(resolution\s+mm", text) else margin_um
+    count = 0
+
+    def bump(m):
+        nonlocal count
+        count += 1
+        return f"{m.group(1)}{float(m.group(2)) + margin:g}"
+
+    text = re.sub(r"(\(clearance\s+)([\d.]+)", bump, text)
+    Path(dsn_path).write_text(text, encoding="utf-8")
+    return count
+
+
 def fix_rule_area_keepouts(board, dsn_path):
     """Corrects the keepouts KiCad exports for rule areas.
 
@@ -603,14 +857,15 @@ def fix_rule_area_keepouts(board, dsn_path):
     forbid neither tracks nor vias (e.g. KiCad 10's multichannel
     "auto-placement-area" regions); the router then blocks everything inside,
     so whole channels become unroutable. Such keepouts are removed; areas that
-    only forbid vias become via keepouts. Returns (removed, converted).
+    only forbid vias become via keepouts, areas that only forbid tracks wire keepouts
+    (fastroute; Freerouting would block vias there as well). Returns (removed, converted).
     """
-    nonblocking, via_only = set(), set()
+    nonblocking, via_only, track_only = set(), set(), set()
     for zone in board.Zones():
         if not zone.GetIsRuleArea():
             continue
         tracks, vias = zone.GetDoNotAllowTracks(), zone.GetDoNotAllowVias()
-        if tracks:
+        if tracks and vias:
             continue
         outline = zone.Outline()
         for i in range(outline.OutlineCount()):
@@ -619,8 +874,8 @@ def fix_rule_area_keepouts(board, dsn_path):
                 (chain.CPoint(k).x / 1000.0, -chain.CPoint(k).y / 1000.0)
                 for k in range(chain.PointCount())
             )
-            (via_only if vias else nonblocking).add(key)
-    if not nonblocking and not via_only:
+            (track_only if tracks else via_only if vias else nonblocking).add(key)
+    if not nonblocking and not via_only and not track_only:
         return 0, 0
     text = Path(dsn_path).read_text(encoding="utf-8", errors="replace")
     out, i, removed, converted = [], 0, 0, 0
@@ -639,6 +894,9 @@ def fix_rule_area_keepouts(board, dsn_path):
         elif key is not None and key in via_only:
             out.append("(via_keepout" + scope[len("(keepout"):])
             converted += 1
+        elif key is not None and key in track_only:
+            out.append("(wire_keepout" + scope[len("(keepout"):])
+            converted += 1
         else:
             out.append(scope)
         i = k
@@ -646,7 +904,57 @@ def fix_rule_area_keepouts(board, dsn_path):
     return removed, converted
 
 
-def strip_planes(dsn_path):
+def obstacle_zone_fills(board, dsn_path, keep_net):
+    """Replaces the planes of the obstacle zones (nets satisfying `keep_net`) by the zones'
+    filled areas: KiCad exports the zone outline, so pads of other nets inside the outline
+    would be inside the obstacle, while the fill leaves clearance around them. The zones are
+    filled first. Returns the number of zones replaced."""
+    zones = [z for z in board.Zones() if not z.GetIsRuleArea() and z.GetNetname() and keep_net(z.GetNetname())]
+    if not zones:
+        return 0
+    try:
+        pcbnew.ZONE_FILLER(board).Fill(board.Zones())
+    except Exception:
+        return 0
+    text = Path(dsn_path).read_text(encoding="utf-8", errors="replace")
+    planes = []
+    done = set()
+    for z in zones:
+        net = z.GetNetname()
+        for layer in z.GetLayerSet().Seq():
+            if not pcbnew.IsCopperLayer(layer):
+                continue
+            polys = z.GetFilledPolysList(layer).CloneDropTriangulation() if hasattr(z.GetFilledPolysList(layer), "CloneDropTriangulation") else z.GetFilledPolysList(layer)
+            polys.Fracture()
+            name = _dsn_quote(board.GetLayerName(layer))
+            for i in range(polys.OutlineCount()):
+                chain = polys.Outline(i)
+                coords = " ".join(f"{chain.CPoint(k).x / 1000.0:.3f} {-chain.CPoint(k).y / 1000.0:.3f}" for k in range(chain.PointCount()))
+                planes.append(f"    (plane {_dsn_quote(net)} (polygon {name} 0 {coords}))\n")
+            done.add((net, board.GetLayerName(layer)))
+    # drop the exported outline planes of these zones
+    out, pos = [], 0
+    while True:
+        j = text.find("(plane ", pos)
+        if j < 0:
+            out.append(text[pos:])
+            break
+        k = _scope_end(text, j)
+        m = re.match(r'\(plane\s+("[^"]*"|\S+)\s+\((?:polygon|rect)\s+"?([^\s"()]+)"?', text[j:k])
+        out.append(text[pos:j])
+        if not (m and (m.group(1).strip('"'), m.group(2)) in done):
+            out.append(text[j:k])
+        pos = k
+    text = "".join(out)
+    at = text.find("(boundary")
+    if at < 0 or not planes:
+        return 0
+    at = text.rfind("\n", 0, at) + 1
+    Path(dsn_path).write_text(text[:at] + "".join(planes) + text[at:], encoding="utf-8")
+    return len(zones)
+
+
+def strip_planes(dsn_path, keep_net=None):
     """Prepares the zones of a KiCad DSN export for routing.
 
     KiCad exports every copper zone as a plane covering the zone outline, so the
@@ -659,8 +967,8 @@ def strip_planes(dsn_path):
     real plane layer. Its plane is kept (pads reach it reliably through vias)
     and the router keeps the layer free of tracks. Other power-type layers
     (e.g. a top layer typed "power" with a few pours) become signal layers,
-    since Freerouting never routes on power layers. Returns the number of
-    removed planes.
+    since Freerouting never routes on power layers. Planes whose net satisfies
+    `keep_net` (the obstacle zones) are kept as well. Returns the number of removed planes.
     """
     text = Path(dsn_path).read_text(encoding="utf-8", errors="replace")
     boundary = _numbers_after(text, r"\(boundary\s*\(path\s+pcb\s+[\d.]+")
@@ -674,16 +982,17 @@ def strip_planes(dsn_path):
             break
         k = _scope_end(text, j)
         scope = text[j:k]
-        m = re.match(r'\(plane\s+(?:"[^"]*"|\S+)\s+\((polygon|rect)\s+"?([^\s"()]+)"?', scope)
-        layer, area = None, 0.0
+        m = re.match(r'\(plane\s+("[^"]*"|\S+)\s+\((polygon|rect)\s+"?([^\s"()]+)"?', scope)
+        layer, area, net = None, 0.0, None
         if m:
-            layer = m.group(2)
+            net = m.group(1).strip('"')
+            layer = m.group(3)
             nums = _numbers_after(scope, r"\((?:polygon|rect)\s+\S+")
-            if m.group(1) == "polygon" and len(nums) >= 7:
+            if m.group(2) == "polygon" and len(nums) >= 7:
                 area = _polygon_area(nums[1:])  # skip the aperture width
-            elif m.group(1) == "rect" and len(nums) >= 4:
+            elif m.group(2) == "rect" and len(nums) >= 4:
                 area = abs(nums[2] - nums[0]) * abs(nums[3] - nums[1])
-        planes.append((j, k, layer, area))
+        planes.append((j, k, layer, area, net))
         i = k
 
     power_layers = set(
@@ -692,14 +1001,14 @@ def strip_planes(dsn_path):
     )
     plane_layers = {
         layer
-        for _, _, layer, area in planes
+        for _, _, layer, area, _ in planes
         if layer in power_layers and board_area > 0 and area >= PLANE_LAYER_MIN_COVERAGE * board_area
     }
 
     out, pos, removed = [], 0, 0
-    for j, k, layer, _ in planes:
+    for j, k, layer, _, net in planes:
         out.append(text[pos:j])
-        if layer in plane_layers:
+        if layer in plane_layers or (keep_net is not None and net is not None and keep_net(net)):
             out.append(text[j:k])
         else:
             removed += 1
@@ -730,6 +1039,44 @@ def min_track_width_nm(board):
         return 0
 
 
+_IGNORED = re.compile(r"(\d+) of the \d+ unrouted connections are in ignored net classes")
+
+
+def length_max_violations(board):
+    """Nets of the routed board longer than a `length (max ...)` rule of the .kicad_dru allows
+    (track lengths; the router does not enforce maximum lengths)."""
+    try:
+        dru = Path(board.GetFileName()).with_suffix(".kicad_dru")
+        rules_text = dru.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return []
+    rules = []
+    for name, body in _DRU_RULE.findall(rules_text):
+        cond = re.search(r"\(condition\s+\"([^\"]*)\"", body)
+        mx = re.search(r"\(constraint\s+length\b[^\n]*\(max\s+([\d.]+)\s*(mm|mil|um)?\)", body)
+        if cond and mx:
+            rules.append((name, cond.group(1), float(mx.group(1)) * {"mm": 1.0, "mil": 0.0254, "um": 0.001}[mx.group(2) or "mm"]))
+    if not rules:
+        return []
+    lengths = {}
+    for t in board.GetTracks():
+        if t.GetClass() in ("PCB_TRACK", "PCB_ARC"):
+            lengths[t.GetNetname()] = lengths.get(t.GetNetname(), 0.0) + t.GetLength() / 1e6
+    out = []
+    for name, cond, limit in rules:
+        for net_name, net in board.GetNetsByName().items():
+            net_name = str(net_name)
+            if not net_name or net_name not in lengths:
+                continue
+            m = _dru_matches(cond, net_name, _net_class_name(net))
+            if m is None:
+                out.append(f"length rule '{name}': its condition cannot be checked")
+                break
+            if m and lengths[net_name] > limit:
+                out.append(f"length rule '{name}': {net_name} is {lengths[net_name]:.2f} mm, longer than {limit:g} mm")
+    return out
+
+
 class RouteResult:
     def __init__(self):
         self.ok = False
@@ -740,8 +1087,12 @@ class RouteResult:
         self.message = ""
         self.score = None
         self.unrouted = None
+        # unrouted connections in net classes the autorouter ignores (part of `unrouted`)
+        self.unrouted_ignored = None
         self.violations = None
         self.log = []
+        # .kicad_dru rules not applied, length (max) violations of the result
+        self.warnings = []
 
 
 class Router:
@@ -759,8 +1110,14 @@ class Router:
         clear_tracks=False,
         in_editor=False,
         max_time=None,
+        clearance_margin_um=5.0,
+        obstacle_zones=(),
     ):
         self.board = board
+        self.clearance_margin_um = clearance_margin_um
+        # zones (by net name or net class pattern) kept as fixed copper, an obstacle for the
+        # other nets (e.g. a current path poured on an outer layer)
+        self.obstacle_zones = [p for p in obstacle_zones if p]
         self.clear_tracks = clear_tracks
         self.in_editor = in_editor
         self.text_keepouts = text_keepouts
@@ -815,8 +1172,15 @@ class Router:
             )
             return result
         fix_rule_area_keepouts(self.board, self._dsn)
+        _HANDLED_RULES.clear()
+        _TYPE_DROPPED_RULES.clear()
         self.dru_rules = add_dru_class_clearances(self.board, self._dsn)
         self.layer_widths = add_dru_layer_widths(self.board, self._dsn)
+        ignored = set()
+        for a in self.extra_args:
+            if a.startswith("--router.autorouter.ignore_net_classes="):
+                ignored |= {c.strip() for c in a.split("=", 1)[1].split(",") if c.strip()}
+        self.hole_keepouts = add_hole_clearance_keepouts(self.board, self._dsn, ignored)
         self._tune = self._dsn.with_name("tune.txt")
         self._tune.unlink(missing_ok=True)
         self.tune_groups = 0
@@ -829,10 +1193,25 @@ class Router:
             self.diff_pairs = write_pairs_file(self.board, self._pairs)
         if self.clear_tracks:
             strip_unlocked_wiring(self._dsn)
+        keep = None
+        if self.obstacle_zones:
+            classes = {}
+            for name, net in self.board.GetNetsByName().items():
+                classes[str(name)] = _net_class_name(net)
+
+            def keep(net_name):
+                cls = classes.get(net_name, "")
+                return any(fnmatch.fnmatchcase(net_name, p) or fnmatch.fnmatchcase(cls, p) for p in self.obstacle_zones)
+
+            if not any(a.startswith("--router.plane_as_obstacle") for a in self.extra_args):
+                self.extra_args.append("--router.plane_as_obstacle=true")
+            obstacle_zone_fills(self.board, self._dsn, keep)
         if self.route_zone_nets:
-            strip_planes(self._dsn)
+            strip_planes(self._dsn, keep)
         if self.text_keepouts:
             add_copper_text_keepouts(self.board, self._dsn)
+        self.warnings = dru_warnings(self.board, self.layer_widths)
+        add_clearance_margin(self._dsn, self.clearance_margin_um)
         return None
 
     def command(self):
@@ -853,6 +1232,11 @@ class Router:
     def route(self, on_line=None):
         """Runs fastroute on the exported file (does not touch the board)."""
         result = RouteResult()
+        for w in getattr(self, "warnings", []):
+            result.log.append("WARN  .kicad_dru " + w)
+            result.warnings.append(".kicad_dru " + w)
+            if on_line:
+                on_line("WARN", ".kicad_dru " + w)
         cmd = self.command()
         kwargs = {}
         if os.name == "nt":
@@ -877,6 +1261,9 @@ class Router:
                     result.score = float(s.group(1))
                     result.unrouted = int(s.group(2))
                     result.violations = int(s.group(3))
+            ig = _IGNORED.search(text)
+            if ig:
+                result.unrouted_ignored = int(ig.group(1))
             if on_line:
                 on_line(level, text)
         code = self._proc.wait()
@@ -907,6 +1294,7 @@ class Router:
             return result
         if self.refill:
             refill_zones(self.board)
+        result.warnings.extend(length_max_violations(self.board))
         if not result.partial:
             result.message = "routed"
         return result

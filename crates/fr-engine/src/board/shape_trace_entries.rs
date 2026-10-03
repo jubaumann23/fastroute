@@ -141,7 +141,10 @@ impl ShapeTraceEntries {
     pub fn store_items(&mut self, board: &BasicBoard, items: &[ItemKey], is_pad_check: bool, copper_sharing_allowed: bool) -> bool {
         for &key in items {
             let item = board.item(key);
-            if (!is_pad_check && item.is_via_obstacle_area()) || item.is_component_obstacle_area() {
+            if (!is_pad_check && item.is_via_obstacle_area())
+                || (is_pad_check && item.is_wire_obstacle_area() && board.layer_count() > 2)
+                || item.is_component_obstacle_area()
+            {
                 continue;
             }
             let contains_own_net = item.shares_net_no(&self.own_net_nos);

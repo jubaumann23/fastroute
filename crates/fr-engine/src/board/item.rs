@@ -85,6 +85,11 @@ pub enum ObstacleKind {
     ViaKeepout,
     /// Java `ComponentObstacleArea`.
     ComponentKeepout,
+    /// fastroute: a keepout for traces only (KiCad rule areas that forbid tracks but not vias).
+    /// Freerouting reads `wire_keepout` as a plain keepout; `--parity` does the same. Vias may
+    /// go through it only on boards with more than two layers: on a two-layer board a via in it
+    /// cannot leave on the other side, and the attempts only cost connections.
+    WireKeepout,
 }
 
 /// Java `Pin` specific data.
@@ -325,7 +330,7 @@ impl Item {
             ItemKind::Trace(_) => BoardItemType::Trace,
             ItemKind::ConductionArea(_) => BoardItemType::ConductionArea,
             ItemKind::ObstacleArea(a) => match a.kind {
-                ObstacleKind::Keepout => BoardItemType::ObstacleArea,
+                ObstacleKind::Keepout | ObstacleKind::WireKeepout => BoardItemType::ObstacleArea,
                 ObstacleKind::ViaKeepout => BoardItemType::ViaObstacleArea,
                 ObstacleKind::ComponentKeepout => BoardItemType::ComponentObstacleArea,
             },
@@ -342,7 +347,7 @@ impl Item {
             ItemKind::Trace(_) => "PolylineTrace",
             ItemKind::ConductionArea(_) => "ConductionArea",
             ItemKind::ObstacleArea(a) => match a.kind {
-                ObstacleKind::Keepout => "ObstacleArea",
+                ObstacleKind::Keepout | ObstacleKind::WireKeepout => "ObstacleArea",
                 ObstacleKind::ViaKeepout => "ViaObstacleArea",
                 ObstacleKind::ComponentKeepout => "ComponentObstacleArea",
             },
@@ -382,6 +387,11 @@ impl Item {
         matches!(self.kind, ItemKind::ObstacleArea(_) | ItemKind::ConductionArea(_))
     }
     #[inline]
+    /// fastroute: a keepout for traces only ([`ObstacleKind::WireKeepout`]).
+    pub fn is_wire_obstacle_area(&self) -> bool {
+        matches!(&self.kind, ItemKind::ObstacleArea(a) if a.kind == ObstacleKind::WireKeepout)
+    }
+
     pub fn is_via_obstacle_area(&self) -> bool {
         matches!(&self.kind, ItemKind::ObstacleArea(a) if a.kind == ObstacleKind::ViaKeepout)
     }
@@ -523,6 +533,8 @@ impl Item {
         match &self.kind {
             ItemKind::Trace(_) => self.contains_net(net_number),
             ItemKind::ConductionArea(c) => !c.is_obstacle || self.contains_net(net_number),
+            // fastroute: a trace-only keepout lets vias through
+            ItemKind::ObstacleArea(a) => a.kind == ObstacleKind::WireKeepout,
             _ => false,
         }
     }
@@ -587,7 +599,9 @@ impl Item {
                 !self.drill_allowed(board) || !other.is_via()
             }
             ItemKind::Via(v) => {
-                if same || other.is_component_obstacle_area() {
+                // (a trace-only keepout does not block vias on boards with more than two layers,
+                // see ObstacleKind::WireKeepout)
+                if same || other.is_component_obstacle_area() || (other.is_wire_obstacle_area() && board.layer_count() > 2) {
                     return false;
                 }
                 if let ItemKind::ConductionArea(c) = &other.kind {
@@ -626,6 +640,12 @@ impl Item {
                         return false;
                     }
                     other.is_via()
+                }
+                ObstacleKind::WireKeepout => {
+                    if other.shares_net(self) {
+                        return false;
+                    }
+                    other.is_trace()
                 }
                 ObstacleKind::ComponentKeepout => {
                     !same && other.is_component_obstacle_area() && other.component_no != self.component_no

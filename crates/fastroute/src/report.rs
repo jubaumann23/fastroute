@@ -155,9 +155,11 @@ pub fn write_report(
     let violations = all_clearance_violations(basic);
 
     let mut unrouted = Vec::new();
-    let (mut congestion, mut blocked) = (0, 0);
+    let (mut congestion, mut blocked, mut ignored) = (0, 0, 0);
     for a in &airlines {
         let net = basic.rules.nets.get(a.net_number).map(|n| n.name.clone()).unwrap_or_default();
+        let is_ignored =
+            basic.rules.nets.get(a.net_number).is_some_and(|n| basic.rules.net_classes[n.get_net_class()].is_ignored_by_autorouter);
         let dx = a.to_corner.x - a.from_corner.x;
         let dy = a.to_corner.y - a.from_corner.y;
         let mut s = format!(
@@ -171,7 +173,13 @@ pub fn write_report(
             u.x(a.to_corner.x),
             u.y(a.to_corner.y),
         );
-        if let Some(loaded) = loaded {
+        if is_ignored {
+            // net class ignored by the autorouter: never routed, nothing to diagnose
+            ignored += 1;
+            if loaded.is_some() {
+                s.push_str(", \"diagnosis\": {\"class\": \"ignored\"}");
+            }
+        } else if let Some(loaded) = loaded {
             let from = attempt(loaded, basic, a.from_item, settings);
             let routed = |x: &Option<Attempt>| x.as_ref().is_some_and(|x| x.state == AutorouteAttemptState::Routed);
             // the other end only matters if the first one does not route
@@ -246,7 +254,7 @@ pub fn write_report(
     .unwrap();
     writeln!(
         out,
-        "  \"stats\": {{\"layers\": {}, \"components\": {}, \"nets\": {}, \"pins\": {}, \"connections\": {}, \"unrouted\": {}, \"violations\": {}, \
+        "  \"stats\": {{\"layers\": {}, \"components\": {}, \"nets\": {}, \"pins\": {}, \"connections\": {}, \"unrouted\": {}, \"unrouted_ignored_classes\": {}, \"violations\": {}, \
          \"violations_unfixable\": {}, \"vias\": {}, \"vias_blind\": {}, \"vias_buried\": {}, \"traces\": {}, \"trace_length_mm\": {}, \
          \"bends_90\": {}, \"bends_45\": {}, \"bends_other\": {}, \"router_score\": {}, \"optimizer_score\": {}}},",
         opt_i(stats.layers.total_count),
@@ -255,6 +263,7 @@ pub fn write_report(
         opt_i(stats.items.pin_count),
         opt_i(stats.connections.maximum_count),
         airlines.len(),
+        airlines.iter().filter(|a| basic.rules.nets.get(a.net_number).is_some_and(|n| basic.rules.net_classes[n.get_net_class()].is_ignored_by_autorouter)).count(),
         violations.len(),
         violations.iter().filter(|v| v.is_unfixable(basic)).count(),
         opt_i(stats.vias.total_count),
@@ -270,7 +279,7 @@ pub fn write_report(
     )
     .unwrap();
     if loaded.is_some() {
-        writeln!(out, "  \"diagnosis\": {{\"congestion\": {congestion}, \"blocked\": {blocked}}},").unwrap();
+        writeln!(out, "  \"diagnosis\": {{\"congestion\": {congestion}, \"blocked\": {blocked}, \"ignored\": {ignored}}},").unwrap();
     }
     writeln!(out, "  \"unrouted\": [\n{}\n  ],", unrouted.join(",\n")).unwrap();
     writeln!(out, "  \"clearance_violations\": [\n{}\n  ]", viol.join(",\n")).unwrap();
@@ -279,7 +288,7 @@ pub fn write_report(
     if loaded.is_some() {
         log::info!(
             target: "fastroute",
-            "diagnosis of {} unrouted connections in {:.2} s: {congestion} routable alone (congestion), {blocked} not routable on the loaded board (blocked)",
+            "diagnosis of {} unrouted connections in {:.2} s: {congestion} routable alone (congestion), {blocked} not routable on the loaded board (blocked), {ignored} in ignored net classes",
             airlines.len(),
             t.elapsed().as_secs_f64()
         );

@@ -95,7 +95,7 @@ impl ItemSelectionFilter {
             ItemKind::Pin(_) => SelectableChoices::Pins,
             ItemKind::ConductionArea(_) => SelectableChoices::Conduction,
             ItemKind::ObstacleArea(a) => match a.kind {
-                ObstacleKind::Keepout => SelectableChoices::Keepout,
+                ObstacleKind::Keepout | ObstacleKind::WireKeepout => SelectableChoices::Keepout,
                 ObstacleKind::ViaKeepout => SelectableChoices::ViaKeepout,
                 ObstacleKind::ComponentKeepout => SelectableChoices::ComponentKeepout,
             },

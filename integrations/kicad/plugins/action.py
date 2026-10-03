@@ -239,8 +239,16 @@ class FastrouteAction(pcbnew.ActionPlugin):
             return
         summary = "Routing finished. Use File > Save to keep the result."
         if result.unrouted is not None:
-            summary += (
-                f"\n\nUnrouted connections: {result.unrouted}"
-                f"\nClearance violations: {result.violations}"
-            )
+            ignored = result.unrouted_ignored or 0
+            summary += f"\n\nUnrouted connections: {result.unrouted - ignored}"
+            if ignored:
+                summary += f"\nIn ignored net classes (not routed): {ignored}"
+            summary += f"\nClearance violations: {result.violations}"
+        if result.warnings:
+            shown = result.warnings[:12]
+            summary += "\n\nWarnings:\n" + "\n".join("- " + w for w in shown)
+            if len(result.warnings) > len(shown):
+                summary += f"\n... and {len(result.warnings) - len(shown)} more (see fastroute_plugin.log)"
+            for w in result.warnings:
+                log.warning("%s", w)
         wx.MessageBox(summary, "fastroute", wx.OK | wx.ICON_INFORMATION, parent)

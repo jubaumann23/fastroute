@@ -95,6 +95,10 @@ pub fn build_board(design: LoadedDesign) -> BasicBoard {
                 insert_area(&mut board, ObstacleKind::ViaKeepout, a);
                 None
             }
+            InsertRequest::WireObstacle(a) => {
+                insert_area(&mut board, ObstacleKind::WireKeepout, a);
+                None
+            }
             InsertRequest::ComponentObstacle(a) => {
                 insert_area(&mut board, ObstacleKind::ComponentKeepout, a);
                 None

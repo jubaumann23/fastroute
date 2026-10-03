@@ -364,7 +364,11 @@ fn run() -> Result<(), String> {
         );
     }
     pipeline::deferred_post_load_processing(&mut board);
+    if args.parity || args.no_enhancements {
+        board.wire_keepouts_as_keepouts();
+    }
     if !args.parity && !args.no_enhancements {
+        board.fallback_vias_own_class = true;
         board.set_overlap_contacts(true);
         let n = board.bridge_trace_ends_to_drill_centers();
         if n > 0 {

@@ -150,3 +150,30 @@ pub fn format_score(score: f32, incomplete: i32, violations: i32) -> String {
         if violations == 1 { "violation" } else { "violations" }
     )
 }
+
+/// fastroute: the part of [`incomplete_count`] on nets whose class the autorouter ignores
+/// (`autorouter.ignore_net_classes`): these connections are never routed, so they must not
+/// count as work left (multi-start, the pass rollback and stagnation thresholds) and are
+/// reported separately.
+pub fn ignored_incomplete_count(board: &BasicBoard) -> i32 {
+    let ignored: std::collections::HashSet<NetNo> = (1..=board.rules.nets.max_net_number())
+        .filter(|&n| board.rules.nets.get(n).is_some_and(|net| board.rules.net_classes[net.get_net_class()].is_ignored_by_autorouter))
+        .collect();
+    if ignored.is_empty() {
+        return 0;
+    }
+    let mut items: HashMap<NetNo, Vec<ItemKey>> = HashMap::new();
+    for key in board.items.iter() {
+        let item = board.item(key);
+        if item.is_connectable_class() {
+            for &n in item.net_numbers() {
+                if ignored.contains(&n) {
+                    items.entry(n).or_default().push(key);
+                }
+            }
+        }
+    }
+    let mut nets: Vec<NetNo> = items.keys().copied().collect();
+    nets.sort_unstable();
+    nets.iter().map(|n| NetIncompletes::new(board, *n, &items[n]).count()).sum()
+}

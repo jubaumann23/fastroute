@@ -794,7 +794,7 @@ impl BasicBoard {
     pub fn is_trace_obstacle(&self, item: &Item, net_number: NetNo) -> bool {
         match &item.kind {
             ItemKind::ObstacleArea(a) => match a.kind {
-                super::item::ObstacleKind::Keepout => !item.contains_net(net_number),
+                super::item::ObstacleKind::Keepout | super::item::ObstacleKind::WireKeepout => !item.contains_net(net_number),
                 _ => false,
             },
             ItemKind::ConductionArea(c) => c.is_obstacle && !item.contains_net(net_number),

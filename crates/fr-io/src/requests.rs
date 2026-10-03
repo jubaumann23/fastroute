@@ -42,6 +42,8 @@ pub enum InsertRequest {
     Obstacle(AreaRequest),
     /// `insertViaObstacle` -> `ViaObstacleArea`.
     ViaObstacle(AreaRequest),
+    /// fastroute: a board `wire_keepout` (blocks traces only; Freerouting: an `ObstacleArea`).
+    WireObstacle(AreaRequest),
     /// `insertComponentObstacle` -> `ComponentObstacleArea`.
     ComponentObstacle(AreaRequest),
     /// `insertComponentOutline`. Java returns before constructing (no id) if
@@ -112,7 +114,7 @@ impl InsertRequest {
     pub fn kind_name(&self) -> &'static str {
         match self {
             InsertRequest::Outline { .. } => "BoardOutline",
-            InsertRequest::Obstacle(_) => "ObstacleArea",
+            InsertRequest::Obstacle(_) | InsertRequest::WireObstacle(_) => "ObstacleArea",
             InsertRequest::ViaObstacle(_) => "ViaObstacleArea",
             InsertRequest::ComponentObstacle(_) => "ComponentObstacleArea",
             InsertRequest::ComponentOutline { .. } => "ComponentOutline",

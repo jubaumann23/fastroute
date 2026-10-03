@@ -297,8 +297,19 @@ impl RoutingBoard {
             }
             if let Some(default_rule) = self.rules.via_rules.get_first() {
                 let default_via_rule = self.rules.via_rules[default_rule].clone();
+                // fastroute: the default vias carry the default clearance class; for a net of a
+                // wider class (KiCad applies the net's clearance to its vias) such a via ended
+                // up too close to other copper (0.17 mm next to a 0.2 mm class)
+                let own_class = (0..ctrl.via_rule.via_count())
+                    .next()
+                    .map(|i| self.rules.via_infos[ctrl.via_rule.get_via(i)].get_clearance_class_index());
                 for i in 0..default_via_rule.via_count() {
                     let default_via = default_via_rule.get_via(i);
+                    if self.basic.fallback_vias_own_class
+                        && own_class.is_some_and(|c| self.rules.via_infos[default_via].get_clearance_class_index() != c)
+                    {
+                        continue;
+                    }
                     if !combined_via_rule.contains(default_via) {
                         combined_via_rule.append_via(default_via);
                     }
