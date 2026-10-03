@@ -83,6 +83,9 @@ pub struct BasicBoard {
     pub autoroute_maintenance: Option<AutorouteMaintenance>,
     /// Which Java version to reproduce where the reference source and the 2.4.1 jar differ.
     pub java_variant: JavaVariant,
+    /// fastroute: pins and vias of a net whose copper overlaps on a common layer are in contact
+    /// (Freerouting requires equal centers). See [`Self::set_overlap_contacts`].
+    pub(crate) overlap_contacts: bool,
     /// Undo bookkeeping of the item list (Java `UndoableObjects` levels), see [`super::undo`].
     pub(crate) undo: super::undo::UndoJournal,
 }
@@ -112,6 +115,14 @@ pub enum JavaVariant {
 }
 
 impl BasicBoard {
+    /// fastroute: counts overlapping copper of a net's pins and vias as contact (see
+    /// `overlap_contacts`); renews the content epochs, so no cached contact or unrouted count
+    /// of the other rule is used afterwards.
+    pub fn set_overlap_contacts(&mut self, on: bool) {
+        self.overlap_contacts = on;
+        self.items.touch_global();
+    }
+
     /// Java `new BasicBoard(boundingBox, layerStructure, outlineShapes, outlineClClassNo, rules,
     /// communication)`. The library and components are passed in here (Java creates empty ones
     /// that the loader fills). Inserts the outline.
@@ -145,6 +156,7 @@ impl BasicBoard {
             changed_area: None,
             autoroute_maintenance: None,
             java_variant: JavaVariant::Source,
+            overlap_contacts: false,
             undo: super::undo::UndoJournal::default(),
         };
         board.insert_outline(outline_shapes, outline_cl_class_no);

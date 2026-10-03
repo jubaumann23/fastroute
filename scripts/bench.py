@@ -17,6 +17,8 @@ Suites:
                `route_cli.py --export-only --work-dir DIR` (board.dsn + args.txt): the board
                exactly as the KiCad plugin routes it
   FILE.dsn     a single board
+  quick        16 boards that react to routing changes (unrouted connections or recent
+               changes, each under ~100 s); run with -j 3, see QUICK_ARGS
 
 Default: dac,kicad (the 20 benchmark boards of docs/PERFORMANCE.md).
 """
@@ -48,12 +50,36 @@ COLUMNS = [
 ]
 
 
+# boards of the quick suite: (suite directory or "pcbench", board name / PCBench directory prefix)
+QUICK = [
+    ("DAC2020_boards", "DAC2020_bm04"), ("DAC2020_boards", "DAC2020_bm05"),
+    ("KiCad_10_demos", "CM5_MINIMA_3"), ("KiCad_10_demos", "StickHub"), ("KiCad_10_demos", "interf_u"),
+    ("pcbench", "Aria_Aria"), ("pcbench", "HY-AI7688H-RevA"), ("pcbench", "Hardware_Playground_minimal"),
+    ("pcbench", "Inkjet_PiezoDriver"), ("pcbench", "LED_port-status"), ("pcbench", "S1G-Mod_S1G_Mod_868"),
+    ("pcbench", "SunLeaf_SunLeaf_V2"), ("pcbench", "USB-TypeC-breakout-board"), ("pcbench", "kitspace_PSLab"),
+    ("pcbench", "mdbwerk_mdbwerk"), ("pcbench", "mightyduino_mightyduino"),
+]
+# the quick suite runs several boards at once: fewer threads per run (results depend on the
+# thread count, so quick runs are only comparable with quick runs)
+QUICK_ARGS = ["--router.autorouter.max_threads=3", "--router.optimizer.max_threads=3"]
+
+
 class Board:
     def __init__(self, name, dsn, args=()):
         self.name, self.dsn, self.args = name, Path(dsn), list(args)
 
 
 def suite_boards(spec):
+    if spec == "quick":
+        boards = []
+        for suite, name in QUICK:
+            if suite == "pcbench":
+                d = sorted(p for p in (FIXTURES / "PCBench").glob(name + "*") if (p / "unrouted.dsn").is_file())
+                if d:
+                    boards.append(Board("pcb/" + d[0].name[:30], d[0] / "unrouted.dsn", QUICK_ARGS))
+            else:
+                boards.append(Board(name, FIXTURES / suite / f"{name}.dsn", QUICK_ARGS))
+        return boards
     if spec == "dac":
         return [Board(p.stem, p) for p in sorted((FIXTURES / "DAC2020_boards").glob("*.dsn"))]
     if spec == "kicad":
@@ -82,7 +108,9 @@ def suite_boards(spec):
         return boards
     p = Path(spec)
     if p.suffix == ".dsn" and p.is_file():
-        return [Board(p.stem, p)]
+        # PCBench boards are all called unrouted.dsn: name them after their directory
+        name = "pcb/" + p.parent.name[:30] if p.stem == "unrouted" else p.stem
+        return [Board(name, p)]
     sys.exit(f"unknown suite '{spec}'")
 
 

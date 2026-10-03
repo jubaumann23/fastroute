@@ -82,6 +82,14 @@ pub struct BatchAutorouter {
     pub fanout_timed_out: bool,
     /// Java `initialUnroutedCount`.
     pub initial_unrouted_count: i32,
+    /// fastroute: the board as it was before routing (pins, keepouts, fixed wiring), to tell
+    /// connections that fail because of the routed traces from those that cannot be routed at
+    /// all (see [`Self::note_failure`]).
+    pristine: Option<std::sync::Arc<RoutingBoard>>,
+    /// fastroute: ids of items that cannot be routed even on the pristine board; skipped by
+    /// later passes (each attempt is a search over the whole reachable board).
+    blocked: HashSet<i32>,
+    blocked_checked: HashSet<i32>,
     // AutoroutePassRunner state
     previous_incomplete_nets: BTreeSet<NetNo>,
     previous_incomplete_count: i32,
@@ -108,6 +116,36 @@ impl BatchAutorouter {
             settings.get_start_ripup_costs(),
             settings.trace_pull_tight_accuracy.unwrap_or(500),
         )
+    }
+
+    /// fastroute diagnostics: routes the connection of `item` once on a copy of `board`, as
+    /// pass `pass_no` of the autorouter would (rip-up allowed, rip-up costs of that pass).
+    /// Returns the attempt result and the number of items the attempt ripped.
+    pub fn diagnose_connection(
+        board: &RoutingBoard,
+        settings: &RouterSettings,
+        item: ItemKey,
+        pass_no: i32,
+        enhancements: bool,
+    ) -> (AutorouteAttemptResult, usize, [i32; 3]) {
+        let mut router = Self::for_job(board, settings);
+        router.enhancements = enhancements;
+        let mut b = board.clone();
+        let it = b.item(item);
+        if it.net_count() != 1 {
+            return (AutorouteAttemptResult::with_details(AutorouteAttemptState::Skipped, "item of several nets"), 0, [0; 3]);
+        }
+        let net = it.net_number(0);
+        let before = incomplete_count(&b, None);
+        let mut ripped = ItemSet::new();
+        let mut costs: HashMap<ItemKey, i32> = HashMap::new();
+        let outcome = route_connection(&mut b, settings, &router.params(), item, net, &mut ripped, Some(&mut costs), pass_no, None);
+        let after = incomplete_count(&b, None);
+        // as at the end of a pass
+        let option = if router.remove_unconnected_vias { StopConnectionOption::None } else { StopConnectionOption::FanoutVia };
+        router.remove_tails(&mut b, option, None);
+        let after_tails = incomplete_count(&b, None);
+        (outcome.result, ripped.len(), [before, after, after_tails])
     }
 
     /// Java `new BatchAutorouter(thread, board, settings, removeUnconnectedVias,
@@ -147,6 +185,9 @@ impl BatchAutorouter {
             order_seed: None,
             fanout_timed_out: false,
             initial_unrouted_count: 0,
+            pristine: None,
+            blocked: HashSet::new(),
+            blocked_checked: HashSet::new(),
             previous_incomplete_nets: BTreeSet::new(),
             previous_incomplete_count: -1,
             stagnation_count: 0,
@@ -306,6 +347,9 @@ impl BatchAutorouter {
         if let Some(skip) = &self.skip_items {
             items.retain(|&k| !skip.contains(&board.item(k).id().0));
         }
+        if !self.blocked.is_empty() {
+            items.retain(|&k| !self.blocked.contains(&board.item(k).id().0));
+        }
         if items.is_empty() {
             return (false, PassCounters::default());
         }
@@ -393,6 +437,7 @@ impl BatchAutorouter {
                     _ => {
                         record_failure(board, current, pass_no, &result);
                         let failure_count = board.failure_log.get_failure_count(&board.basic, current);
+                        self.note_failure(board, current, failure_count, settings);
                         // Java rips the whole net after every failure from the second one on; a
                         // connection that can never be routed then tears down its (possibly
                         // large) net every pass. fastroute rips it once.
@@ -447,6 +492,9 @@ impl BatchAutorouter {
         use std::collections::VecDeque;
         use std::sync::mpsc;
         let mut items = Self::get_autoroute_items(board);
+        if !self.blocked.is_empty() {
+            items.retain(|&k| !self.blocked.contains(&board.item(k).id().0));
+        }
         if items.is_empty() {
             return (false, PassCounters::default());
         }
@@ -669,7 +717,7 @@ impl BatchAutorouter {
                         _ => {
                             self.total_items_routed += 1;
                             c.ripped += ripped_count;
-                            self.handle_failure(board, key, 0, pass_no, &result, &mut c);
+                            self.handle_failure(board, settings, key, 0, pass_no, &result, &mut c);
                             processed += 1;
                         }
                     }
@@ -745,7 +793,7 @@ impl BatchAutorouter {
             _ => {
                 if let Some(key) = board.get_item(id) {
                     let net_index = board.item(key).net_numbers().iter().position(|&n| n == net).unwrap_or(0);
-                    self.handle_failure(board, key, net_index, pass_no, &result, c);
+                    self.handle_failure(board, settings, key, net_index, pass_no, &result, c);
                 }
             }
         }
@@ -753,9 +801,31 @@ impl BatchAutorouter {
 
     /// Failure bookkeeping of a connection (as in the sequential pass): logs it and rips the
     /// item's net once after its second failure.
-    fn handle_failure(&mut self, board: &mut RoutingBoard, current: ItemKey, net_index: usize, pass_no: i32, result: &AutorouteAttemptResult, c: &mut PassCounters) {
+    /// fastroute: after the second failure of an item, routes it once alone on the pristine
+    /// board; if it fails there as well, the item is skipped by the later passes.
+    fn note_failure(&mut self, board: &RoutingBoard, key: ItemKey, failure_count: i32, settings: &RouterSettings) {
+        if failure_count < 2 {
+            return;
+        }
+        let Some(pristine) = &self.pristine else { return };
+        let id = board.item(key).id().0;
+        if !self.blocked_checked.insert(id) {
+            return;
+        }
+        let mut b = (**pristine).clone();
+        let Some(k) = b.get_item(ItemId(id)) else { return };
+        let r = b.autoroute(k, settings, settings.get_via_costs(), None, None);
+        if matches!(r.state, AutorouteAttemptState::Failed | AutorouteAttemptState::InsertError) {
+            log::debug!(target: "fr_engine::pipeline::diag", "item #{id} cannot be routed on the pristine board ({}): skipped from now on", r.details);
+            self.blocked.insert(id);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn handle_failure(&mut self, board: &mut RoutingBoard, settings: &RouterSettings, current: ItemKey, net_index: usize, pass_no: i32, result: &AutorouteAttemptResult, c: &mut PassCounters) {
         record_failure(board, current, pass_no, result);
         let failure_count = board.failure_log.get_failure_count(&board.basic, current);
+        self.note_failure(board, current, failure_count, settings);
         let rip_net = failure_count == 2 && !self.suppress_net_rip;
         if rip_net {
             let net_no = board.item(current).net_number(net_index as i32);
@@ -818,6 +888,9 @@ impl BatchAutorouter {
         );
         self.initial_unrouted_count = incomplete_count(board, None);
         self.reset_anti_oscillation_state();
+        if self.enhancements && !self.is_optimizer_autorouter && self.pristine.is_none() {
+            self.pristine = Some(std::sync::Arc::new(board.clone()));
+        }
         let mut bh = BoardHistory::new();
         let mut stats = StatsCache::new();
 
@@ -1054,6 +1127,12 @@ impl BatchAutorouter {
                 stage_start.elapsed().as_secs_f64(),
                 format_score(s.router_score, s.incomplete_count, s.clearance_violation_count)
             );
+            if !self.blocked.is_empty() {
+                log::info!(
+                    "{} item(s) cannot be routed even on the board as loaded (blocked by pins, keepouts or fixed wiring); they were skipped after their second failure.",
+                    self.blocked.len()
+                );
+            }
         }
         bh.clear();
         !stop.is_stop_autorouter_requested()

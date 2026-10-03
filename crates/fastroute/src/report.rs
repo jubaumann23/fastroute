@@ -7,7 +7,10 @@
 //! routes there, the connection failed because of the other traces (`congestion`); if neither
 //! end routes, the loaded geometry or the rules block it (`blocked`). The attempt connects the
 //! end to the nearest part of its net, which for nets with more than two pins need not be the
-//! other end of the airline.
+//! other end of the airline. Each connection is also routed on the final board as autorouter
+//! passes 1 and 10 would (rip-up allowed): `in_context` gives the attempt state, its message and
+//! how many items it ripped, and the unrouted count before, after it and after the tail removal
+//! that ends a pass.
 
 use std::fmt::Write as _;
 
@@ -132,6 +135,7 @@ pub fn write_report(
     loaded: Option<&RoutingBoard>,
     settings: &RouterSettings,
     unclamped_optimizer_score: bool,
+    enhancements: bool,
     timings: &Timings,
 ) -> std::io::Result<()> {
     let t = std::time::Instant::now();
@@ -179,11 +183,31 @@ pub fn write_report(
                 blocked += 1;
                 "blocked"
             };
+            let in_context: Vec<String> = [1, 10]
+                .iter()
+                .map(|&pass| {
+                    // as the autorouter: from the end that is not connected to a plane already
+                    let attempt = |k| fr_engine::pipeline::BatchAutorouter::diagnose_connection(board, settings, k, pass, enhancements);
+                    let (mut r, mut ripped, mut inc) = attempt(a.from_item);
+                    if matches!(r.state, AutorouteAttemptState::ConnectedToPlane | AutorouteAttemptState::AlreadyConnected) {
+                        (r, ripped, inc) = attempt(a.to_item);
+                    }
+                    format!(
+                        "{{\"pass\": {pass}, \"state\": {}, \"details\": {}, \"ripped\": {ripped}, \"unrouted_before_after_tails\": [{}, {}, {}]}}",
+                        json_str(&state_name(r.state)),
+                        json_str(&r.details),
+                        inc[0],
+                        inc[1],
+                        inc[2]
+                    )
+                })
+                .collect();
             write!(
                 s,
-                ", \"diagnosis\": {{\"class\": \"{class}\", \"from_alone\": {}, \"to_alone\": {}}}",
+                ", \"diagnosis\": {{\"class\": \"{class}\", \"from_alone\": {}, \"to_alone\": {}, \"in_context\": [{}]}}",
                 attempt_json(&from),
-                attempt_json(&to)
+                attempt_json(&to),
+                in_context.join(", ")
             )
             .unwrap();
         }

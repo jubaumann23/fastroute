@@ -28,6 +28,10 @@ here. The engine-side ones are active unless `--parity` is given
 | Optimizer skips connections that were already unrouted | A candidate re-routes the nets of the ripped item; connections of those nets that were unrouted when the optimizer started were re-tried for every candidate (each attempt seconds long on a board with hundreds of failing connections), without changing the comparison. They are skipped now. 6-layer test board: optimizer pass 897 s → 106 s with the same candidates and scores. |
 | Optimizer time budget | Without `router.optimizer.timeout` the optimizer gets as long as the routing stage took (at least 60 s). The test board: whole run 1955 s → 644 s, same DRC result. |
 | Unclamped optimizer score | The V2 score is clamped at 0; on bm01 the excess length/vias push it below 0, so no candidate could ever be accepted. The optimizer compares unclamped values (and the pass improvement relative to the magnitude). |
+| Overlapping pins and vias are in contact | Freerouting connects two pins/vias only if their centers coincide, while the maze search regards touching copper as reached: pads of a net that touch, or a via in a pad off its center, stayed "unrouted" and were "routed" again in every pass without inserting anything. Copper overlapping on a common layer now counts as contact (`BasicBoard::set_overlap_contacts`). |
+| Trace ends just off a pad center are joined to it | KiCad's Specctra export rounds fixed traces, which then end e.g. 0.5 µm next to the pad center; the contact rule (exact center) did not connect them. At load, every trace end inside the copper of a pin/via of its net but off its center gets a short trace to the center (inside the convex pad). lora_node: 11 → 2 unrouted; KiCad's DRC had already counted these as connected. (Treating any trace end in the copper as contact instead broke the pull-tight and tail logic: 12 → 80 unrouted.) |
+| Connections that cannot be routed at all are skipped | After its second failure a connection is routed once alone on the board as loaded (pins, keepouts, fixed wiring); if it fails there too, no amount of rip-up can route it and later passes skip it instead of searching the whole board again. |
+| No endless walk around a ring of traces | `getConnectionItems` follows contacts until a fork; around a closed ring without a fork the Java loop never ends (it hung a run while the contact rules above were developed). The walk stops where it started. |
 
 ## Length matching (`--tune`, new)
 
@@ -161,13 +165,36 @@ all other boards unchanged (no board got worse). Optimizer scores:
 | bm01 (score below 0) | no improvement possible (91 s) | −182 → 107 in 4 passes (69 s) |
 | lora_node | 328 (+0.45 %) | 435 (+33 %) |
 
+## Diagnosis (`--report`, `--diagnose`)
+
+`--report=FILE` writes a JSON summary of the result. With `--diagnose` every unrouted connection
+is routed once more on its own: on the board as loaded (`congestion`: the routed traces are in
+the way; `blocked`: the geometry or the rules are), and on the final board as autorouter passes
+1 and 10 would, with the unrouted count before, after and after the tail removal. This found
+the contact problems above (connections "routed" without changing the unrouted count).
+`scripts/bench.py --suite quick -j 3` checks 16 sensitive boards in about 5 minutes; the full
+set (`dac,kicad,pcbench:60` plus exported KiCad boards) is for releases.
+
+Not adopted: an automatic neck width (half the narrowest trace width) for boards without one.
+It routed some boards completely but left more unrouted on others (karabas-nano 4 → 15,
+pogo-pin 10 → 17), also when limited to insertion failures (Aria 24 → 32); after the contact
+fixes it no longer helped on balance.
+
+Not adopted either: a PathFinder-style congestion history (McMurchie & Ebeling 1995). Ripped
+regions accumulated history on a 1 mm grid per layer (updated between passes, so it stays
+deterministic); the history raised the rip-up cost of items there, and/or the cost of routing
+through the region. On the quick suite (16 boards + lora_node, unrouted / total time): without
+history 101 / 774 s; rip-up cost ×(1 + h) 105 / 896 s; routing cost ×(1 + 0.3 h) 121 / 1018 s;
+both 106 / 1095 s. Some oscillating boards improved (S1G 21 → 18, SunLeaf 28 → 26) but others
+got worse (Aria 24 → 28–35, bm05 6 → 8) and every variant was slower. A coarse history also
+penalises regions that are crowded but passable; a finer or decaying history, or one applied
+only to the connections that fail, might still work.
+
 ## Open ideas
 
 - CLI users feeding KiCad DSN files directly get none of the plugin's export
   fixes (rule-area keepouts, zone handling, board constraints). A `--kicad`
   preprocessing mode could apply the DSN-only parts (rule areas cannot be
   recognised without the board, though).
-- Connections that can never be routed (e.g. an enclosed pin) are retried every
-  pass; they could be skipped after the net was ripped once.
 - Footprint-local clearances (e.g. a 0.5 mm-pitch LGA with 0.127 mm) are not in
   the DSN export; the router uses the net-class clearance there.

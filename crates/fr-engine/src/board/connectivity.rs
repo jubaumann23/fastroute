@@ -177,6 +177,27 @@ impl BasicBoard {
                 result.insert(ItemId(id), other_key);
             }
         }
+        if self.overlap_contacts {
+            // fastroute: overlapping copper of pins and vias of the net (pads that touch, a via
+            // in a pad off its center). The maze search already treats them as connected; with
+            // the center rule they stayed "unrouted" and were retried in every pass. (Trace ends
+            // keep the exact rule: the pull-tight and tail logic rely on ends at the center.)
+            let first = this.first_layer(self);
+            for i in 0..self.tile_shape_count(key) {
+                let layer = first + i;
+                let Some(shape) = self.tile_shape(key, i) else { continue };
+                for o in self.overlapping_objects(&ConvexShape::Tile(shape), layer) {
+                    let TreeObject::Item { key: other_key, id } = o else { continue };
+                    if other_key == key || result.contains(ItemId(id)) {
+                        continue;
+                    }
+                    let other = self.item(other_key);
+                    if matches!(other.kind, ItemKind::Pin(_) | ItemKind::Via(_)) && other.shares_net(this) {
+                        result.insert(ItemId(id), other_key);
+                    }
+                }
+            }
+        }
         result
     }
 
@@ -358,6 +379,11 @@ impl BasicBoard {
             loop {
                 let ci = self.item(current);
                 if !ci.is_routable() {
+                    break;
+                }
+                // fastroute: around a closed ring of routable items without a fork the Java loop
+                // never ends; stop where it started
+                if result.contains(ci.id()) {
                     break;
                 }
                 if ci.is_via() {
@@ -621,5 +647,51 @@ fn trace_trace_contact_point(this: &Item, other: &Item) -> Option<Point> {
         Some(tf)
     } else {
         Some(tl)
+    }
+}
+
+impl BasicBoard {
+    /// fastroute: trace ends that lie in the copper of a pin or via of their net but not at its
+    /// center (KiCad's Specctra export rounds them, e.g. 0.5 um off the pad center) are not
+    /// connected in the contact model, so the pin stays "unrouted" although the maze search
+    /// regards it as reached. Adds a short trace from each such end to the center (same layer,
+    /// width, nets, clearance class and fixed state; inside the convex pad shape). Returns the
+    /// number of traces added.
+    pub fn bridge_trace_ends_to_drill_centers(&mut self) -> usize {
+        let mut bridges: Vec<(Point, Point, LayerNo, i32, Vec<NetNo>, crate::ids::ClearanceClassNo, FixedState)> = Vec::new();
+        for key in self.get_traces() {
+            let t = self.item(key);
+            let layer = t.trace().layer;
+            for end in [t.first_corner(), t.last_corner()] {
+                let contacts = self.trace_normal_contacts_at(key, &end, false);
+                if contacts.iter().any(|c| matches!(self.item(c).kind, ItemKind::Pin(_) | ItemKind::Via(_))) {
+                    continue;
+                }
+                for o in self.overlapping_objects(&point_shape(&end), layer) {
+                    let TreeObject::Item { key: other_key, .. } = o else { continue };
+                    let other = self.item(other_key);
+                    if !matches!(other.kind, ItemKind::Pin(_) | ItemKind::Via(_)) || !other.shares_net(t) {
+                        continue;
+                    }
+                    let center = other.center(self);
+                    if center == end {
+                        continue;
+                    }
+                    // the center must be in the copper on this layer as well (convex shape)
+                    let index = layer - other.first_layer(self);
+                    let inside = self.tile_shape(other_key, index).is_some_and(|s| s.contains(&center) && s.contains(&end));
+                    if inside {
+                        bridges.push((end, center, layer, t.trace().half_width, t.net_numbers().to_vec(), t.clearance_class, t.fixed_state()));
+                        break;
+                    }
+                }
+            }
+        }
+        let n = bridges.len();
+        for (a, b, layer, half_width, nets, cl, fixed) in bridges {
+            let polyline = fr_geom::Polyline::from_points(&[a, b]);
+            self.insert_trace(polyline, layer, half_width, &nets, cl, fixed);
+        }
+        n
     }
 }

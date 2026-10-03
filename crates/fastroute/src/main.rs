@@ -364,6 +364,13 @@ fn run() -> Result<(), String> {
         );
     }
     pipeline::deferred_post_load_processing(&mut board);
+    if !args.parity && !args.no_enhancements {
+        board.set_overlap_contacts(true);
+        let n = board.bridge_trace_ends_to_drill_centers();
+        if n > 0 {
+            log::info!(target: "fastroute", "{n} trace ends inside a pad but off its center joined to the center");
+        }
+    }
     log::info!(
         target: "fastroute",
         "built board in {:.1} ms: {} items ({} pins, {} vias, {} traces)",
@@ -559,7 +566,7 @@ fn run() -> Result<(), String> {
     if let Some(out) = &args.report {
         let timings = report::Timings { load_s, route_s, total_s: t_start.elapsed().as_secs_f64() };
         let unclamped = !args.parity && !args.no_enhancements;
-        report::write_report(out, &path, &board, loaded.as_ref(), &settings, unclamped, &timings).map_err(|e| format!("{out}: {e}"))?;
+        report::write_report(out, &path, &board, loaded.as_ref(), &settings, unclamped, unclamped, &timings).map_err(|e| format!("{out}: {e}"))?;
         log::info!(target: "fastroute", "report written to '{out}'");
     }
     Ok(())
