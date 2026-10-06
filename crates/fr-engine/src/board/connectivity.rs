@@ -309,6 +309,9 @@ impl BasicBoard {
         result.insert(this.id(), key);
         // iterative version of getConnectedSetRecu
         let mut stack: Vec<(Rc<[ItemKey]>, usize)> = vec![(self.normal_contacts_keys(key), 0)];
+        if self.is_stitching_via(key) {
+            stack.push((self.stitching_via_contacts(key, net_number), 0));
+        }
         while let Some((contacts, pos)) = stack.last_mut() {
             if *pos >= contacts.len() {
                 stack.pop();
@@ -325,9 +328,23 @@ impl BasicBoard {
             }
             if result.insert(c.id(), contact) {
                 stack.push((self.normal_contacts_keys(contact), 0));
+                if self.is_stitching_via(contact) {
+                    stack.push((self.stitching_via_contacts(contact, net_number), 0));
+                }
             }
         }
         result
+    }
+
+    /// fastroute: the other stitching vias of the net of `key`, which the copper zone of the
+    /// net joins to it (the zone itself is not on the board, see
+    /// [`BasicBoard::mark_stitching_vias`]). Virtual contacts for [`Self::connected_set`].
+    fn stitching_via_contacts(&self, key: ItemKey, net_number: NetNo) -> Rc<[ItemKey]> {
+        let net = if net_number > 0 { net_number } else { self.item(key).net_numbers().first().copied().unwrap_or(0) };
+        if net <= 0 {
+            return Rc::from(Vec::new());
+        }
+        self.items.net_items(net).filter(|&k| k != key && self.is_stitching_via(k)).collect::<Vec<_>>().into()
     }
 
     /// Java `getUnconnectedSet(netNumber)`.

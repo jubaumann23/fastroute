@@ -242,7 +242,7 @@ impl BatchAutorouter {
         let mut handled: HashSet<i32> = HashSet::new();
         for key in board.get_items() {
             let item = board.item(key);
-            if !item.is_connectable_class() || item.is_routable() {
+            if !item.is_connectable_class() || item.is_routable() || board.is_stitching_via(key) {
                 continue;
             }
             if handled.contains(&item.id().0) {

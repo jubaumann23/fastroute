@@ -749,8 +749,42 @@ def lock_existing_tracks(board):
     return ids
 
 
+def stitching_vias(board):
+    """The vias that no track touches: zone stitching / thermal vias (a via that only joins the
+    copper zones of its net on two layers). Returns the vias, in board order."""
+    ends = set()
+    for t in board.GetTracks():
+        if t.GetClass() in ("PCB_TRACK", "PCB_ARC"):
+            ends.add((t.GetStart().x, t.GetStart().y))
+            ends.add((t.GetEnd().x, t.GetEnd().y))
+    out = []
+    for v in board.GetTracks():
+        if v.GetClass() != "PCB_VIA" or v.GetNetCode() <= 0:
+            continue
+        c = v.GetPosition()
+        r = v.GetWidth() // 2
+        if any(abs(x - c.x) <= r and abs(y - c.y) <= r for x, y in ends):
+            continue
+        out.append(v)
+    return out
+
+
+def lock_stitching_vias(board):
+    """Locks the unlocked stitching vias for one routing run and returns their ids.
+
+    To the router a lone via is a dangling tail: Freerouting removes unconnected vias after
+    every pass, and with "remove existing tracks" they are stripped from the export like any
+    other wiring. Locked vias are exported as fixed wiring and survive both."""
+    ids = set()
+    for v in stitching_vias(board):
+        if not v.IsLocked():
+            v.SetLocked(True)
+            ids.add(v.m_Uuid.AsString())
+    return ids
+
+
 def unlock_tracks(board, ids):
-    """Undoes `lock_existing_tracks`."""
+    """Undoes `lock_existing_tracks` / `lock_stitching_vias`."""
     if not ids:
         return
     for t in board.GetTracks():
@@ -1232,6 +1266,7 @@ class Router:
         clearance_margin_um=5.0,
         obstacle_zones=(),
         live=False,
+        keep_stitching=True,
     ):
         self.board = board
         self.clearance_margin_um = clearance_margin_um
@@ -1241,6 +1276,9 @@ class Router:
         self.clear_tracks = clear_tracks
         # existing tracks and vias are kept unchanged (ignored with clear_tracks)
         self.keep_existing = keep_existing and not clear_tracks
+        # zone stitching vias (vias without a track) are kept through the run
+        self.keep_stitching = keep_stitching
+        self.stitching_kept = 0
         self.in_editor = in_editor
         self.text_keepouts = text_keepouts
         self.refill = refill
@@ -1290,6 +1328,10 @@ class Router:
         for f in (self._dsn, self._ses):
             f.unlink(missing_ok=True)
         self._temp_locked = lock_existing_tracks(self.board) if self.keep_existing else set()
+        if self.keep_stitching:
+            stitched = lock_stitching_vias(self.board)
+            self.stitching_kept = len(stitched)
+            self._temp_locked |= stitched
         if not export_dsn(self.board, self._dsn):
             unlock_tracks(self.board, self._temp_locked)
             result = RouteResult()
@@ -1361,6 +1403,11 @@ class Router:
     def route(self, on_line=None):
         """Runs fastroute on the exported file (does not touch the board)."""
         result = RouteResult()
+        if getattr(self, "stitching_kept", 0):
+            line = f"{self.stitching_kept} zone stitching vias kept (locked for the run)"
+            result.log.append("INFO  " + line)
+            if on_line:
+                on_line("INFO", line)
         for w in getattr(self, "warnings", []):
             result.log.append("WARN  .kicad_dru " + w)
             result.warnings.append(".kicad_dru " + w)

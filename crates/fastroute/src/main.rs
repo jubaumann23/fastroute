@@ -427,6 +427,10 @@ fn run() -> Result<(), String> {
     if !args.parity && !args.no_enhancements {
         board.fallback_vias_own_class = true;
         board.set_overlap_contacts(true);
+        let n = board.mark_stitching_vias();
+        if n > 0 {
+            log::info!(target: "fastroute", "{n} fixed vias without a connection (zone stitching vias): kept, treated as joined by their zone");
+        }
         let n = board.bridge_trace_ends_to_drill_centers();
         if n > 0 {
             log::info!(target: "fastroute", "{n} trace ends inside a pad but off its center joined to the center");

@@ -27,6 +27,7 @@ DEFAULTS = {
     "text_keepouts": True,
     "respect_min_width": True,
     "refill_zones": True,
+    "keep_stitching": True,
     "live_view": False,
 }
 
@@ -94,6 +95,12 @@ class SettingsDialog(wx.Dialog):
             "respect_min_width",
             "Board Setup > Constraints > Minimum track width.",
         )
+        self.stitching = check(
+            "Keep zone stitching vias", "keep_stitching",
+            "Vias that no track touches (GND stitching, thermal vias) are kept where they "
+            "are, also with the tracks removed. Otherwise the router treats them as loose "
+            "ends and removes them.",
+        )
         self.refill = check("Refill zones after routing", "refill_zones", "")
         self.live = check(
             "Show the routing live in the web browser", "live_view",
@@ -116,6 +123,7 @@ class SettingsDialog(wx.Dialog):
             "text_keepouts": self.text_keepouts.GetValue(),
             "respect_min_width": self.min_width.GetValue(),
             "refill_zones": self.refill.GetValue(),
+            "keep_stitching": self.stitching.GetValue(),
             "live_view": self.live.GetValue(),
         }
 
@@ -250,6 +258,7 @@ class FastrouteAction(pcbnew.ActionPlugin):
             clear_tracks=settings["clear_tracks"],
             keep_existing=settings["keep_existing"],
             live=settings["live_view"],
+            keep_stitching=settings["keep_stitching"],
             in_editor=True,
         )
         progress = ProgressDialog(parent, router)

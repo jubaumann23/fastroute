@@ -76,6 +76,11 @@ def main(argv=None):
         "the fastroute arguments to args.txt there; do not route",
     )
     ap.add_argument(
+        "--no-keep-stitching", action="store_true",
+        help="do not keep zone stitching vias (vias without a track); by default they are "
+        "locked for the run so the router neither removes nor moves them",
+    )
+    ap.add_argument(
         "--live", action="store_true",
         help="watch the routing live in the web browser (fastroute --live)",
     )
@@ -120,6 +125,7 @@ def main(argv=None):
         clearance_margin_um=args.clearance_margin_um,
         obstacle_zones=[p.strip() for p in args.obstacle_zones.split(",")],
         live=args.live,
+        keep_stitching=not args.no_keep_stitching,
     )
 
     def show(level, text):

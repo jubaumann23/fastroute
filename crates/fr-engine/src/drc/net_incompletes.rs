@@ -100,7 +100,8 @@ impl NetIncompletes {
         let mut filtered: Vec<ItemKey> = Vec::with_capacity(net_items.len());
         for &k in net_items {
             let item = board.item(k);
-            if board.is_tail(k) {
+            // (fastroute: a stitching via is never a tail; the vias of a net form one group)
+            if board.is_tail(k) && !board.is_stitching_via(k) {
                 continue;
             }
             if !item.is_conduction_area() && !item.is_drill_item() && board.normal_contacts(k).is_empty() {

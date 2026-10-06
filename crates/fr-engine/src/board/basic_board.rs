@@ -89,6 +89,13 @@ pub struct BasicBoard {
     /// fastroute: the fanout's fallback to the board's default vias only takes vias of the
     /// net's own via clearance class (see `RoutingBoard::fanout`).
     pub fallback_vias_own_class: bool,
+    /// fastroute: a fixed via that touches no trace is a zone stitching via (KiCad exports
+    /// locked vias as `(type fix)`): it is not an incomplete connection and not routed to.
+    /// See [`Self::is_stitching_via`].
+    pub stitching_vias: bool,
+    /// The stitching vias, decided once by [`Self::mark_stitching_vias`] (a trace that later
+    /// crosses one of them contacts it, which must not turn it into a routing target).
+    pub(crate) stitching_via_ids: HashSet<ItemId>,
     /// Undo bookkeeping of the item list (Java `UndoableObjects` levels), see [`super::undo`].
     pub(crate) undo: super::undo::UndoJournal,
 }
@@ -175,6 +182,8 @@ impl BasicBoard {
             java_variant: JavaVariant::Source,
             overlap_contacts: false,
             fallback_vias_own_class: false,
+            stitching_vias: false,
+            stitching_via_ids: HashSet::new(),
             undo: super::undo::UndoJournal::default(),
         };
         board.insert_outline(outline_shapes, outline_cl_class_no);
@@ -321,6 +330,34 @@ impl BasicBoard {
     /// Java `connectableItemCount(netNumber)`.
     pub fn connectable_item_count(&self, net_number: NetNo) -> i32 {
         self.items.net_items(net_number).filter(|k| self.item(*k).is_connectable_class()).count() as i32
+    }
+
+    /// fastroute: marks every fixed via without a contact (a zone stitching / thermal via;
+    /// KiCad exports locked vias as `(type fix)`) and enables [`Self::stitching_vias`]. The
+    /// copper zone that joins these vias is not on the board (the KiCad plugin strips the
+    /// planes), so the stitching vias of a net are treated as connected to each other
+    /// (`connected_set`): a pad routed to any one of them is connected to the zone and to every
+    /// other pad that reached one. Freerouting routes a trace to every such via instead (and,
+    /// unfixed, removes them as tails). Returns how many were marked.
+    pub fn mark_stitching_vias(&mut self) -> usize {
+        let ids: HashSet<ItemId> = self
+            .get_items()
+            .into_iter()
+            .filter(|&k| {
+                let item = self.item(k);
+                item.is_via() && item.fixed_state() >= FixedState::ShoveFixed && self.normal_contacts(k).is_empty()
+            })
+            .map(|k| self.item(k).id())
+            .collect();
+        self.stitching_vias = true;
+        let n = ids.len();
+        self.stitching_via_ids = ids;
+        n
+    }
+
+    /// fastroute: `key` was marked by [`Self::mark_stitching_vias`].
+    pub fn is_stitching_via(&self, key: ItemKey) -> bool {
+        self.stitching_vias && !self.stitching_via_ids.is_empty() && self.stitching_via_ids.contains(&self.item(key).id())
     }
 
     /// Java `getComponentItems(componentId)`.
