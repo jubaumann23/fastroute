@@ -51,6 +51,7 @@ struct Args {
     max_time: Option<f64>,
     tune: Option<String>,
     pairs: Option<String>,
+    pair_skew: f64,
     no_neckdown_classes: Vec<String>,
     report: Option<String>,
     diagnose: bool,
@@ -74,6 +75,7 @@ fn parse_args() -> Result<Args, String> {
         max_time: None,
         tune: None,
         pairs: None,
+        pair_skew: 0.1,
         no_neckdown_classes: Vec::new(),
         report: None,
         diagnose: false,
@@ -163,6 +165,11 @@ fn parse_args() -> Result<Args, String> {
                     i += 1;
                     continue;
                 }
+                if let Some(m) = a.strip_prefix("--pair-skew=") {
+                    args.pair_skew = m.parse().map_err(|_| format!("bad --pair-skew '{m}' (mm)"))?;
+                    i += 1;
+                    continue;
+                }
                 if let Some(m) = a.strip_prefix("--initial-session=") {
                     args.initial_session = Some(m.to_string());
                     i += 1;
@@ -214,7 +221,9 @@ options:
   -mp N                    maximum autorouter passes (router.autorouter.max_passes)
   --no-neckdown-classes=A,B  keep the full trace width of these net classes at pins
                            (controlled impedance)
-  --pairs=FILE             differential pairs: routed first, N running along P (see below)
+  --pairs=FILE             differential pairs: routed first, N running along P (see below);
+                           afterwards the shorter net of each pair gets meanders until the
+                           lengths differ by at most --pair-skew (default 0.1 mm; 0 = off)
   --layer-heights=MM,..    height of each copper layer from the top (stackup), so that via
                            lengths count in length matching as in KiCad
   --tune=FILE              length matching after routing (groups of nets, see below)
@@ -246,8 +255,9 @@ tune file: one group per `group` line, followed by net names (* = any text):
   group sdram_clk tolerance=0.2 target=40   # fixed target length in mm
 
 pairs file: one pair per line, optional copper gap in mm (default: their clearance),
-also per layer. Pairs are routed and coupled first, then fixed while the rest is routed:
-  pair /USB_DP /USB_DN gap=0.15 gap@In1.Cu=0.12
+also per layer, and the allowed length difference (skew=, default --pair-skew). Pairs are
+routed and coupled first, then fixed while the rest is routed:
+  pair /USB_DP /USB_DN gap=0.15 gap@In1.Cu=0.12 skew=0.05
 
 common --router.* settings (numbers, true/false, comma-separated lists):
   --router.autorouter.max_passes=N          passes (0 = unlimited)
@@ -595,6 +605,19 @@ fn run() -> Result<(), String> {
         for r in fr_engine::diffpair::couple_pairs(&mut board, &pairs, &settings, &ctx.stop) {
             log_pair(&r, "after routing");
         }
+        for r in fr_engine::diffpair::match_pair_lengths(&mut board, &pairs, &settings, args.pair_skew, &ctx.stop) {
+            log::info!(
+                target: "fastroute",
+                "diff pair {} / {}: length difference {:+.3} -> {:+.3} mm (tolerance {:.2}){}{}",
+                r.p,
+                r.n,
+                r.skew_before_mm,
+                r.skew_after_mm,
+                r.tolerance_mm,
+                if r.on_coupled_mm > 0.0 { format!(", {:.2} mm of meanders on the coupled runs", r.on_coupled_mm) } else { String::new() },
+                if r.message.is_empty() { String::new() } else { format!(": {}", r.message) }
+            );
+        }
         log::info!(target: "fastroute", "diff pairs finished in {:.2} s", t.elapsed().as_secs_f64());
     }
     if !tune_groups.is_empty() && !ctx.stop.is_stop_requested() {
@@ -745,14 +768,15 @@ fn parse_pairs_file(path: &str) -> Result<Vec<fr_engine::diffpair::DiffPair>, St
         }
         let words: Vec<&str> = line.split_whitespace().collect();
         if words.len() < 3 || words[0] != "pair" {
-            return Err(format!("{path}:{}: expected 'pair P N [gap=MM]'", no + 1));
+            return Err(format!("{path}:{}: expected 'pair P N [gap=MM] [skew=MM]'", no + 1));
         }
-        let mut pair = fr_engine::diffpair::DiffPair { p: words[1].to_string(), n: words[2].to_string(), gap_mm: None, layer_gaps_mm: Vec::new() };
+        let mut pair = fr_engine::diffpair::DiffPair { p: words[1].to_string(), n: words[2].to_string(), gap_mm: None, layer_gaps_mm: Vec::new(), skew_mm: None };
         for w in &words[3..] {
             let (k, v) = w.split_once('=').ok_or(format!("{path}:{}: unknown option '{w}'", no + 1))?;
             let mm: f64 = v.trim_end_matches("mm").parse().map_err(|_| format!("{path}:{}: bad number '{v}'", no + 1))?;
             match k.split_once('@') {
                 None if k == "gap" => pair.gap_mm = Some(mm),
+                None if k == "skew" => pair.skew_mm = Some(mm),
                 Some(("gap", layer)) => pair.layer_gaps_mm.push((layer.to_string(), mm)),
                 _ => return Err(format!("{path}:{}: unknown option '{w}'", no + 1)),
             }

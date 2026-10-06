@@ -44,6 +44,22 @@ pub struct DiffPair {
     pub gap_mm: Option<f64>,
     /// Gaps for single layers (layer name, mm), e.g. from controlled-impedance rules.
     pub layer_gaps_mm: Vec<(String, f64)>,
+    /// Allowed length difference between N and P, mm (`None`: the default of the run).
+    pub skew_mm: Option<f64>,
+}
+
+/// Result of [`match_pair_lengths`] for one pair.
+#[derive(Clone, Debug)]
+pub struct SkewResult {
+    pub p: String,
+    pub n: String,
+    pub tolerance_mm: f64,
+    /// Length difference N - P before and after, mm.
+    pub skew_before_mm: f64,
+    pub skew_after_mm: f64,
+    /// Meander length added on coupled runs (the pair is apart there), mm.
+    pub on_coupled_mm: f64,
+    pub message: String,
 }
 
 /// Result for one pair.
@@ -132,6 +148,81 @@ pub fn couple_pairs(board: &mut RoutingBoard, pairs: &[DiffPair], settings: &Rou
         }
         result.skew_mm = (net_length(board, n) - net_length(board, p)) / upm;
         out.push(result);
+    }
+    out
+}
+
+/// Matches the lengths of the two nets of every pair: the shorter net gets meanders until the
+/// difference is within the pair's tolerance (`default_skew_mm` if it has none; 0 = off).
+/// Meanders go on the net's uncoupled parts first (near the pins, where the two nets run
+/// apart anyway); only what cannot be placed there goes on the coupled runs, with small bumps.
+pub fn match_pair_lengths(board: &mut RoutingBoard, pairs: &[DiffPair], settings: &RouterSettings, default_skew_mm: f64, stop: &StopToken) -> Vec<SkewResult> {
+    let upm = units_per_mm(board);
+    let mut out = Vec::new();
+    for pair in pairs {
+        if stop.is_stop_requested() {
+            break;
+        }
+        let tol_mm = pair.skew_mm.unwrap_or(default_skew_mm);
+        if tol_mm <= 0.0 {
+            continue;
+        }
+        let (Some(p), Some(n)) = (net_by_name(board, &pair.p), net_by_name(board, &pair.n)) else { continue };
+        let skew = net_length(board, n) - net_length(board, p);
+        let mut r = SkewResult {
+            p: pair.p.clone(),
+            n: pair.n.clone(),
+            tolerance_mm: tol_mm,
+            skew_before_mm: skew / upm,
+            skew_after_mm: skew / upm,
+            on_coupled_mm: 0.0,
+            message: String::new(),
+        };
+        let tol = tol_mm * upm;
+        if skew.abs() > tol {
+            // the shorter net; aim at the middle of the window
+            let (short, long) = if skew < 0.0 { (n, p) } else { (p, n) };
+            let need = skew.abs() - tol / 2.0;
+            let geo = PairGeometry::new(board, long, short, pair, settings);
+            let partner: Vec<(LayerNo, i32, Polyline)> = net_traces(board, long)
+                .into_iter()
+                .filter_map(|k| board.item(k).as_trace().map(|t| (t.layer(), t.half_width(), t.polyline().clone())))
+                .collect();
+            let coupled = |b: &RoutingBoard, key: ItemKey, a: &FloatPoint, c: &FloatPoint| -> bool {
+                let Some(t) = b.item(key).as_trace() else { return false };
+                let mid = FloatPoint::new((a.x + c.x) / 2.0, (a.y + c.y) / 2.0);
+                partner.iter().any(|(layer, hw, pl)| {
+                    *layer == t.layer() && {
+                        let d = geo.distance(*layer, *hw);
+                        (pl.distance(&mid) - d).abs() <= 0.1 * d + 0.002 * upm
+                    }
+                })
+            };
+            // 1. uncoupled segments, longest first (bumps of at most 2 mm: pair skew is
+            //    compensated next to the pins, where big serpentines look like a mistake)
+            let free = crate::tuning::TuneOptions {
+                rank: &|b, key, _seg, a, c| if coupled(b, key, a, c) { None } else { Some(a.distance(c)) },
+                max_amp_mm: 2.0,
+            };
+            let got = crate::tuning::tune_net_with(board, short, need, &free);
+            // 2. what is left: small bumps on the coupled runs
+            let left = need - got;
+            if left > 0.02 * upm {
+                let tight = crate::tuning::TuneOptions {
+                    rank: &|b, key, _seg, a, c| if coupled(b, key, a, c) { Some(a.distance(c)) } else { None },
+                    max_amp_mm: 0.45,
+                };
+                r.on_coupled_mm = crate::tuning::tune_net_with(board, short, left, &tight) / upm;
+            }
+            r.skew_after_mm = (net_length(board, n) - net_length(board, p)) / upm;
+            if r.skew_after_mm.abs() > tol_mm + 1e-9 {
+                r.message = "no room for the meanders".into();
+            } else if skew.abs() > 5.0 * upm {
+                // that much difference is a detour of one net, not a geometry difference
+                r.message = format!("{:.1} mm of meanders compensate a detour of {}; a shorter route for it would be better", skew.abs() / upm, if skew > 0.0 { &pair.n } else { &pair.p });
+            }
+        }
+        out.push(r);
     }
     out
 }

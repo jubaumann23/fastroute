@@ -118,10 +118,23 @@ Test board (STM32H7, 4 layers, USB + 2 Ethernet pairs, through the plugin):
 | pairs held fixed throughout | 15 | 0 | 23 / 21 / 9 mm | 414 s |
 | held, released if needed (default) | 0 | 0 | 14.5 / 11.3 / 13.8 mm of 28 / 32 / 24 | 507 s |
 
+6. **Intra-pair skew.** After the coupling the shorter net of each pair gets meanders until
+   the two lengths differ by at most the pair's tolerance (`skew=` in the pairs file,
+   else `--pair-skew`, default 0.1 mm; 0 turns it off). The meanders go on the net's
+   uncoupled parts first, longest segment first (near the pins, where the two nets run apart
+   anyway); only what finds no room there goes on the coupled runs as small bumps (amplitude
+   ≤ 0.45 mm), and the result says how much. Bumps next to the pins are at most 2 mm high.
+   A difference above 5 mm is a detour of one net rather than pair geometry, and the log says
+   so (the right fix is a shorter route for that net). Same board: USB −2.18 → −0.05 mm,
+   ETH RX −0.80 → −0.05 mm, ETH TX +16.71 → +0.05 mm (flagged as a detour of TXN), all
+   meanders off the coupled runs, 0 unrouted, 0 violations, KiCad DRC clean; the stage takes
+   well under a second.
+
 The gap is the pair clearance unless given (per layer as well). Limits: the pair is coupled
 where there is room next to the lead net's path; ends whose pads are in the opposite order
 need a crossing, which the router makes around a pad or with a via; branches (a USB-C
-connector's two D+ pads) are coupled only along one path; the traces are not length-matched
+connector's two D+ pads) are coupled only along one path; the traces are length-matched
+within the pair but not phase-matched at every bend
 within the pair (the skew is logged).
 
 ## KiCad plugin

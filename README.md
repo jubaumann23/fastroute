@@ -70,7 +70,8 @@ measurements and the reasoning for each change: [docs/IMPROVEMENTS.md](docs/IMPR
 - **Controlled impedance**: trace widths per layer from the board stackup (microstrip,
   stripline, differential), no neck-down for those classes (`--no-neckdown-classes`).
 - **Differential pairs** (`--pairs`): pairs are routed first with the second net following
-  the first at the pair gap, held while the rest of the board is routed.
+  the first at the pair gap, held while the rest of the board is routed; afterwards the
+  shorter net gets meanders until the two lengths match (`--pair-skew`, default 0.1 mm).
 
 ### KiCad plugin
 

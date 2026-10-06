@@ -20,7 +20,7 @@
 use crate::board::{ItemKey, RoutingBoard};
 use crate::drc::clearance_violation::clearance_violation_count;
 use crate::ids::{FixedState, LayerNo, NetNo};
-use fr_geom::{IntPoint, Point, Polyline};
+use fr_geom::{FloatPoint, IntPoint, Point, Polyline};
 
 /// Extra half width of the clearance check of a meander, micrometres.
 const TUNING_SAFETY_MARGIN_UM: f64 = 5.0;
@@ -175,8 +175,23 @@ pub fn tune_lengths(board: &mut RoutingBoard, groups: &[TuneGroup]) -> Vec<Group
     out
 }
 
+/// How [`tune_net_with`] picks its segments.
+pub struct TuneOptions<'a> {
+    /// Rank of a straight segment (`key`, index, end points): higher first, `None` = leave it
+    /// alone. The default ranks by length.
+    pub rank: &'a dyn Fn(&RoutingBoard, ItemKey, usize, &FloatPoint, &FloatPoint) -> Option<f64>,
+    /// Largest meander amplitude, mm (default 4).
+    pub max_amp_mm: f64,
+}
+
 /// Adds about `extra` board units of length to `net` with meanders; returns the added length.
 fn tune_net(board: &mut RoutingBoard, net: NetNo, extra: f64) -> f64 {
+    tune_net_with(board, net, extra, &TuneOptions { rank: &|_, _, _, a, b| Some(a.distance(b)), max_amp_mm: 4.0 })
+}
+
+/// [`tune_net`] with the segment choice and amplitude of `opts` (the diff pair skew matching
+/// keeps the meanders off the coupled runs).
+pub fn tune_net_with(board: &mut RoutingBoard, net: NetNo, extra: f64, opts: &TuneOptions) -> f64 {
     let upm = units_per_mm(board);
     let mut need = extra;
     let mut added = 0.0;
@@ -184,7 +199,7 @@ fn tune_net(board: &mut RoutingBoard, net: NetNo, extra: f64) -> f64 {
     const AMPLITUDES_MM: [f64; 8] = [4.0, 3.0, 2.0, 1.4, 1.0, 0.7, 0.45, 0.3];
     let mut failed_segments: std::collections::HashSet<(i32, i32)> = std::collections::HashSet::new();
     'outer: while need > 0.02 * upm {
-        // longest straight segments of the net's traces first
+        // best ranked straight segments of the net's traces first
         let mut segs: Vec<(f64, ItemKey, usize)> = Vec::new();
         for k in net_traces(board, net) {
             let Some(t) = board.item(k).as_trace() else { continue };
@@ -192,9 +207,11 @@ fn tune_net(board: &mut RoutingBoard, net: NetNo, extra: f64) -> f64 {
             for i in 0..corners.len().saturating_sub(1) {
                 let a = corners[i].to_float();
                 let b = corners[i + 1].to_float();
-                let len = a.distance(&b);
-                if !failed_segments.contains(&(board.item(k).id().0, i as i32)) {
-                    segs.push((len, k, i));
+                if failed_segments.contains(&(board.item(k).id().0, i as i32)) {
+                    continue;
+                }
+                if let Some(r) = (opts.rank)(board, k, i, &a, &b) {
+                    segs.push((r, k, i));
                 }
             }
         }
@@ -208,6 +225,9 @@ fn tune_net(board: &mut RoutingBoard, net: NetNo, extra: f64) -> f64 {
             let pitches = [(6.0 * half_width).max(2.0 * half_width + clearance), 2.0 * half_width + clearance];
             for pitch in pitches {
                 for amp_mm in AMPLITUDES_MM {
+                    if amp_mm > opts.max_amp_mm + 1e-9 {
+                        continue;
+                    }
                     let amp = amp_mm * upm;
                     if amp < 2.0 * half_width + clearance {
                         continue;

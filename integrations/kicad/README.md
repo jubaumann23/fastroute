@@ -82,7 +82,10 @@ your fabricator's stackup.
 
 Differential pairs: every `.kicad_dru` rule with a `diff_pair_gap` constraint makes the
 matching nets pairs (KiCad naming: `NAME+`/`NAME-` or `NAMEP`/`NAMEN`), routed first with
-the rule's gap (`opt`, else `min`; per layer if the rule has a `layer`). The impedance rules
+the rule's gap (`opt`, else `min`; per layer if the rule has a `layer`). After routing the
+shorter net of each pair gets meanders until the two lengths differ by at most 0.1 mm (set
+another tolerance with a `skew` rule on the pair's nets, or `--pair-skew=MM` after `--` in
+`route_cli.py`; 0 turns it off). The impedance rules
 of `impedance_cli.py` for `90d`-style targets contain such constraints. By hand:
 
 ```
