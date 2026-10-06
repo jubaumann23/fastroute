@@ -671,6 +671,7 @@ impl BatchOptimizer {
             }
             current_pass += 1;
             let score_before_pass = stats.score(board, settings).optimizer_score;
+            let pass_start = Instant::now();
             let with_preferred_directions = current_pass % 2 != 0;
             self.opt_route_pass(board, settings, ctx, stats, current_pass, with_preferred_directions);
             if self.timed_out {
@@ -678,6 +679,13 @@ impl BatchOptimizer {
             }
             let pass_stats = stats.score(board, settings);
             let score_after_pass = pass_stats.optimizer_score;
+            ctx.observe(board, &super::LiveEvent::OptimizerPass {
+                pass_no: current_pass,
+                secs: pass_start.elapsed().as_secs_f64(),
+                incomplete: pass_stats.incomplete_count,
+                violations: pass_stats.clearance_violation_count,
+                score: score_after_pass,
+            });
             match self.rejection_reason(pass_stats.incomplete_count, pass_stats.clearance_violation_count, score_after_pass) {
                 None => {
                     self.best_score = score_after_pass;

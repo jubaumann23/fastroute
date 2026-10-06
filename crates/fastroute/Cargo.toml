@@ -10,6 +10,7 @@ fr-dsn = { path = "../fr-dsn" }
 fr-settings = { path = "../fr-settings" }
 fr-io = { path = "../fr-io" }
 fr-engine = { path = "../fr-engine" }
+fr-geom = { path = "../fr-geom" }
 log = "0.4"
 mimalloc = { version = "0.1", default-features = false }
 ctrlc = { version = "3.4.5", features = ["termination"] }
@@ -19,5 +20,3 @@ dhat = { version = "0.3", optional = true }
 # heap profiling (writes dhat-heap.json; view with https://nnethercote.github.io/dh_view/dh_view.html)
 dhat-heap = ["dep:dhat"]
 
-[dev-dependencies]
-fr-geom = { path = "../fr-geom" }

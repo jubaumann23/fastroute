@@ -22,6 +22,8 @@ PLUGIN_DIR = Path(__file__).resolve().parent
 
 # Lines like "   12.345 INFO  message" from fastroute's stderr.
 _LOG_LINE = re.compile(r"^\s*\d+\.\d+\s+(\w+)\s+(.*)$")
+# "live viewer: http://127.0.0.1:7878" (fastroute --live).
+_LIVE_URL = re.compile(r"live viewer: (http://\S+)")
 # Router score reports; the last one seen is the final state of the board.
 _SCORES = (
     re.compile(r"final score: ([\d.]+) \((\d+) unrouted and (\d+) violations?\)"),
@@ -1229,6 +1231,7 @@ class Router:
         max_time=None,
         clearance_margin_um=5.0,
         obstacle_zones=(),
+        live=False,
     ):
         self.board = board
         self.clearance_margin_um = clearance_margin_um
@@ -1247,6 +1250,9 @@ class Router:
         if max_time:
             # fastroute stops by itself and writes its best result (no kill needed)
             self.extra_args.append(f"--max-time={int(max_time)}")
+        if live and not any(x == "--live" or x.startswith("--live=") for x in self.extra_args):
+            # local web page with the routing as it happens; fastroute opens the browser
+            self.extra_args.append("--live")
         self.work_dir = Path(work_dir) if work_dir else None
         self._proc = None
         self._cancel = threading.Event()
@@ -1427,6 +1433,12 @@ class Router:
         if not result.partial:
             result.message = "routed"
         return result
+
+
+def live_url(text):
+    """The live viewer address from fastroute's log line, or None."""
+    m = _LIVE_URL.search(text)
+    return m.group(1) if m else None
 
 
 def mode_args(

@@ -93,6 +93,8 @@ pub struct BatchAutorouter {
     /// fastroute: a parallel pass stops early once its board has more unrouted connections
     /// than this (the rollback threshold of the batch loop; the pass would be undone anyway).
     pass_abort_above: Option<i32>,
+    /// fastroute: the live viewer (`PipelineContext::observer`) of the job's own autorouter.
+    observer: Option<super::Observer>,
     // AutoroutePassRunner state
     previous_incomplete_nets: BTreeSet<NetNo>,
     previous_incomplete_count: i32,
@@ -151,6 +153,13 @@ impl BatchAutorouter {
         (outcome.result, ripped.len(), [before, after, after_tails])
     }
 
+    /// Tells the live viewer (if any) that a connection of pass `pass_no` was committed.
+    fn observe_connection(&self, board: &RoutingBoard, pass_no: i32, done: usize, total: usize, counters: PassCounters) {
+        if let Some(cb) = &self.observer {
+            cb(board, &super::LiveEvent::Connection { pass_no, done, total, counters });
+        }
+    }
+
     /// Java `new BatchAutorouter(thread, board, settings, removeUnconnectedVias,
     /// withPreferredDirections, startRipupCosts, pullTightAccuracy)`.
     pub fn new(
@@ -192,6 +201,7 @@ impl BatchAutorouter {
             blocked: HashSet::new(),
             blocked_checked: HashSet::new(),
             pass_abort_above: None,
+            observer: None,
             previous_incomplete_nets: BTreeSet::new(),
             previous_incomplete_count: -1,
             stagnation_count: 0,
@@ -466,6 +476,7 @@ impl BatchAutorouter {
                 c.ripped += ripped.len() as i32;
                 i += 1;
             }
+            self.observe_connection(board, pass_no, item_index, items.len(), c);
         }
         if self.remove_unconnected_vias {
             self.remove_tails(board, StopConnectionOption::None, Some(stop));
@@ -725,6 +736,7 @@ impl BatchAutorouter {
                             processed += 1;
                         }
                     }
+                    self.observe_connection(board, pass_no, processed, total, c);
                     if pass_start.elapsed().as_secs_f64() >= next_progress {
                         next_progress += PROGRESS_LOG_INTERVAL_SECS;
                         let now = incomplete_count(board, None);
@@ -880,6 +892,7 @@ impl BatchAutorouter {
     pub fn run_batch_loop(&mut self, board: &mut RoutingBoard, settings: &RouterSettings, ctx: &PipelineContext) -> bool {
         let stop = &ctx.stop;
         self.enhancements = ctx.enhancements;
+        self.observer = if self.is_optimizer_autorouter { None } else { ctx.observer.clone() };
         if self.pass_threads == 0 {
             self.pass_threads = if ctx.enhancements && !self.is_optimizer_autorouter {
                 settings.autorouter.max_threads.unwrap_or(1).max(1) as usize
@@ -912,6 +925,7 @@ impl BatchAutorouter {
                 log::info!("Fanout stage is enabled but skipped because the board has no SMD pins.");
             } else {
                 let t = Instant::now();
+                ctx.observe(board, &super::LiveEvent::Stage("fanout"));
                 let summary = fanout::fanout_board(board, settings, ctx);
                 self.fanout_timed_out = summary.timed_out;
                 log::info!(
@@ -929,6 +943,9 @@ impl BatchAutorouter {
         let is_router_enabled = settings.get_run_router() && settings.autorouter.max_passes.map(|m| m >= 0).unwrap_or(true);
         let stage_start = Instant::now();
         if is_router_enabled {
+            if !self.is_optimizer_autorouter {
+                ctx.observe(board, &super::LiveEvent::Stage("autorouter"));
+            }
             let s = stats.score(board, settings);
             log::info!(
                 "Auto-routing stage started with baseline score {:.2} for {} unrouted item{}{}.",
@@ -1006,6 +1023,14 @@ impl BatchAutorouter {
             }
 
             if !self.is_optimizer_autorouter {
+                ctx.observe(board, &super::LiveEvent::RouterPass {
+                    pass_no: current_pass,
+                    secs: pass_start.elapsed().as_secs_f64(),
+                    counters,
+                    incomplete: after.incomplete_count,
+                    violations: after.clearance_violation_count,
+                    score: after.router_score,
+                });
                 ctx.checkpoint(board, CheckpointKey {
                     incomplete: after.incomplete_count,
                     violations: after.clearance_violation_count,

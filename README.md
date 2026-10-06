@@ -111,6 +111,7 @@ as `--gui.enabled` are ignored. fastroute adds:
 | `--no-neckdown-classes=A,B` | Keep the full trace width of these classes at pins (controlled impedance) |
 | `--max-time=SECONDS` | Stop after this time and write the best result so far |
 | `--initial-session=FILE` | Start from the wiring of a session file (e.g. a checkpoint of an earlier run) and continue routing and optimizing it |
+| `--live[=PORT]` | Watch the routing live in the web browser (`http://127.0.0.1:7878` by default, opened automatically): traces and airlines as they change, pass progress, unrouted connections per pass, log, and a Stop button. Results are unaffected |
 | `--report=FILE` | Write a JSON summary: statistics, timings, every unrouted connection and clearance violation |
 | `--diagnose` | With `--report`: route each unrouted connection alone on the loaded board, classifying it as congestion (other traces in the way) or blocked (geometry or rules) |
 | `-V`, `--version` | Print the version |

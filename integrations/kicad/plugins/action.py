@@ -27,6 +27,7 @@ DEFAULTS = {
     "text_keepouts": True,
     "respect_min_width": True,
     "refill_zones": True,
+    "live_view": False,
 }
 
 
@@ -94,6 +95,11 @@ class SettingsDialog(wx.Dialog):
             "Board Setup > Constraints > Minimum track width.",
         )
         self.refill = check("Refill zones after routing", "refill_zones", "")
+        self.live = check(
+            "Show the routing live in the web browser", "live_view",
+            "Opens a local page (http://127.0.0.1:7878) with the board, the progress of every "
+            "pass and the log while fastroute routes. Routing results are not affected.",
+        )
 
         buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
         self.FindWindowById(wx.ID_OK).SetLabel("Route")
@@ -110,6 +116,7 @@ class SettingsDialog(wx.Dialog):
             "text_keepouts": self.text_keepouts.GetValue(),
             "respect_min_width": self.min_width.GetValue(),
             "refill_zones": self.refill.GetValue(),
+            "live_view": self.live.GetValue(),
         }
 
 
@@ -126,9 +133,16 @@ class ProgressDialog(wx.Dialog):
         box.Add(self.status, 0, wx.ALL | wx.EXPAND, 10)
         self.log = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL)
         box.Add(self.log, 1, wx.LEFT | wx.RIGHT | wx.EXPAND, 10)
+        buttons = wx.BoxSizer(wx.HORIZONTAL)
+        self.live_url = None
+        self.live = wx.Button(self, label="Open live view")
+        self.live.Bind(wx.EVT_BUTTON, lambda _e: self.live_url and wx.LaunchDefaultBrowser(self.live_url))
+        self.live.Hide()
+        buttons.Add(self.live, 0, wx.RIGHT, 8)
         self.cancel = wx.Button(self, wx.ID_CANCEL, "Stop")
         self.cancel.Bind(wx.EVT_BUTTON, self.on_cancel)
-        box.Add(self.cancel, 0, wx.ALL | wx.ALIGN_RIGHT, 10)
+        buttons.Add(self.cancel, 0)
+        box.Add(buttons, 0, wx.ALL | wx.ALIGN_RIGHT, 10)
         self.SetSizer(box)
         self.Bind(wx.EVT_CLOSE, self.on_cancel)
 
@@ -153,6 +167,12 @@ class ProgressDialog(wx.Dialog):
 
     def _append(self, level, text):
         self.log.AppendText(f"{level:5} {text}\n")
+        url = core.live_url(text)
+        if url and not self.live_url:
+            # fastroute opens the page itself; the button opens it again
+            self.live_url = url
+            self.live.Show()
+            self.Layout()
         if "pass #" in text or "stage" in text:
             self.status.SetLabel(text[:110])
 
@@ -229,6 +249,7 @@ class FastrouteAction(pcbnew.ActionPlugin):
             text_keepouts=settings["text_keepouts"],
             clear_tracks=settings["clear_tracks"],
             keep_existing=settings["keep_existing"],
+            live=settings["live_view"],
             in_editor=True,
         )
         progress = ProgressDialog(parent, router)

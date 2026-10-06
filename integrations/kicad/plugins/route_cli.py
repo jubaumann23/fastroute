@@ -75,6 +75,10 @@ def main(argv=None):
         help="only write the prepared DSN (and tune/pairs files) to --work-dir and "
         "the fastroute arguments to args.txt there; do not route",
     )
+    ap.add_argument(
+        "--live", action="store_true",
+        help="watch the routing live in the web browser (fastroute --live)",
+    )
     ap.add_argument("-q", "--quiet", action="store_true")
     # Everything after "--" goes to fastroute unchanged (argparse cannot mix a positional
     # argument with a trailing "--" list).
@@ -115,6 +119,7 @@ def main(argv=None):
         max_time=args.max_time,
         clearance_margin_um=args.clearance_margin_um,
         obstacle_zones=[p.strip() for p in args.obstacle_zones.split(",")],
+        live=args.live,
     )
 
     def show(level, text):

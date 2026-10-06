@@ -15,12 +15,15 @@
 //! * `--max-time=SECONDS`: stop after this wall-clock time and write the best result.
 //! * `--initial-session=FILE`: start from the wiring of a session file.
 //! * `--report=FILE` (+ `--diagnose`): JSON summary of the result, see [`report`].
+//! * `--live[=PORT]`: live web viewer of the routing on http://127.0.0.1:PORT (default 7878),
+//!   see [`live`].
 //! * `-v`: debug output.
 //!
 //! The session file (`-do`) is also written whenever routing or optimizing reaches a new best
 //! board, so a run that is stopped (Ctrl+C / SIGTERM / Ctrl+Break: stop and write the best
 //! result; a second signal exits at once) or killed leaves its best result behind.
 
+mod live;
 mod report;
 
 use std::io::Write as _;
@@ -52,6 +55,7 @@ struct Args {
     report: Option<String>,
     diagnose: bool,
     initial_session: Option<String>,
+    live: Option<u16>,
     verbose: bool,
     rest: Vec<String>,
 }
@@ -74,6 +78,7 @@ fn parse_args() -> Result<Args, String> {
         report: None,
         diagnose: false,
         initial_session: None,
+        live: None,
         verbose: false,
         rest: Vec::new(),
     };
@@ -119,6 +124,11 @@ fn parse_args() -> Result<Args, String> {
                 i += 1;
                 continue;
             }
+            "--live" => {
+                args.live = Some(DEFAULT_LIVE_PORT);
+                i += 1;
+                continue;
+            }
             "-v" => {
                 args.verbose = true;
                 i += 1;
@@ -158,6 +168,11 @@ fn parse_args() -> Result<Args, String> {
                     i += 1;
                     continue;
                 }
+                if let Some(m) = a.strip_prefix("--live=") {
+                    args.live = Some(m.parse().map_err(|_| format!("bad --live port '{m}'"))?);
+                    i += 1;
+                    continue;
+                }
                 if let Some(m) = a.strip_prefix("--report=") {
                     args.report = Some(m.to_string());
                     i += 1;
@@ -187,6 +202,8 @@ fn parse_args() -> Result<Args, String> {
     Ok(args)
 }
 
+const DEFAULT_LIVE_PORT: u16 = 7878;
+
 const HELP: &str = "\
 usage: fastroute -de <design.dsn> [-do <out.ses>] [options] [--router.<path>=<value> ...]
 
@@ -209,6 +226,8 @@ options:
                            and clearance violations
   --diagnose               with --report: route every unrouted connection alone on the
                            loaded board (congestion vs. blocked by geometry/rules)
+  --live[=PORT]            watch the routing live in the browser (http://127.0.0.1:PORT,
+                           default 7878; opened automatically)
   --multi-start=N          rerun the autorouter with N-1 shuffled orders in parallel if
                            connections stay unrouted (default 4; skipped after a first run
                            longer than 10 minutes)
@@ -275,11 +294,32 @@ impl log::Log for Logger {
             _ => "DEBUG",
         };
         let _ = writeln!(std::io::stderr().lock(), "{t:9.3} {level} {}", r.args());
+        if let Some(live) = LIVE.get() {
+            live.log(level, &r.args().to_string());
+        }
     }
     fn flush(&self) {}
 }
 
 static LOGGER: OnceLock<Logger> = OnceLock::new();
+/// The live viewer (`--live`), also fed with the log lines.
+static LIVE: OnceLock<Arc<live::Live>> = OnceLock::new();
+
+/// Opens `url` in the default browser (best effort).
+fn open_browser(url: &str) {
+    let cmd = if cfg!(target_os = "macos") {
+        ("open", vec![url])
+    } else if cfg!(windows) {
+        ("cmd", vec!["/C", "start", "", url])
+    } else {
+        ("xdg-open", vec![url])
+    };
+    let _ = std::process::Command::new(cmd.0)
+        .args(cmd.1)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
 
 fn run() -> Result<(), String> {
     let args = parse_args()?;
@@ -288,6 +328,15 @@ fn run() -> Result<(), String> {
     log::set_max_level(if args.verbose { log::LevelFilter::Debug } else { log::LevelFilter::Info });
 
     log::info!(target: "fastroute", "fastroute {}", env!("CARGO_PKG_VERSION"));
+    let stop = StopToken::new();
+    if let Some(port) = args.live {
+        let (live, url) = live::Live::start(port, stop.clone(), logger.start)?;
+        let _ = LIVE.set(live);
+        log::info!(target: "fastroute", "live viewer: {url}");
+        if std::env::var_os("FASTROUTE_LIVE_NO_OPEN").is_none() {
+            open_browser(&url);
+        }
+    }
     let cli = CliSettings::parse(&args.rest);
     for w in &cli.warnings {
         log::warn!("{w}");
@@ -363,6 +412,14 @@ fn run() -> Result<(), String> {
             summary.errors_encountered
         );
     }
+    if !args.parity && !args.no_enhancements {
+        // (before the pre-existing violations are counted: wiring of the design outside the
+        // outline is the design's, not the router's)
+        let (pins, pieces) = board.keep_wiring_inside_outline();
+        if pieces > 0 {
+            log::info!(target: "fastroute", "{pins} pins on or outside the board outline: wiring kept inside the outline except at these pins");
+        }
+    }
     pipeline::deferred_post_load_processing(&mut board);
     if args.parity || args.no_enhancements {
         board.wire_keepouts_as_keepouts();
@@ -428,11 +485,15 @@ fn run() -> Result<(), String> {
             }
         }) as pipeline::Checkpoint
     });
-    let ctx = PipelineContext { stop: StopToken::new(), wall_clock_limits: limits, optimizer_mode,
+    let ctx = PipelineContext { stop, wall_clock_limits: limits, optimizer_mode,
         enhancements: !args.parity && !args.no_enhancements,
         multi_start: args.multi_start,
         checkpoint,
+        observer: LIVE.get().map(|l| l.observer()),
     };
+    if let Some(live) = LIVE.get() {
+        live.publish_board(&board, &design_name);
+    }
     {
         // First signal: stop and write the best result; second: exit at once.
         let stop = ctx.stop.clone();
@@ -496,6 +557,7 @@ fn run() -> Result<(), String> {
             Ok("shove") => Some(fr_engine::ids::FixedState::ShoveFixed),
             _ => Some(fr_engine::ids::FixedState::UserFixed),
         };
+        ctx.observe(&board, &pipeline::LiveEvent::Stage("diff pairs"));
         let (results, fixed) = fr_engine::diffpair::preroute_pairs(&mut board, &pairs, &settings, &ctx.stop, hold);
         for r in &results {
             log_pair(r, "pre-routed");
@@ -533,6 +595,7 @@ fn run() -> Result<(), String> {
     }
     if !tune_groups.is_empty() && !ctx.stop.is_stop_requested() {
         let t = Instant::now();
+        ctx.observe(&board, &pipeline::LiveEvent::Stage("length tuning"));
         let results = fr_engine::tuning::tune_lengths(&mut board, &tune_groups);
         for g in &results {
             let (min, max) = g.nets.iter().fold((f64::MAX, 0.0f64), |(lo, hi), n| (lo.min(n.after_mm), hi.max(n.after_mm)));
@@ -572,6 +635,9 @@ fn run() -> Result<(), String> {
         let unclamped = !args.parity && !args.no_enhancements;
         report::write_report(out, &path, &board, loaded.as_ref(), &settings, unclamped, unclamped, &timings).map_err(|e| format!("{out}: {e}"))?;
         log::info!(target: "fastroute", "report written to '{out}'");
+    }
+    if let Some(live) = LIVE.get() {
+        live.finish(&board, Duration::from_secs(3));
     }
     Ok(())
 }

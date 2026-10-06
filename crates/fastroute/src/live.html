@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fastroute live</title>
+<style>
+:root {
+  --bg: #0d1014;
+  --panel: #14181e;
+  --panel-2: #1a1f27;
+  --line: #262d37;
+  --text: #d9dee5;
+  --muted: #8a94a3;
+  --faint: #5b6573;
+  --accent: #4fb3ff;
+  --good: #3ecf8e;
+  --warn: #f2b84b;
+  --bad: #ff5d5d;
+  --opt: #f28c4b;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+body { display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
+header { display: flex; align-items: center; gap: 14px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); min-width: 0; }
+.brand { font-weight: 650; letter-spacing: .2px; white-space: nowrap; }
+.brand span { color: var(--accent); }
+.board-name { color: var(--muted); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.spacer { flex: 1; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); white-space: nowrap; font-size: 12px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.dot.live { background: var(--good); box-shadow: 0 0 0 0 rgba(62,207,142,.6); animation: pulse 1.6s infinite; }
+.dot.done { background: var(--accent); }
+.dot.off { background: var(--bad); }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(62,207,142,.55); } 70% { box-shadow: 0 0 0 7px rgba(62,207,142,0); } 100% { box-shadow: 0 0 0 0 rgba(62,207,142,0); } }
+.clock { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+button { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 12px; cursor: pointer; }
+button:hover { border-color: var(--faint); }
+button.stop { border-color: #5a2a2a; color: #ffb3b3; }
+button.stop:hover { background: #2a1717; }
+button:disabled { opacity: .45; cursor: default; }
+main { display: grid; grid-template-columns: 1fr 340px; min-height: 0; }
+#view { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+canvas#board { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; }
+canvas#board.drag { cursor: grabbing; }
+.overlay { position: absolute; display: flex; flex-wrap: wrap; gap: 6px; }
+#layers { top: 10px; left: 10px; right: 10px; }
+.toggle { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 6px; background: rgba(20,24,30,.85); border: 1px solid var(--line); cursor: pointer; user-select: none; font-size: 12px; }
+.toggle .sw { width: 10px; height: 10px; border-radius: 2px; }
+.toggle.off { opacity: .4; }
+#hover { bottom: 10px; left: 10px; padding: 5px 10px; border-radius: 6px; background: rgba(20,24,30,.9); border: 1px solid var(--line); font-family: var(--mono); font-size: 12px; display: none; }
+#hint { bottom: 10px; right: 10px; color: var(--faint); font-size: 11px; }
+#empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
+aside { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; min-height: 0; }
+section { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+h2 { margin: 0 0 8px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.hero { display: flex; align-items: baseline; gap: 10px; }
+.hero .big { font-size: 40px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1; }
+.hero .sub { color: var(--muted); }
+.delta { font-family: var(--mono); font-size: 12px; }
+.stage { margin-top: 8px; color: var(--muted); }
+.stage b { color: var(--text); font-weight: 600; }
+.bar { height: 6px; border-radius: 3px; background: var(--panel-2); overflow: hidden; margin: 6px 0 8px; }
+.bar > div { height: 100%; width: 0; background: var(--accent); transition: width .15s linear; }
+.counts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.counts div, .kpis div { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+.counts span, .kpis span { display: block; font-size: 11px; color: var(--muted); }
+.counts b, .kpis b { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600; font-size: 14px; }
+.kpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+canvas#chart { width: 100%; height: 150px; display: block; }
+.legend { display: flex; gap: 12px; color: var(--muted); font-size: 11px; margin-top: 4px; }
+.legend i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+th { text-align: right; color: var(--faint); font-weight: 500; padding: 2px 4px; }
+td { text-align: right; padding: 2px 4px; border-top: 1px solid var(--line); }
+th:first-child, td:first-child { text-align: left; }
+.kind-optimizer { color: var(--opt); }
+#log { font-family: var(--mono); font-size: 11px; max-height: 260px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; color: var(--muted); }
+#log .WARN { color: var(--warn); }
+#log .ERROR { color: var(--bad); }
+#log .t { color: var(--faint); }
+@media (max-width: 760px) {
+  main { grid-template-columns: 1fr; grid-template-rows: 55vh auto; overflow-y: auto; }
+  aside { border-left: 0; border-top: 1px solid var(--line); overflow: visible; }
+  header { flex-wrap: wrap; padding: 8px 16px; }
+  .board-name { order: 5; flex-basis: 100%; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">fast<span>route</span> live</div>
+  <div class="board-name" id="name">waiting for the router...</div>
+  <div class="spacer"></div>
+  <div class="chip"><span class="dot" id="dot"></span><span id="status">connecting</span></div>
+  <div class="clock" id="clock">0:00</div>
+  <button class="stop" id="stop" title="Stop and keep the best result so far (like Ctrl+C)">Stop</button>
+</header>
+<main>
+  <div id="view">
+    <canvas id="board"></canvas>
+    <div id="empty">waiting for the board...</div>
+    <div class="overlay" id="layers"></div>
+    <div class="overlay" id="hover"></div>
+    <div class="overlay" id="hint">scroll: zoom · drag: pan · double-click: fit · click: highlight net</div>
+  </div>
+  <aside>
+    <section>
+      <h2>Unrouted connections</h2>
+      <div class="hero"><div class="big" id="unrouted">–</div><div class="sub"><div id="unrouted-of"></div><div class="delta" id="unrouted-delta"></div></div></div>
+      <div class="stage">Stage: <b id="stage">–</b></div>
+    </section>
+    <section>
+      <h2 id="pass-title">Pass</h2>
+      <div class="bar"><div id="pass-bar"></div></div>
+      <div class="counts">
+        <div><span>routed</span><b id="c-routed">0</b></div>
+        <div><span>failed</span><b id="c-failed">0</b></div>
+        <div><span>ripped</span><b id="c-ripped">0</b></div>
+        <div><span>skipped</span><b id="c-skipped">0</b></div>
+      </div>
+    </section>
+    <section>
+      <h2>Board</h2>
+      <div class="kpis">
+        <div><span>traces</span><b id="k-traces">–</b></div>
+        <div><span>vias</span><b id="k-vias">–</b></div>
+        <div><span>trace length</span><b id="k-length">–</b></div>
+        <div><span>clearance violations</span><b id="k-viol">–</b></div>
+        <div><span>score</span><b id="k-score">–</b></div>
+        <div><span>passes</span><b id="k-passes">0</b></div>
+      </div>
+    </section>
+    <section>
+      <h2>Unrouted per pass</h2>
+      <canvas id="chart"></canvas>
+      <div class="legend"><span><i style="background:var(--accent)"></i>autorouter</span><span><i style="background:var(--opt)"></i>optimizer</span></div>
+    </section>
+    <section>
+      <h2>Passes</h2>
+      <table><thead><tr><th>pass</th><th>unrouted</th><th>viol.</th><th>ripped</th><th>s</th></tr></thead><tbody id="passes"></tbody></table>
+    </section>
+    <section>
+      <h2>Log</h2>
+      <div id="log"></div>
+    </section>
+  </aside>
+</main>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const LAYER_COLORS = ["#d84b4b", "#d6c341", "#47b86b", "#c25bd6", "#41c6c6", "#e08a3c", "#8f9bff", "#b5d65b"];
+const BOTTOM_COLOR = "#4f86d9";
+const FLASH_MS = 1400;
+
+let board = null;            // static geometry
+let frame = null;            // latest wiring
+let layerOn = [];            // visible layers
+let showAir = true, showPads = true;
+let padPaths = [];           // Path2D per layer
+let tracePaths = [];         // per layer: Map(width -> Path2D)
+let viaPath = null;
+let airPath = null;
+let outlinePath = null, keepoutPaths = [], planePaths = [];
+let flashes = [];            // {kind:"new"|"gone", item, until}
+let prevTraceIds = new Map(), prevViaIds = new Map();
+let passes = [];
+let startUnrouted = null;
+let selNet = 0, hoverNet = 0;
+let view = { cx: 0, cy: 0, scale: 1 };
+let finished = false, lastT = 0, tAt = performance.now();
+
+const cv = $("board"), g = cv.getContext("2d");
+
+function layerColor(i) {
+  if (!board) return "#888";
+  const n = board.layers.length;
+  if (n > 1 && i === n - 1) return BOTTOM_COLOR;
+  return LAYER_COLORS[i === 0 ? 0 : 1 + (i - 1) % (LAYER_COLORS.length - 1)];
+}
+
+function fmt(n) { return n == null ? "–" : n.toLocaleString("en-US"); }
+function fmtTime(s) { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(x).padStart(2, "0"); }
+
+// ---------- geometry ----------
+function polyPath(p, coords, start) {
+  p.moveTo(coords[start], coords[start + 1]);
+  for (let i = start + 2; i < coords.length; i += 2) p.lineTo(coords[i], coords[i + 1]);
+  p.closePath();
+}
+
+function buildBoard() {
+  const n = board.layers.length;
+  padPaths = Array.from({ length: n }, () => new Path2D());
+  for (const s of board.pads) {
+    const p = padPaths[s[0]]; if (!p) continue;
+    if (s[2] === 0) { p.moveTo(s[3] + s[5], s[4]); p.arc(s[3], s[4], s[5], 0, 2 * Math.PI); }
+    else polyPath(p, s, 3);
+  }
+  outlinePath = new Path2D();
+  for (const o of board.outline) polyPath(outlinePath, o, 1);
+  keepoutPaths = Array.from({ length: n }, () => new Path2D());
+  for (const k of board.keepouts) if (keepoutPaths[k[0]]) polyPath(keepoutPaths[k[0]], k, 1);
+  planePaths = Array.from({ length: n }, () => new Path2D());
+  for (const k of board.planes) if (planePaths[k[0]]) polyPath(planePaths[k[0]], k, 2);
+}
+
+function buildFrame() {
+  const n = board.layers.length;
+  tracePaths = Array.from({ length: n }, () => new Map());
+  for (const t of frame.traces) {
+    const m = tracePaths[t[1]]; if (!m) continue;
+    const w = 2 * t[2];
+    let p = m.get(w); if (!p) { p = new Path2D(); m.set(w, p); }
+    p.moveTo(t[5], t[6]);
+    for (let i = 7; i < t.length; i += 2) p.lineTo(t[i], t[i + 1]);
+  }
+  viaPath = new Path2D();
+  for (const v of frame.vias) { viaPath.moveTo(v[1] + v[3], v[2]); viaPath.arc(v[1], v[2], v[3], 0, 2 * Math.PI); }
+  airPath = new Path2D();
+  for (const a of frame.air) { airPath.moveTo(a[1], a[2]); airPath.lineTo(a[3], a[4]); }
+
+  // what changed since the last frame: new wiring flashes, removed (ripped) wiring fades out
+  const now = performance.now();
+  const ids = new Map(), vids = new Map();
+  for (const t of frame.traces) ids.set(t[0], t);
+  for (const v of frame.vias) vids.set(v[0], v);
+  if (prevTraceIds.size || prevViaIds.size) {
+    for (const [id, t] of ids) if (!prevTraceIds.has(id)) flashes.push({ kind: "new", trace: t, until: now + FLASH_MS });
+    for (const [id, t] of prevTraceIds) if (!ids.has(id)) flashes.push({ kind: "gone", trace: t, until: now + FLASH_MS });
+    for (const [id, v] of vids) if (!prevViaIds.has(id)) flashes.push({ kind: "new", via: v, until: now + FLASH_MS });
+    for (const [id, v] of prevViaIds) if (!vids.has(id)) flashes.push({ kind: "gone", via: v, until: now + FLASH_MS });
+    if (flashes.length > 4000) flashes = flashes.slice(-4000);
+  }
+  prevTraceIds = ids; prevViaIds = vids;
+}
+
+// ---------- view ----------
+function fit() {
+  if (!board) return;
+  const [x0, y0, x1, y1] = board.bbox;
+  const r = cv.getBoundingClientRect();
+  view.cx = (x0 + x1) / 2; view.cy = (y0 + y1) / 2;
+  view.scale = Math.min((r.width - 40) / Math.max(1, x1 - x0), (r.height - 70) / Math.max(1, y1 - y0));
+  draw();
+}
+
+function toWorld(sx, sy) {
+  const r = cv.getBoundingClientRect();
+  return [view.cx + (sx - r.width / 2) / view.scale, view.cy - (sy - r.height / 2) / view.scale];
+}
+
+let drawQueued = false;
+function draw() { if (!drawQueued) { drawQueued = true; requestAnimationFrame(render); } }
+
+function strokeNet(netNo, color, extra) {
+  // the traces and vias of one net, on top
+  g.strokeStyle = color; g.fillStyle = color; g.lineCap = "round"; g.lineJoin = "round";
+  for (const t of frame.traces) {
+    if (t[3] !== netNo || !layerOn[t[1]]) continue;
+    g.lineWidth = Math.max(2 * t[2] + extra, 2 / view.scale);
+    g.beginPath(); g.moveTo(t[5], t[6]);
+    for (let i = 7; i < t.length; i += 2) g.lineTo(t[i], t[i + 1]);
+    g.stroke();
+  }
+  for (const v of frame.vias) if (v[4] === netNo) { g.beginPath(); g.arc(v[1], v[2], v[3] + extra / 2, 0, 2 * Math.PI); g.fill(); }
+}
+
+function render() {
+  drawQueued = false;
+  const dpr = window.devicePixelRatio || 1;
+  const r = cv.getBoundingClientRect();
+  if (cv.width !== Math.round(r.width * dpr) || cv.height !== Math.round(r.height * dpr)) {
+    cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
+  }
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.fillStyle = "#07090c"; g.fillRect(0, 0, cv.width, cv.height);
+  if (!board) return;
+  const s = view.scale * dpr;
+  g.setTransform(s, 0, 0, -s, cv.width / 2 - view.cx * s, cv.height / 2 + view.cy * s);
+  const px = 1 / view.scale;  // one CSS pixel in board units
+  const n = board.layers.length;
+  const order = [...Array(n).keys()].reverse();  // bottom first, top last
+
+  g.fillStyle = "#0f141a"; g.fill(outlinePath, "evenodd");
+  // planes: only a hint of the topmost visible plane layer, inside the outline
+  g.save();
+  if (board.outline.length) g.clip(outlinePath, "evenodd");
+  const planeLayer = [...Array(n).keys()].find(i => layerOn[i] && board.planes.some(p => p[0] === i));
+  if (planeLayer != null) { g.globalAlpha = 0.07; g.fillStyle = layerColor(planeLayer); g.fill(planePaths[planeLayer]); }
+  g.restore();
+  for (const i of order) {
+    if (!layerOn[i]) continue;
+    g.globalAlpha = 0.14; g.fillStyle = "#ff5d5d"; g.fill(keepoutPaths[i]);
+  }
+  g.globalAlpha = 1;
+  if (showPads) for (const i of order) {
+    if (!layerOn[i]) continue;
+    g.globalAlpha = 0.55; g.fillStyle = layerColor(i); g.fill(padPaths[i]);
+  }
+  g.globalAlpha = 1;
+  if (frame) {
+    g.lineCap = "round"; g.lineJoin = "round";
+    const dim = selNet ? 0.35 : 0.9;
+    for (const i of order) {
+      if (!layerOn[i]) continue;
+      g.globalAlpha = dim; g.strokeStyle = layerColor(i);
+      for (const [w, p] of tracePaths[i]) { g.lineWidth = Math.max(w, px); g.stroke(p); }
+    }
+    g.globalAlpha = selNet ? 0.5 : 1; g.fillStyle = "#c9c9c9"; g.fill(viaPath);
+    g.globalAlpha = 1;
+    if (selNet) strokeNet(selNet, "#ffffff", 0);
+    if (hoverNet && hoverNet !== selNet) { g.globalAlpha = 0.6; strokeNet(hoverNet, "#ffffff", 0); g.globalAlpha = 1; }
+
+    // flashes: new wiring glows, ripped wiring fades out in red
+    const now = performance.now();
+    flashes = flashes.filter(f => f.until > now);
+    for (const f of flashes) {
+      const a = (f.until - now) / FLASH_MS;
+      g.globalAlpha = 0.85 * a;
+      g.strokeStyle = g.fillStyle = f.kind === "new" ? "#7ff7c4" : "#ff4a4a";
+      if (f.trace) {
+        const t = f.trace; if (!layerOn[t[1]]) continue;
+        g.lineWidth = Math.max(2 * t[2], 2 * px) + (f.kind === "new" ? 2 * px * a : 0);
+        g.beginPath(); g.moveTo(t[5], t[6]);
+        for (let i = 7; i < t.length; i += 2) g.lineTo(t[i], t[i + 1]);
+        g.stroke();
+      } else {
+        const v = f.via; g.beginPath(); g.arc(v[1], v[2], Math.max(v[3], 3 * px), 0, 2 * Math.PI); g.fill();
+      }
+    }
+    g.globalAlpha = 1;
+    if (flashes.length) draw();
+
+    if (showAir) { g.strokeStyle = "rgba(255,255,255,.75)"; g.lineWidth = px; g.stroke(airPath); }
+  }
+  g.strokeStyle = "#c8b98a"; g.lineWidth = 1.5 * px; g.stroke(outlinePath);
+}
+
+// ---------- interaction ----------
+let drag = null;
+cv.addEventListener("mousedown", e => { drag = { x: e.clientX, y: e.clientY, cx: view.cx, cy: view.cy, moved: false }; cv.classList.add("drag"); });
+window.addEventListener("mouseup", e => {
+  cv.classList.remove("drag");
+  if (drag && !drag.moved && e.target === cv) { selNet = hoverNet === selNet ? 0 : hoverNet; draw(); }
+  drag = null;
+});
+window.addEventListener("mousemove", e => {
+  if (drag) {
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+    view.cx = drag.cx - dx / view.scale; view.cy = drag.cy + dy / view.scale; draw();
+    return;
+  }
+  if (e.target === cv) hover(e);
+});
+cv.addEventListener("wheel", e => {
+  e.preventDefault();
+  const r = cv.getBoundingClientRect();
+  const [wx, wy] = toWorld(e.clientX - r.left, e.clientY - r.top);
+  const f = Math.exp(-e.deltaY * 0.0015);
+  view.scale *= f;
+  view.cx = wx - (wx - view.cx) / f; view.cy = wy - (wy - view.cy) / f;
+  draw();
+}, { passive: false });
+cv.addEventListener("dblclick", fit);
+window.addEventListener("resize", draw);
+
+function segDist(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy;
+  let t = l ? ((px - ax) * dx + (py - ay) * dy) / l : 0; t = Math.max(0, Math.min(1, t));
+  const x = ax + t * dx - px, y = ay + t * dy - py; return Math.sqrt(x * x + y * y);
+}
+
+function hover(e) {
+  if (!frame || !board) return;
+  const r = cv.getBoundingClientRect();
+  const [x, y] = toWorld(e.clientX - r.left, e.clientY - r.top);
+  const tol = 5 / view.scale;
+  let best = null, bd = Infinity;
+  for (const t of frame.traces) {
+    if (!layerOn[t[1]]) continue;
+    for (let i = 5; i + 3 < t.length; i += 2) {
+      const d = segDist(x, y, t[i], t[i + 1], t[i + 2], t[i + 3]) - t[2];
+      if (d < bd) { bd = d; best = { net: t[3], what: board.layers[t[1]].name, w: 2 * t[2] }; }
+    }
+  }
+  for (const v of frame.vias) {
+    const d = Math.hypot(x - v[1], y - v[2]) - v[3];
+    if (d < bd) { bd = d; best = { net: v[4], what: "via", w: 2 * v[3] }; }
+  }
+  const el = $("hover");
+  const newNet = best && bd <= tol ? best.net : 0;
+  if (newNet) {
+    el.style.display = "block";
+    el.textContent = `${board.nets[best.net] || "net " + best.net} · ${best.what} · ${(best.w / board.upm).toFixed(3)} mm`;
+  } else {
+    const mx = (x / board.upm).toFixed(2), my = (-y / board.upm).toFixed(2);
+    el.style.display = "block"; el.textContent = `${mx}, ${my} mm`;
+  }
+  if (newNet !== hoverNet) { hoverNet = newNet; draw(); }
+}
+
+function buildToggles() {
+  const box = $("layers"); box.innerHTML = "";
+  const add = (label, color, on, cb) => {
+    const t = document.createElement("div"); t.className = "toggle" + (on ? "" : " off");
+    t.innerHTML = `<span class="sw" style="background:${color}"></span>`;
+    t.append(label);
+    t.onclick = () => { const v = cb(); t.classList.toggle("off", !v); draw(); };
+    box.append(t);
+  };
+  board.layers.forEach((l, i) => {
+    if (!l.signal && !board.pads.some(p => p[0] === i)) return;
+    add(l.name, layerColor(i), true, () => (layerOn[i] = !layerOn[i]));
+  });
+  add("airlines", "#ffffff", showAir, () => (showAir = !showAir));
+  add("pads", "#888888", showPads, () => (showPads = !showPads));
+}
+
+// ---------- panels ----------
+function setStatus(kind, text) { $("dot").className = "dot " + kind; $("status").textContent = text; }
+
+function setUnrouted(n) {
+  $("unrouted").textContent = fmt(n);
+  if (startUnrouted == null && n != null) startUnrouted = n;
+  if (startUnrouted != null) {
+    $("unrouted-of").textContent = `of ${fmt(startUnrouted)} at start`;
+    const routed = startUnrouted - n;
+    const el = $("unrouted-delta");
+    el.textContent = startUnrouted ? `${(100 * routed / startUnrouted).toFixed(1)} % connected` : "";
+    el.style.color = n === 0 ? "var(--good)" : "var(--muted)";
+  }
+}
+
+function drawChart() {
+  const c = $("chart"), dpr = window.devicePixelRatio || 1, r = c.getBoundingClientRect();
+  c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
+  const x = c.getContext("2d"); x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const W = r.width, H = r.height, L = 38, B = 18, T = 8, R = 6;
+  x.clearRect(0, 0, W, H);
+  const pts = passes.map((p, i) => ({ i, v: p.incomplete, k: p.kind }));
+  if (startUnrouted != null) pts.unshift({ i: -1, v: startUnrouted, k: "start" });
+  if (pts.length < 1) { x.fillStyle = "#5b6573"; x.font = "11px sans-serif"; x.fillText("no pass yet", L, H / 2); return; }
+  const max = Math.max(1, ...pts.map(p => p.v));
+  const n = pts.length;
+  const X = j => L + (n === 1 ? (W - L - R) / 2 : j * (W - L - R) / (n - 1));
+  const Y = v => T + (1 - v / max) * (H - T - B);
+  x.strokeStyle = "#262d37"; x.fillStyle = "#5b6573"; x.font = "10px ui-monospace, Menlo, monospace"; x.lineWidth = 1;
+  for (const f of [0, 0.5, 1]) {
+    const yy = Math.round(Y(max * f)) + 0.5;
+    x.beginPath(); x.moveTo(L, yy); x.lineTo(W - R, yy); x.stroke();
+    x.textAlign = "right"; x.fillText(fmt(Math.round(max * f)), L - 5, yy + 3);
+  }
+  x.textAlign = "center";
+  const step = Math.max(1, Math.ceil(n / 8));
+  pts.forEach((p, j) => { if (p.i >= 0 && (j % step === 0 || j === n - 1)) x.fillText(String(passes[p.i].pass), X(j), H - 4); });
+  for (let j = 1; j < n; j++) {
+    x.strokeStyle = pts[j].k === "optimizer" ? "#f28c4b" : "#4fb3ff"; x.lineWidth = 2;
+    x.beginPath(); x.moveTo(X(j - 1), Y(pts[j - 1].v)); x.lineTo(X(j), Y(pts[j].v)); x.stroke();
+  }
+  for (let j = 0; j < n; j++) {
+    x.fillStyle = pts[j].k === "optimizer" ? "#f28c4b" : pts[j].k === "start" ? "#8a94a3" : "#4fb3ff";
+    x.beginPath(); x.arc(X(j), Y(pts[j].v), n > 40 ? 1.5 : 2.5, 0, 2 * Math.PI); x.fill();
+  }
+}
+window.addEventListener("resize", drawChart);
+
+function addPassRow(p) {
+  const tr = document.createElement("tr");
+  tr.className = "kind-" + p.kind;
+  tr.innerHTML = `<td>${p.kind === "optimizer" ? "opt " : ""}#${p.pass}</td><td>${fmt(p.incomplete)}</td><td>${fmt(p.violations)}</td><td>${p.ripped == null ? "" : fmt(p.ripped)}</td><td>${p.secs.toFixed(1)}</td>`;
+  $("passes").prepend(tr);
+}
+
+function addLog(l) {
+  const box = $("log");
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 20;
+  const d = document.createElement("div"); d.className = l.level;
+  d.innerHTML = `<span class="t">${l.t.toFixed(1).padStart(7)} </span>`;
+  d.append(l.text);
+  box.append(d);
+  while (box.childElementCount > 400) box.firstChild.remove();
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+function reset() {
+  frame = null; flashes = []; prevTraceIds = new Map(); prevViaIds = new Map();
+  passes = []; startUnrouted = null; selNet = hoverNet = 0;
+  $("passes").innerHTML = ""; $("log").innerHTML = "";
+}
+
+setInterval(() => { if (!finished) $("clock").textContent = fmtTime(lastT + (performance.now() - tAt) / 1000); }, 250);
+function clock(t) { lastT = t; tAt = performance.now(); $("clock").textContent = fmtTime(t); }
+
+// ---------- events ----------
+const es = new EventSource("/events");
+const on = (name, f) => es.addEventListener(name, e => f(JSON.parse(e.data)));
+es.onopen = () => setStatus("live", "live");
+es.onerror = () => { if (!finished) setStatus("off", "disconnected"); };
+on("board", b => {
+  reset();
+  board = b; layerOn = b.layers.map(() => true);
+  $("name").textContent = b.name; $("empty").style.display = "none";
+  buildBoard(); buildToggles(); fit(); drawChart();
+});
+on("frame", f => {
+  if (!board) return;
+  frame = f; clock(f.t); buildFrame();
+  if (startUnrouted == null) startUnrouted = f.unrouted;
+  setUnrouted(f.unrouted);
+  $("k-traces").textContent = fmt(f.traces.length);
+  $("k-vias").textContent = fmt(f.vias.length);
+  $("k-length").textContent = fmt(Math.round(f.length_mm)) + " mm";
+  draw();
+});
+on("tick", k => {
+  clock(k.t);
+  $("pass-title").textContent = `Pass #${k.pass} · ${fmt(k.done)} / ${fmt(k.total)}`;
+  $("pass-bar").style.width = (100 * k.done / Math.max(1, k.total)) + "%";
+  $("c-routed").textContent = fmt(k.routed); $("c-failed").textContent = fmt(k.failed);
+  $("c-ripped").textContent = fmt(k.ripped); $("c-skipped").textContent = fmt(k.skipped);
+});
+on("stage", s => { clock(s.t); $("stage").textContent = s.stage; });
+on("pass", p => {
+  clock(p.t); passes.push(p); addPassRow(p); drawChart();
+  $("k-viol").textContent = fmt(p.violations);
+  $("k-viol").style.color = p.violations ? "var(--bad)" : "";
+  $("k-score").textContent = p.score == null ? "–" : p.score.toFixed(1);
+  $("k-passes").textContent = fmt(passes.length);
+  if (p.kind === "router") {
+    $("pass-title").textContent = `Pass #${p.pass} · done in ${p.secs.toFixed(1)} s`;
+    $("pass-bar").style.width = "100%";
+    $("c-routed").textContent = fmt(p.routed); $("c-failed").textContent = fmt(p.failed); $("c-ripped").textContent = fmt(p.ripped);
+  } else {
+    $("pass-title").textContent = `Optimizer pass #${p.pass} · ${p.secs.toFixed(1)} s`;
+  }
+});
+on("log", addLog);
+on("done", d => {
+  finished = true; clock(d.t); es.close();
+  setStatus("done", "finished"); $("stage").textContent = "finished"; $("stop").disabled = true;
+});
+$("stop").onclick = () => {
+  $("stop").disabled = true; $("stop").textContent = "Stopping...";
+  fetch("/stop", { method: "POST" }).catch(() => {});
+};
+</script>
+</body>
+</html>

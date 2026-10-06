@@ -41,7 +41,7 @@ use fr_settings::{RouterSettings, ALGORITHM_CURRENT};
 use crate::board::RoutingBoard;
 use crate::datastructures::StopToken;
 
-pub use autorouter::BatchAutorouter;
+pub use autorouter::{BatchAutorouter, PassCounters};
 pub use history::{board_hash, BoardHistory};
 pub use optimizer::{BatchOptimizer, OptimizerMode};
 pub use stats::StatsCache;
@@ -67,10 +67,29 @@ pub struct PipelineContext {
     /// [`CheckpointKey`]); the CLI writes it as the session file, so a run that is stopped or
     /// killed still leaves its best result behind.
     pub checkpoint: Option<Checkpoint>,
+    /// fastroute: told about the progress of the stages (the CLI's live viewer, `--live`).
+    /// Must not change anything the routing depends on: it only reads the board.
+    pub observer: Option<Observer>,
 }
 
 /// Callback for [`PipelineContext::checkpoint`].
 pub type Checkpoint = std::sync::Arc<dyn Fn(&RoutingBoard, CheckpointKey) + Send + Sync>;
+
+/// Callback for [`PipelineContext::observer`].
+pub type Observer = std::sync::Arc<dyn Fn(&RoutingBoard, &LiveEvent) + Send + Sync>;
+
+/// What [`PipelineContext::observer`] is told.
+#[derive(Clone, Copy, Debug)]
+pub enum LiveEvent<'a> {
+    /// A stage started (`fanout`, `autorouter`, `multi-start`, `optimizer`, ...).
+    Stage(&'a str),
+    /// An autorouting pass committed a connection (`done` of `total` items of the pass).
+    Connection { pass_no: i32, done: usize, total: usize, counters: PassCounters },
+    /// An autorouting pass ended.
+    RouterPass { pass_no: i32, secs: f64, counters: PassCounters, incomplete: i32, violations: i32, score: f32 },
+    /// An optimizer pass ended.
+    OptimizerPass { pass_no: i32, secs: f64, incomplete: i32, violations: i32, score: f32 },
+}
 
 /// How good a checkpointed board is: fewer unrouted connections first, then fewer clearance
 /// violations, then the later stage (the optimizer only accepts non-worse boards), then the
@@ -100,6 +119,7 @@ impl std::fmt::Debug for PipelineContext {
             .field("enhancements", &self.enhancements)
             .field("multi_start", &self.multi_start)
             .field("checkpoint", &self.checkpoint.is_some())
+            .field("observer", &self.observer.is_some())
             .finish()
     }
 }
@@ -109,6 +129,13 @@ impl PipelineContext {
     pub fn checkpoint(&self, board: &RoutingBoard, key: CheckpointKey) {
         if let Some(cb) = &self.checkpoint {
             cb(board, key);
+        }
+    }
+
+    /// Reports progress to the observer, if any.
+    pub fn observe(&self, board: &RoutingBoard, event: &LiveEvent) {
+        if let Some(cb) = &self.observer {
+            cb(board, event);
         }
     }
 }
@@ -122,6 +149,7 @@ impl Default for PipelineContext {
             enhancements: false,
             multi_start: 1,
             checkpoint: None,
+            observer: None,
         }
     }
 }
@@ -175,6 +203,7 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
                     MULTI_START_MAX_FIRST_RUN.as_secs()
                 );
             } else {
+                ctx.observe(board, &LiveEvent::Stage("multi-start"));
                 multi_start(board, &start, settings, ctx);
             }
         }
@@ -195,6 +224,7 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
 
     // runOptimizationStage
     if run_optimizer && !ctx.stop.is_stop_requested() {
+        ctx.observe(board, &LiveEvent::Stage("optimizer"));
         let mut optimizer = BatchOptimizer::new(ctx.optimizer_mode);
         if ctx.enhancements {
             // without an explicit optimizer.timeout the optimizer gets as long as routing took
@@ -233,6 +263,8 @@ fn multi_start(board: &mut RoutingBoard, start: &RoutingBoard, settings: &Router
                 enhancements: true,
                 multi_start: 1,
                 checkpoint: ctx.checkpoint.clone(),
+                // the variants run in parallel; the viewer shows the first run
+                observer: None,
             };
             let mut router = BatchAutorouter::for_job(&b, settings);
             router.order_seed = Some(0x5eed_0000 + v as i64);

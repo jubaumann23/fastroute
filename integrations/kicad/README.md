@@ -28,6 +28,7 @@ The plugin finds `fastroute` in this order: `$FASTROUTE_BIN`, the bundled
 | Keep tracks away from copper texts | on | KiCad's export omits copper texts; each glyph is added as a keepout. |
 | Respect minimum track width | on | Uses *Board Setup → Constraints → Minimum track width*: neck-down stops there, and connections that do not fit are retried with traces of that width. The board's copper-to-edge clearance is passed on as well. |
 | Refill zones | on | Refills all zones after importing the result. |
+| Show the routing live in the web browser | off | Opens a local page (`http://127.0.0.1:7878`, the next free port if taken) showing the board as it is routed: traces appearing and ripped up, the remaining airlines, progress of each pass, unrouted connections per pass, clearance violations and the log. *Stop* on the page stops like the dialog's Stop button but keeps the best result. Routing results are the same with or without it. CLI: `--live`. |
 
 ## Headless use
 
@@ -101,6 +102,7 @@ Other `route_cli.py` options:
 |---|---|
 | `--obstacle-zones=GND,GUC` | zones of these nets / net classes (`*`, `?` allowed) stay fixed copper that other nets must not cross; their fill (not the outline) is the obstacle |
 | `--clearance-margin-um=5` | added to every clearance for the router (KiCad measures exact via circles); 0 turns it off |
+| `--live` | watch the routing live in the web browser (see the option above) |
 | `--export-only --work-dir DIR` | only writes the prepared DSN and the fastroute arguments (`args.txt`) |
 
 Clearances not in KiCad's Specctra export are added as keepouts: the copper-to-edge clearance

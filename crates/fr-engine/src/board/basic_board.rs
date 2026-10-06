@@ -1024,29 +1024,8 @@ impl BasicBoard {
                 };
                 let outline = self.item(outline_key).as_board_outline().unwrap();
                 for pin_key in self.get_pins() {
-                    let pin = self.item(pin_key);
-                    let center = pin.center(self);
-                    let mut is_edge_or_outside = false;
-                    if !outline.contains(&center) {
-                        is_edge_or_outside = true;
-                    } else {
-                        let first = pin.first_layer(self);
-                        for layer in first..=pin.last_layer(self) {
-                            if let Some(Shape::Tile(tile)) = pin.drill_shape(self, layer - first) {
-                                for c in 0..tile.border_line_count() {
-                                    if !outline.contains(&tile.corner(c)) {
-                                        is_edge_or_outside = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if is_edge_or_outside {
-                                break;
-                            }
-                        }
-                    }
-                    if is_edge_or_outside {
-                        for &n in &pin.net_numbers {
+                    if self.is_edge_pin(outline, pin_key) {
+                        for &n in &self.item(pin_key).net_numbers {
                             set.insert(n);
                         }
                     }
@@ -1054,6 +1033,67 @@ impl BasicBoard {
                 Arc::new(set)
             })
             .clone()
+    }
+
+    /// Java `BoardOutline.getEdgePinNets()`: whether the pin's center or a corner of one of its
+    /// (tile) pad shapes is outside the outline.
+    fn is_edge_pin(&self, outline: &BoardOutline, pin_key: ItemKey) -> bool {
+        let pin = self.item(pin_key);
+        if !outline.contains(&pin.center(self)) {
+            return true;
+        }
+        let first = pin.first_layer(self);
+        (first..=pin.last_layer(self)).any(|layer| match pin.drill_shape(self, layer - first) {
+            Some(Shape::Tile(tile)) => (0..tile.border_line_count()).any(|c| !outline.contains(&tile.corner(c))),
+            _ => false,
+        })
+    }
+
+    /// fastroute: keeps the wiring inside the board outline.
+    ///
+    /// Freerouting exempts the traces of nets with a pin on or outside the outline (edge
+    /// connectors, castellated pads, headers drawn across the edge) from the outline entirely
+    /// ([`Self::outline_blocks_nets`]): their traces may then leave the board anywhere and run
+    /// outside it. This inserts the area between the outline and the board's bounding box as
+    /// keepouts on all layers, with a window around each edge pin (its pad plus a trace width
+    /// and clearance), so these nets can still reach their edge pins but nothing else.
+    /// Returns the number of edge pins and of inserted keepout pieces (0, 0 without edge pins).
+    pub fn keep_wiring_inside_outline(&mut self) -> (usize, usize) {
+        let Some(outline_key) = self.get_outline() else {
+            return (0, 0);
+        };
+        let outline_item = self.item(outline_key);
+        let clearance_class = outline_item.clearance_class;
+        let outline = outline_item.as_board_outline().unwrap();
+        let edge_pins: Vec<ItemKey> = self.get_pins().into_iter().filter(|&k| self.is_edge_pin(outline, k)).collect();
+        if edge_pins.is_empty() {
+            return (0, 0);
+        }
+        let Some(mut pieces) = outline.keepout_area(&self.bounding_box()).split_to_convex() else {
+            log::warn!("cannot divide the area outside the board outline into convex pieces");
+            return (edge_pins.len(), 0);
+        };
+        let max_clearance = (0..self.layer_count()).map(|l| self.rules.clearance_matrix.max_value(clearance_class, l)).max().unwrap_or(0);
+        let margin = (2 * self.rules.get_max_trace_half_width() + max_clearance) as f64;
+        for &k in &edge_pins {
+            let window = TileShape::IntBox(self.item(k).bounding_box(self).offset(margin));
+            let mut next = Vec::with_capacity(pieces.len());
+            for p in pieces {
+                if p.intersection(&window).dimension() < 2 {
+                    next.push(p);
+                } else if let Some(rest) = p.cutout(&window) {
+                    next.extend(rest.into_iter().filter(|r| r.dimension() == 2));
+                }
+            }
+            pieces = next;
+        }
+        let layers = self.layer_count();
+        for p in &pieces {
+            for layer in 0..layers {
+                self.insert_obstacle(Area::Shape(Shape::Tile(p.clone())), layer, clearance_class, FixedState::SystemFixed);
+            }
+        }
+        (edge_pins.len(), pieces.len())
     }
 
     /// Java `BoardOutline.blocksNets(netNumbers)` (always true for [`JavaVariant::Jar241`],
