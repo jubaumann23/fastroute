@@ -163,7 +163,10 @@ def main(argv=None):
         print(f"{result.unrouted_ignored} of the unrouted connections are in ignored net classes", file=sys.stderr)
     print(
         f"routed in {time.monotonic() - t:.1f} s: score {result.score}, "
-        f"{result.unrouted} unrouted, {result.violations} violations -> {out}"
+        f"{result.unrouted} unrouted, {result.violations} violations"
+        + (f" ({result.violations_unfixable} pre-existing, unfixable)" if result.violations_unfixable else "")
+        + (f", KiCad: {result.kicad_unconnected} open connections" if result.kicad_unconnected is not None else "")
+        + f" -> {out}"
     )
     return 0
 

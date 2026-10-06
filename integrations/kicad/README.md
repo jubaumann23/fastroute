@@ -118,6 +118,14 @@ the result (optionally side by side with Freerouting via `FREEROUTING_CMD`).
 
 ## Results
 
+The message after routing shows the router's own numbers and KiCad's: *unrouted connections*
+are the ones the router had to route and could not (a pad that KiCad connects through a copper
+zone is unrouted to the router, since the plugin routes zone nets with tracks); *open
+connections in KiCad* is KiCad's ratsnest count after the import and the zone refill, which is
+what you will see on the board. Clearance violations between fixed items of the design (the
+plugin adds a small margin to every clearance, so tracks of the original design at exactly the
+clearance count) are listed separately as not fixable by routing.
+
 See [docs/IMPROVEMENTS.md](../../docs/IMPROVEMENTS.md) for the full table.
 KiCad 10 DRC after re-routing from scratch (unconnected items / routing violations):
 

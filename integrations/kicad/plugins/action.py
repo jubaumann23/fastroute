@@ -280,9 +280,13 @@ class FastrouteAction(pcbnew.ActionPlugin):
         if result.unrouted is not None:
             ignored = result.unrouted_ignored or 0
             summary += f"\n\nUnrouted connections: {result.unrouted - ignored}"
+            if result.kicad_unconnected is not None:
+                summary += f" (open connections in KiCad after the import: {result.kicad_unconnected})"
             if ignored:
                 summary += f"\nIn ignored net classes (not routed): {ignored}"
             summary += f"\nClearance violations: {result.violations}"
+            if result.violations_unfixable:
+                summary += f" ({result.violations_unfixable} of them between fixed items of the design, not fixable by routing)"
         if result.warnings:
             shown = result.warnings[:12]
             summary += "\n\nWarnings:\n" + "\n".join("- " + w for w in shown)

@@ -22,6 +22,8 @@ PLUGIN_DIR = Path(__file__).resolve().parent
 
 # Lines like "   12.345 INFO  message" from fastroute's stderr.
 _LOG_LINE = re.compile(r"^\s*\d+\.\d+\s+(\w+)\s+(.*)$")
+# "Board has 12 pre-existing clearance violation(s) in the loaded design (12 unfixable)."
+_PREEXISTING = re.compile(r"Board has (\d+) pre-existing clearance violation\(s\).*\((\d+) unfixable\)")
 # "live viewer: http://127.0.0.1:7878" (fastroute --live).
 _LIVE_URL = re.compile(r"live viewer: (http://\S+)")
 # Router score reports; the last one seen is the final state of the board.
@@ -132,6 +134,19 @@ def import_ses(board, path, in_editor=False):
     except TypeError:  # KiCad 6
         ok = pcbnew.ImportSpecctraSES(str(path))
     return bool(ok)
+
+
+def kicad_unconnected_count(board):
+    """KiCad's own count of open connections (its ratsnest), or None if the API lacks it."""
+    try:
+        board.BuildConnectivity()
+        c = board.GetConnectivity()
+        try:
+            return int(c.GetUnconnectedCount(False))
+        except TypeError:  # older API without the "visible only" argument
+            return int(c.GetUnconnectedCount())
+    except Exception:
+        return None
 
 
 def refill_zones(board):
@@ -1242,6 +1257,13 @@ class RouteResult:
         # unrouted connections in net classes the autorouter ignores (part of `unrouted`)
         self.unrouted_ignored = None
         self.violations = None
+        # open connections KiCad itself counts after the import and the zone refill (None if
+        # not available). The router counts connections it had to route; a pad that KiCad
+        # connects through a zone is unrouted to the router and connected here.
+        self.kicad_unconnected = None
+        # clearance violations that were in the design before routing and that the router
+        # cannot fix (fixed items too close to each other; part of `violations`)
+        self.violations_unfixable = None
         self.log = []
         # .kicad_dru rules not applied, length (max) violations of the result
         self.warnings = []
@@ -1440,6 +1462,9 @@ class Router:
             ig = _IGNORED.search(text)
             if ig:
                 result.unrouted_ignored = int(ig.group(1))
+            pe = _PREEXISTING.search(text)
+            if pe:
+                result.violations_unfixable = int(pe.group(2))
             if on_line:
                 on_line(level, text)
         code = self._proc.wait()
@@ -1476,6 +1501,7 @@ class Router:
             return result
         if self.refill:
             refill_zones(self.board)
+        result.kicad_unconnected = kicad_unconnected_count(self.board)
         result.warnings.extend(length_max_violations(self.board))
         if not result.partial:
             result.message = "routed"
