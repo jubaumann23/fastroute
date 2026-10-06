@@ -23,6 +23,7 @@ The plugin finds `fastroute` in this order: `$FASTROUTE_BIN`, the bundled
 | Mode | Fast | *Fast*: parallel optimizer. *Exact*: bit-identical to Freerouting's deterministic mode (single-threaded optimizer). *Quick*: autorouter only. |
 | Max. passes | 0 | Autorouter pass limit (0 = until done/stagnant). |
 | Remove existing tracks | off | Deletes unlocked tracks/vias first; locked ones are kept. |
+| Keep all existing tracks unchanged | off | Routes only the open connections. Otherwise unlocked existing tracks are part of the routing: the router may move, shorten or reroute them while it optimizes (locked ones are always kept). Unlocked tracks are locked for the run and unlocked again afterwards. CLI: `--keep-existing`. |
 | Route zone nets with tracks | on | KiCad exports copper zones as Specctra *planes* covering the zone outline, so the router assumes every pad of the zone's net is connected; the refilled zone may cut pads off. Pours are removed and their nets routed with tracks. A power-type layer with a plane covering most of the board stays a plane layer (pads connect through vias); other power-type layers are routed like signal layers. |
 | Keep tracks away from copper texts | on | KiCad's export omits copper texts; each glyph is added as a keepout. |
 | Respect minimum track width | on | Uses *Board Setup → Constraints → Minimum track width*: neck-down stops there, and connections that do not fit are retried with traces of that width. The board's copper-to-edge clearance is passed on as well. |
@@ -101,6 +102,10 @@ Other `route_cli.py` options:
 | `--obstacle-zones=GND,GUC` | zones of these nets / net classes (`*`, `?` allowed) stay fixed copper that other nets must not cross; their fill (not the outline) is the obstacle |
 | `--clearance-margin-um=5` | added to every clearance for the router (KiCad measures exact via circles); 0 turns it off |
 | `--export-only --work-dir DIR` | only writes the prepared DSN and the fastroute arguments (`args.txt`) |
+
+Clearances not in KiCad's Specctra export are added as keepouts: the copper-to-edge clearance
+around cutouts inside the board outline, the local clearance of pads without a net (fiducials,
+mounting pads), and `hole_clearance` rules of the `.kicad_dru` for holes without a net.
 
 `.kicad_dru` rules the plugin cannot carry over are listed as warnings before routing, with the
 reason; nets longer than a `length (max …)` rule are listed after routing.

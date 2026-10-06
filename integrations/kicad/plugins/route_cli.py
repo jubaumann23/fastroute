@@ -6,7 +6,7 @@ Run with the Python interpreter that ships with KiCad (it provides `pcbnew`):
     Linux:   python3 (with the distribution's KiCad Python module installed)
     Windows: "C:\\Program Files\\KiCad\\<ver>\\bin\\python.exe"
 
-    python3 route_cli.py board.kicad_pcb [-o routed.kicad_pcb] [--clear] [--mode fast|exact|quick]
+    python3 route_cli.py board.kicad_pcb [-o routed.kicad_pcb] [--clear | --keep-existing] [--mode fast|exact|quick]
                          [--max-passes N] [--threads N] [--max-time SECONDS] [--fastroute PATH]
                          [-- extra fastroute args, e.g. --router.autorouter.ignore_net_classes=GUC]
 """
@@ -27,7 +27,14 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Autoroute a KiCad board with fastroute")
     ap.add_argument("board", type=Path)
     ap.add_argument("-o", "--output", type=Path, help="output board (default: overwrite input)")
-    ap.add_argument("--clear", action="store_true", help="remove unlocked tracks and vias first")
+    existing = ap.add_mutually_exclusive_group()
+    existing.add_argument("--clear", action="store_true", help="remove unlocked tracks and vias first")
+    existing.add_argument(
+        "--keep-existing",
+        action="store_true",
+        help="keep all existing tracks and vias unchanged, route only the open connections "
+        "(by default unlocked tracks may be moved or rerouted)",
+    )
     ap.add_argument("--mode", choices=("fast", "exact", "quick"), default="fast")
     ap.add_argument("--max-passes", type=int, default=0)
     ap.add_argument("--threads", type=int, default=0)
@@ -104,6 +111,7 @@ def main(argv=None):
         route_zone_nets=not args.zones_as_planes,
         text_keepouts=not args.no_text_keepouts,
         clear_tracks=args.clear,
+        keep_existing=args.keep_existing,
         max_time=args.max_time,
         clearance_margin_um=args.clearance_margin_um,
         obstacle_zones=[p.strip() for p in args.obstacle_zones.split(",")],

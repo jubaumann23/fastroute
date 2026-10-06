@@ -227,7 +227,13 @@ impl Ctx<'_> {
                 if !found {
                     file.start_scope(true);
                     file.write("component ")?;
-                    self.id.write(&pkg.name, file)?;
+                    if pkg.name.is_empty() {
+                        // A footprint without library id: Java writes nothing, which KiCad
+                        // cannot read back.
+                        file.write("\"\"")?;
+                    } else {
+                        self.id.write(&pkg.name, file)?;
+                    }
                     found = true;
                 }
                 file.new_line();

@@ -22,6 +22,7 @@ DEFAULTS = {
     "mode": "fast",
     "max_passes": 0,
     "clear_tracks": False,
+    "keep_existing": False,
     "route_zone_nets": True,
     "text_keepouts": True,
     "respect_min_width": True,
@@ -72,6 +73,12 @@ class SettingsDialog(wx.Dialog):
             "Remove existing unlocked tracks and vias first", "clear_tracks",
             "Locked tracks and vias are always kept and routed around.",
         )
+        self.keep = check(
+            "Keep all existing tracks and vias unchanged (route only open connections)",
+            "keep_existing",
+            "Otherwise unlocked tracks may be moved, shortened or rerouted. "
+            "Ignored when existing tracks are removed.",
+        )
         self.zone_nets = check(
             "Route nets of copper zones with tracks", "route_zone_nets",
             "Recommended. Otherwise pads are assumed to be connected by the zone, "
@@ -98,6 +105,7 @@ class SettingsDialog(wx.Dialog):
             "mode": MODES[self.mode.GetSelection()][0],
             "max_passes": self.passes.GetValue(),
             "clear_tracks": self.clear.GetValue(),
+            "keep_existing": self.keep.GetValue(),
             "route_zone_nets": self.zone_nets.GetValue(),
             "text_keepouts": self.text_keepouts.GetValue(),
             "respect_min_width": self.min_width.GetValue(),
@@ -220,6 +228,7 @@ class FastrouteAction(pcbnew.ActionPlugin):
             route_zone_nets=settings["route_zone_nets"],
             text_keepouts=settings["text_keepouts"],
             clear_tracks=settings["clear_tracks"],
+            keep_existing=settings["keep_existing"],
             in_editor=True,
         )
         progress = ProgressDialog(parent, router)

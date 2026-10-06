@@ -10,6 +10,8 @@ here. The engine-side ones are active unless `--parity` is given
 
 | Change | Why |
 |---|---|
+| A tree shape that cannot be built no longer aborts the connection | `ObstacleExpansionRoom: tree shape is null` panicked (Java throws) for a degenerate item shape, reported with partly routed boards whose existing tracks are unlocked; the shape is now skipped with one warning. |
+| Footprints without a library id written as `""` in the session | Java writes an empty name, which KiCad's session import rejects. |
 | Final tail removal also after the autorouter stopped itself | Freerouting skips `removeTails` when the stagnation rule stops the router, leaving unused fanout escapes (via + stub) on the board. KiCad reports them as dangling vias (50 on the lora board). |
 | `router.min_trace_width_um` (option, unset by default) | Neck-down (at pins, fanout "micro neck-down", necked retry) never goes below this width; narrower candidates are raised to it. |
 | The autorouter's own stop (stagnation, max passes) is withdrawn before the optimizer | Java keeps the stop request set, so every optimizer candidate fails to route and the optimizer gives up after its failure limit. |
@@ -138,6 +140,9 @@ within the pair (the skew is logged).
 | Length maximum checked after routing | Nets longer than a `length (max …)` rule are listed after the import (the router does not enforce maximum lengths). |
 | Clearance margin | 5 µm are added to every clearance for the router (`--clearance-margin-um`): it models vias and track ends with polygons, KiCad measures exact circles. |
 | Obstacle zones | `--obstacle-zones=NET_OR_CLASS,...` keeps the matching zones as fixed copper that other nets must not cross (e.g. a current path poured on an outer layer), using the zone fill instead of the zone outline so that pads of other nets inside it stay reachable. |
+| Copper-to-edge clearance around inner cutouts | KiCad exports an Edge.Cuts contour inside the outline as a keepout exactly on the edge, and `copper_to_edge_clearance_um` only applies to the outer boundary, so traces ran along (or into) cutouts. The holes of the board outline are added again as keepouts inflated by the clearance. |
+| Local clearance of pads without a net → keepouts | The DSN export has no per-pad clearance (e.g. 0.6 mm around a fiducial). The pad shape inflated by its local (or footprint) clearance becomes a keepout on its layers. |
+| "Keep all existing tracks unchanged" (`--keep-existing`) | Unlocked existing tracks are routable wiring that the optimizer may move or reroute. The option locks them for the run (KiCad exports locked tracks as fixed wiring and its session import keeps them) and unlocks them afterwards. |
 | "Remove existing tracks" drops unlocked wires/vias from the DSN | Deleting board items inside the action plugin crashed pcbnew (undo snapshot with freed items); locked (`type fix`) tracks are kept. |
 
 ## Results (KiCad 10 DRC after re-routing from scratch)

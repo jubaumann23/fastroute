@@ -1099,7 +1099,13 @@ impl AutorouteEngine {
         if let Some(r) = info.expansion_rooms.as_ref().unwrap()[index as usize] {
             return Some(r);
         }
-        let shape = board.tree_shape(tree, item, index).expect("ObstacleExpansionRoom: tree shape is null");
+        // Java throws here; a degenerate shape (e.g. an imported trace segment whose offset shape
+        // is empty) is skipped instead, as the callers already treat a missing room as no room.
+        let Some(shape) = board.tree_shape(tree, item, index) else {
+            static WARNED: std::sync::Once = std::sync::Once::new();
+            WARNED.call_once(|| log::warn!("ObstacleExpansionRoom: tree shape is null, item skipped"));
+            return None;
+        };
         let layer = board.shape_layer(item, index);
         let item_id = board.item(item).id().0;
         let r = RoomId(self.rooms.len() as u32);

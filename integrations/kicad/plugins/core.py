@@ -733,6 +733,29 @@ def _raise(tok):
     raise ValueError(tok)
 
 
+def lock_existing_tracks(board):
+    """Locks the unlocked tracks and vias for one routing run. Returns their ids.
+
+    KiCad exports locked tracks as fixed wiring, which the router neither moves nor rips up,
+    and its session import keeps them. Without it unlocked existing tracks may be moved,
+    shortened or rerouted while the router optimizes."""
+    ids = set()
+    for t in board.GetTracks():
+        if not t.IsLocked():
+            t.SetLocked(True)
+            ids.add(t.m_Uuid.AsString())
+    return ids
+
+
+def unlock_tracks(board, ids):
+    """Undoes `lock_existing_tracks`."""
+    if not ids:
+        return
+    for t in board.GetTracks():
+        if t.m_Uuid.AsString() in ids:
+            t.SetLocked(False)
+
+
 def add_hole_clearance_keepouts(board, dsn_path, ignored_classes=()):
     """Carries `hole_clearance` rules of the .kicad_dru into the DSN as keepout circles
     around the matching pad holes (hole radius + clearance) on all copper layers.
@@ -789,6 +812,99 @@ def add_hole_clearance_keepouts(board, dsn_path, ignored_classes=()):
     at = text.rfind("\n", 0, at) + 1
     Path(dsn_path).write_text(text[:at] + "".join(keepouts) + text[at:], encoding="utf-8")
     return holes
+
+
+def _insert_structure_keepouts(dsn_path, keepouts):
+    """Inserts keepout lines into the DSN structure scope (before the boundary)."""
+    if not keepouts:
+        return False
+    text = Path(dsn_path).read_text(encoding="utf-8", errors="replace")
+    at = text.find("(boundary")
+    if at < 0:
+        return False
+    at = text.rfind("\n", 0, at) + 1
+    Path(dsn_path).write_text(text[:at] + "".join(keepouts) + text[at:], encoding="utf-8")
+    return True
+
+
+def _polygon_keepouts(poly_set, layers):
+    """DSN keepout polygons (um, y up) for the outlines of a SHAPE_POLY_SET on the given layers."""
+    result = []
+    for i in range(poly_set.OutlineCount()):
+        chain = poly_set.COutline(i)
+        pts = [chain.CPoint(j) for j in range(chain.PointCount())]
+        if len(pts) < 3:
+            continue
+        coords = "  ".join(f"{p.x / 1000.0:.3f} {-p.y / 1000.0:.3f}" for p in pts)
+        for layer in layers:
+            result.append(f'    (keepout "" (polygon {layer} 0  {coords}))\n')
+    return result
+
+
+def add_cutout_edge_keepouts(board, dsn_path):
+    """Applies the copper-to-edge clearance to cutouts inside the board outline.
+
+    KiCad exports an inner Edge.Cuts contour as a keepout exactly on the edge, while fastroute's
+    copper_to_edge_clearance only applies to the outer boundary. The holes of the board outline are
+    added again, inflated by the clearance. Returns the number of cutouts."""
+    import pcbnew
+
+    clearance = copper_edge_clearance_nm(board)
+    if clearance <= 0:
+        return 0
+    outlines = pcbnew.SHAPE_POLY_SET()
+    try:
+        if not board.GetBoardPolygonOutlines(outlines, False):
+            return 0
+    except Exception:
+        return 0
+    keepouts, count = [], 0
+    for o in range(outlines.OutlineCount()):
+        for h in range(outlines.HoleCount(o)):
+            hole = pcbnew.SHAPE_POLY_SET()
+            hole.AddOutline(outlines.CHole(o, h))
+            hole.Inflate(clearance, pcbnew.CORNER_STRATEGY_ROUND_ALL_CORNERS, 5000)
+            keepouts += _polygon_keepouts(hole, ["signal"])
+            count += 1
+    return count if _insert_structure_keepouts(dsn_path, keepouts) else 0
+
+
+def add_netless_pad_keepouts(board, dsn_path):
+    """Carries the local clearance of pads without a net (fiducials, mounting pads) into the DSN.
+
+    The DSN export has no per-pad clearance; as no trace connects to such a pad, a keepout of the
+    pad shape inflated by its clearance is equivalent. Returns the number of pads."""
+    import pcbnew
+
+    keepouts, count = [], 0
+    for fp in board.GetFootprints():
+        fp_clearance = None
+        try:
+            fp_clearance = fp.GetLocalClearance()
+        except Exception:
+            pass
+        for pad in fp.Pads():
+            if pad.GetNetCode() > 0:
+                continue
+            clearance = None
+            try:
+                clearance = pad.GetLocalClearance()
+            except Exception:
+                pass
+            if clearance is None:
+                clearance = fp_clearance
+            if not clearance or clearance <= 0:
+                continue
+            added = False
+            for layer in board.GetEnabledLayers().CuStack():
+                if not pad.IsOnLayer(layer):
+                    continue
+                poly = pcbnew.SHAPE_POLY_SET()
+                pad.TransformShapeToPolygon(poly, layer, int(clearance), 5000, pcbnew.ERROR_OUTSIDE)
+                keepouts += _polygon_keepouts(poly, [_dsn_quote(board.GetLayerName(layer))])
+                added = True
+            count += added
+    return count if _insert_structure_keepouts(dsn_path, keepouts) else 0
 
 
 def add_dru_layer_widths(board, dsn_path):
@@ -1108,6 +1224,7 @@ class Router:
         route_zone_nets=True,
         text_keepouts=True,
         clear_tracks=False,
+        keep_existing=False,
         in_editor=False,
         max_time=None,
         clearance_margin_um=5.0,
@@ -1119,6 +1236,8 @@ class Router:
         # other nets (e.g. a current path poured on an outer layer)
         self.obstacle_zones = [p for p in obstacle_zones if p]
         self.clear_tracks = clear_tracks
+        # existing tracks and vias are kept unchanged (ignored with clear_tracks)
+        self.keep_existing = keep_existing and not clear_tracks
         self.in_editor = in_editor
         self.text_keepouts = text_keepouts
         self.refill = refill
@@ -1164,7 +1283,9 @@ class Router:
         self._dsn, self._ses = tmp / "board.dsn", tmp / "board.ses"
         for f in (self._dsn, self._ses):
             f.unlink(missing_ok=True)
+        self._temp_locked = lock_existing_tracks(self.board) if self.keep_existing else set()
         if not export_dsn(self.board, self._dsn):
+            unlock_tracks(self.board, self._temp_locked)
             result = RouteResult()
             result.message = (
                 "KiCad could not export the board as Specctra DSN"
@@ -1181,6 +1302,8 @@ class Router:
             if a.startswith("--router.autorouter.ignore_net_classes="):
                 ignored |= {c.strip() for c in a.split("=", 1)[1].split(",") if c.strip()}
         self.hole_keepouts = add_hole_clearance_keepouts(self.board, self._dsn, ignored)
+        self.cutout_keepouts = add_cutout_edge_keepouts(self.board, self._dsn)
+        self.pad_keepouts = add_netless_pad_keepouts(self.board, self._dsn)
         self._tune = self._dsn.with_name("tune.txt")
         self._tune.unlink(missing_ok=True)
         self.tune_groups = 0
@@ -1286,6 +1409,12 @@ class Router:
 
     def finish(self, result):
         """Imports the routed session into the board (if routing succeeded)."""
+        try:
+            return self._finish(result)
+        finally:
+            unlock_tracks(self.board, getattr(self, "_temp_locked", set()))
+
+    def _finish(self, result):
         if not result.ok:
             return result
         if not import_ses(self.board, self._ses, self.in_editor):
