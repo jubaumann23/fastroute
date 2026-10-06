@@ -241,7 +241,19 @@ function buildFrame() {
 // ---------- view ----------
 function fit() {
   if (!board) return;
-  const [x0, y0, x1, y1] = board.bbox;
+  // the outline (with the pads that stick out of it), else the whole board
+  let [x0, y0, x1, y1] = board.bbox;
+  if (board.outline.length) {
+    [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const o of board.outline) for (let i = 1; i + 1 < o.length; i += 2) {
+      x0 = Math.min(x0, o[i]); x1 = Math.max(x1, o[i]); y0 = Math.min(y0, o[i + 1]); y1 = Math.max(y1, o[i + 1]);
+    }
+    for (const p of board.pads) if (p[2] === 0) {
+      x0 = Math.min(x0, p[3] - p[5]); x1 = Math.max(x1, p[3] + p[5]); y0 = Math.min(y0, p[4] - p[5]); y1 = Math.max(y1, p[4] + p[5]);
+    } else for (let i = 3; i + 1 < p.length; i += 2) {
+      x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); y0 = Math.min(y0, p[i + 1]); y1 = Math.max(y1, p[i + 1]);
+    }
+  }
   const r = cv.getBoundingClientRect();
   view.cx = (x0 + x1) / 2; view.cy = (y0 + y1) / 2;
   view.scale = Math.min((r.width - 40) / Math.max(1, x1 - x0), (r.height - 70) / Math.max(1, y1 - y0));
@@ -291,11 +303,12 @@ function render() {
   if (board.outline.length) g.clip(outlinePath, "evenodd");
   const planeLayer = [...Array(n).keys()].find(i => layerOn[i] && board.planes.some(p => p[0] === i));
   if (planeLayer != null) { g.globalAlpha = 0.07; g.fillStyle = layerColor(planeLayer); g.fill(planePaths[planeLayer]); }
+  // keepouts of all visible layers in one fill (no stacking), only inside the outline (the area
+  // outside the board is a keepout as well)
+  const keep = new Path2D();
+  for (const i of order) if (layerOn[i]) keep.addPath(keepoutPaths[i]);
+  g.globalAlpha = 0.16; g.fillStyle = "#ff5d5d"; g.fill(keep, "nonzero");
   g.restore();
-  for (const i of order) {
-    if (!layerOn[i]) continue;
-    g.globalAlpha = 0.14; g.fillStyle = "#ff5d5d"; g.fill(keepoutPaths[i]);
-  }
   g.globalAlpha = 1;
   if (showPads) for (const i of order) {
     if (!layerOn[i]) continue;

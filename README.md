@@ -16,6 +16,7 @@ command line — without Java, several times faster and with a fraction of the m
   time limits) on all 20 benchmark boards.
 - **Default mode** runs the optimizer in parallel; results are deterministic for any
   thread count.
+- **Live view** (`--live`): watch the board being routed in your browser.
 - **KiCad plugin** in [`integrations/kicad`](integrations/kicad/README.md).
 
 ## What is different from Freerouting
@@ -36,6 +37,7 @@ measurements and the reasoning for each change: [docs/IMPROVEMENTS.md](docs/IMPR
 | `ignore_net_classes` is honoured by the autorouter but not by the fanout, which still adds stubs to the ignored nets | No fanout on ignored classes |
 | A failing connection rips its whole net on every failure from the second on; unroutable connections make large nets (GND, 3V3) oscillate | Only once per net |
 | Class-pair clearances from the DSN only reach the clearance classes named after the net classes, not the pin/SMD classes of the same nets | Applied to all item classes of both net classes |
+| Nets with a pad on or outside the board edge (edge connectors, castellated pads, headers across Edge.Cuts) ignore the outline completely, so their traces can run outside the board anywhere | The area outside the outline is a keepout except right around those pads |
 | DSN lexer: non-ASCII letters dropped from names, desynchronisation on some quoted strings, a pin token swallowing a character of the next pin | Parsed correctly |
 
 ### Routing and optimizer improvements
@@ -55,6 +57,14 @@ measurements and the reasoning for each change: [docs/IMPROVEMENTS.md](docs/IMPR
 
 ### New features
 
+- **Live routing view** (`--live[=PORT]`, a checkbox in the KiCad plugin): a local page at
+  `http://127.0.0.1:7878` shows the board as it is routed — traces appearing and being ripped
+  up, the remaining airlines, progress of each pass, unrouted connections per pass, clearance
+  violations, score and the log — with zoom, layer toggles, net highlighting and a Stop
+  button that keeps the best result. Served by fastroute itself (no internet needed);
+  results are the same with or without it.
+
+  ![Live routing view: the board being routed, with unrouted connections, pass progress, a chart of unrouted connections per pass and the log](docs/img/live-view.webp)
 - **Length matching** (`--tune`): groups of nets (buses, pair skew) are matched with
   meanders after routing; every meander is clearance-checked, via heights count as in KiCad.
 - **Controlled impedance**: trace widths per layer from the board stackup (microstrip,
@@ -70,6 +80,7 @@ the gaps of KiCad's Specctra export and imports the result:
   skew rules, differential pair gaps; minimum track width and copper-to-edge clearance too.
 - Zones, copper texts and rule areas are exported correctly (KiCad exports every zone as a
   plane and every rule area as a keepout); zones are refilled after routing.
+- An option shows the routing live in the web browser (see *Live routing view* above).
 - `impedance_cli.py` computes controlled-impedance widths and writes the DRC rules.
 - Checked with KiCad's own DRC on the KiCad demo boards (see the results table in
   [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md)).
