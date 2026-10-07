@@ -318,6 +318,8 @@ static LOGGER: OnceLock<Logger> = OnceLock::new();
 static LIVE: OnceLock<Arc<live::Live>> = OnceLock::new();
 /// The stage the pipeline is in (named in the messages after a stop request).
 static STAGE: Mutex<String> = Mutex::new(String::new());
+/// The last progress event of the stage (named with the stage after a stop request).
+static STEP: Mutex<String> = Mutex::new(String::new());
 
 /// After a stop request: says every half minute that the run is still finishing its current
 /// step, so that a long step on a big board is not taken for a hang.
@@ -327,10 +329,12 @@ fn stop_watchdog() {
         loop {
             std::thread::sleep(Duration::from_secs(30));
             let stage = STAGE.lock().map(|s| s.clone()).unwrap_or_default();
+            let step = STEP.lock().map(|s| s.clone()).unwrap_or_default();
             log::warn!(
                 target: "fastroute",
-                "still finishing the current step of the {} stage ({:.0} s since the stop request); the session file is written when it ends (the checkpoint file holds the best board so far)",
+                "still finishing the current step of the {} stage{} ({:.0} s since the stop request); the session file is written when it ends (the checkpoint file holds the best board so far)",
                 if stage.is_empty() { "loading" } else { stage.as_str() },
+                if step.is_empty() { String::new() } else { format!(" (last progress: {step})") },
                 t.elapsed().as_secs_f64()
             );
         }
@@ -526,10 +530,26 @@ fn run() -> Result<(), String> {
         multi_start: args.multi_start,
         checkpoint,
         observer: Some(Arc::new(|board, ev| {
-            if let pipeline::LiveEvent::Stage(name) = ev {
-                if let Ok(mut s) = STAGE.lock() {
-                    *s = name.to_string();
+            match ev {
+                pipeline::LiveEvent::Stage(name) => {
+                    if let Ok(mut s) = STAGE.lock() {
+                        *s = name.to_string();
+                    }
+                    if let Ok(mut s) = STEP.lock() {
+                        s.clear();
+                    }
                 }
+                pipeline::LiveEvent::Connection { pass_no, done, total, .. } => {
+                    if let Ok(mut s) = STEP.lock() {
+                        *s = format!("pass {pass_no}, {done} of {total} connections committed");
+                    }
+                }
+                pipeline::LiveEvent::Fanout { pass_no, done, total, .. } => {
+                    if let Ok(mut s) = STEP.lock() {
+                        *s = format!("fanout pass {pass_no}, {done} of {total} pins checked");
+                    }
+                }
+                _ => {}
             }
             if let Some(live) = LIVE.get() {
                 live.observe(board, ev);

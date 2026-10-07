@@ -85,6 +85,8 @@ pub enum LiveEvent<'a> {
     Stage(&'a str),
     /// An autorouting pass committed a connection (`done` of `total` items of the pass).
     Connection { pass_no: i32, done: usize, total: usize, counters: PassCounters },
+    /// A fanout pass checked a pin (`done` of `total` SMD pins of the pass).
+    Fanout { pass_no: i32, done: i32, total: i32, routed: i32, not_routed: i32 },
     /// An autorouting pass ended.
     RouterPass { pass_no: i32, secs: f64, counters: PassCounters, incomplete: i32, violations: i32, score: f32 },
     /// An optimizer pass ended.

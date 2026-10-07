@@ -112,6 +112,7 @@ impl Live {
                 }
                 self.frame(board, false);
             }
+            LiveEvent::Fanout { .. } => {}
             LiveEvent::RouterPass { pass_no, secs, counters: c, incomplete, violations, score } => {
                 self.event(
                     "pass",

@@ -120,6 +120,12 @@ impl BoardHistory {
         BoardHistory { max_history_size: MAX_HISTORY_SIZE, entries: Vec::new() }
     }
 
+    /// fastroute: keeps at most `n` boards (every entry is a copy of the board: 30 copies of a
+    /// 23 000-item board are gigabytes).
+    pub fn with_max_size(n: usize) -> Self {
+        BoardHistory { max_history_size: n.max(1), entries: Vec::new() }
+    }
+
     /// Java `add(board)`. `hash` is `board_hash(board)`; `router_score` computes Java
     /// `new BoardStatistics(board).getRouterScore(routerSettings)` (called at most once).
     pub fn add_with(&mut self, board: &RoutingBoard, hash: u64, router_score: impl FnOnce() -> f32) {

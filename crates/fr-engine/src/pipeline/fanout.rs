@@ -250,6 +250,21 @@ struct FanoutState {
 /// Java `fanoutPass(passNo, listener)`: returns the number of pins fanouted in this pass.
 /// fastroute: progress line interval inside a long fanout pass.
 const PROGRESS_LOG_INTERVAL_SECS: f64 = 30.0;
+/// fastroute: a pin whose fanout takes this long gets its own log line.
+const SLOW_PIN_SECS: f64 = 10.0;
+
+/// "pin 12 of U5 (net GND)" for the log.
+fn pin_label(board: &RoutingBoard, key: ItemKey) -> String {
+    let it = board.item(key);
+    let component = it.component_no();
+    let component = if component > 0 { board.components.get(component).name.clone() } else { "?".to_string() };
+    let pin_no = match &it.kind {
+        crate::board::ItemKind::Pin(p) => p.pin_index + 1,
+        _ => 0,
+    };
+    let net = board.rules.nets.get(it.net_number(0)).map(|n| n.name.clone()).unwrap_or_default();
+    format!("pin {pin_no} of {component} (net {net})")
+}
 
 fn fanout_pass(
     board: &mut RoutingBoard,
@@ -308,11 +323,25 @@ fn fanout_pass(
             }
             let max_item_id_before = board.communication.id_generator.max_generated_id();
             board.start_marking_changed_area();
+            let t_pin = Instant::now();
             let mut result = board.fanout(pin.key, settings, effective_ripup_costs, Some(stop), Some(time_limit));
+            let route_secs = t_pin.elapsed().as_secs_f64();
             if result.state == AutorouteAttemptState::Routed {
                 if let Some(rejection) = enforce_strict_drc(board, net_no, max_item_id_before) {
                     result = rejection;
                 }
+            }
+            // fastroute: a pin that takes far longer than its time limit is worth a line (the
+            // limit bounds the maze search only)
+            let pin_secs = t_pin.elapsed().as_secs_f64();
+            if pin_secs >= SLOW_PIN_SECS {
+                log::info!(
+                    "Fanout pass #{}: {} took {pin_secs:.0} s ({:?}; routing {route_secs:.0} s, check {:.0} s).",
+                    pass_no + 1,
+                    pin_label(board, pin.key),
+                    result.state,
+                    pin_secs - route_secs
+                );
             }
             match result.state {
                 AutorouteAttemptState::Routed => {
@@ -331,6 +360,7 @@ fn fanout_pass(
                 _ => {}
             }
             pins_to_go -= 1;
+            ctx.observe(board, &super::LiveEvent::Fanout { pass_no: pass_no + 1, done: total_smd_pin_count - pins_to_go, total: total_smd_pin_count, routed, not_routed });
             if let Some(d) = state.deadline {
                 if Instant::now() >= d {
                     log::info!("Fanout stage timed out.");

@@ -41,6 +41,8 @@ const STAGNATION_SCORE_THRESHOLD: f32 = 0.5;
 const PROGRESS_LOG_INTERVAL_SECS: f64 = 30.0;
 /// fastroute: at most this many "undo a bad pass" restores per run.
 const MAX_REGRESSION_ROLLBACKS: i32 = 3;
+/// fastroute: boards kept in the history (Java keeps 30 copies of the board).
+const ENHANCED_HISTORY_SIZE: usize = 6;
 /// fastroute: passes at least this long use the slow-pass stagnation rule.
 const SLOW_PASS_SECS: f64 = 20.0;
 /// fastroute: the slow-pass rule stops when the last this-many passes reduced the unrouted
@@ -917,7 +919,8 @@ impl BatchAutorouter {
         if self.enhancements && !self.is_optimizer_autorouter && self.pristine.is_none() {
             self.pristine = Some(std::sync::Arc::new(board.clone()));
         }
-        let mut bh = BoardHistory::new();
+        // fastroute: the history holds board copies; the restore rules look at the best few
+        let mut bh = if ctx.enhancements { BoardHistory::with_max_size(ENHANCED_HISTORY_SIZE) } else { BoardHistory::new() };
         let mut stats = StatsCache::new();
 
         if settings.is_fanout_enabled() {
