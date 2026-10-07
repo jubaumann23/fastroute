@@ -8,6 +8,7 @@ fn expected_defaults() -> RouterSettings {
             enabled: Some(true),
             algorithm: Some("freerouting-router".into()),
             max_passes: Some(0),
+            min_passes: None,
             max_items: Some(i32::MAX),
             max_threads: Some(7),
             save_intermediate_stages: Some(false),

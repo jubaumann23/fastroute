@@ -30,7 +30,7 @@ use crate::ids::{ItemId, NetNo};
 use crate::rules::BoardRules;
 
 use super::autorouter::BatchAutorouter;
-use super::stats::{format_score, incomplete_count, StatsCache};
+use super::stats::{format_score_with_unfixable, incomplete_count, StatsCache};
 use super::PipelineContext;
 
 /// How the optimizer evaluates its candidates.
@@ -1032,7 +1032,7 @@ impl BatchOptimizer {
             pass_start.elapsed().as_secs_f64(),
             evaluated,
             candidates.len(),
-            format_score(s.optimizer_score, s.incomplete_count, s.clearance_violation_count)
+            format_score_with_unfixable(s.optimizer_score, s.incomplete_count, s.clearance_violation_count, s.unfixable_violation_count)
         );
         route_improved
     }

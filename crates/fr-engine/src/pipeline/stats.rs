@@ -32,6 +32,9 @@ pub struct Score {
     pub optimizer_score: f32,
     pub incomplete_count: i32,
     pub clearance_violation_count: i32,
+    /// fastroute: violations between two unroutable (fixed) items, which the router cannot
+    /// fix: part of `clearance_violation_count`.
+    pub unfixable_violation_count: i32,
 }
 
 impl StatsCache {
@@ -62,6 +65,7 @@ impl StatsCache {
             },
             incomplete_count: s.connections.incomplete_count.unwrap_or(0),
             clearance_violation_count: s.clearance_violations.total_count.unwrap_or(0),
+            unfixable_violation_count: s.clearance_violations.unfixable_count.unwrap_or(0),
         }
     }
 }
@@ -142,12 +146,18 @@ thread_local! {
 
 /// Java `FRLogger.formatScore(score, incomplete, violations)`.
 pub fn format_score(score: f32, incomplete: i32, violations: i32) -> String {
+    format_score_with_unfixable(score, incomplete, violations, 0)
+}
+
+/// [`format_score`] naming the violations between fixed items (which no pass can fix).
+pub fn format_score_with_unfixable(score: f32, incomplete: i32, violations: i32, unfixable: i32) -> String {
     format!(
-        "{:.2} ({} unrouted and {} {})",
+        "{:.2} ({} unrouted and {} {}{})",
         score as f64,
         incomplete,
         violations,
-        if violations == 1 { "violation" } else { "violations" }
+        if violations == 1 { "violation" } else { "violations" },
+        if unfixable > 0 { format!(", {unfixable} of them pre-existing between fixed items") } else { String::new() }
     )
 }
 

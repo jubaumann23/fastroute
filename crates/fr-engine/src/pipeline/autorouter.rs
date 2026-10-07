@@ -18,7 +18,7 @@ use crate::ids::{ItemId, NetNo};
 
 use super::fanout;
 use super::history::{board_hash, BoardHistory, MAX_HISTORY_SIZE};
-use super::stats::{format_score, incomplete_count, StatsCache};
+use super::stats::{format_score_with_unfixable, incomplete_count, StatsCache};
 use super::{CheckpointKey, PipelineContext};
 
 /// Java `BOARD_RANK_LIMIT`.
@@ -938,6 +938,12 @@ impl BatchAutorouter {
         }
 
         let current_unrouted = incomplete_count(board, None);
+        if ctx.enhancements && !self.is_optimizer_autorouter && ctx.checkpoint.is_some() {
+            // fastroute: the board after the fanout is the first checkpoint, so a run stopped
+            // during its first pass leaves a session file behind
+            let s = stats.score(board, settings);
+            ctx.checkpoint(board, CheckpointKey { incomplete: s.incomplete_count, violations: s.clearance_violation_count, stage: 0, score: s.router_score });
+        }
         // fastroute: unrouted connections of ignored net classes (constant: never routed)
         let ignored = if ctx.enhancements { super::stats::ignored_incomplete_count(board) } else { 0 };
         let is_router_enabled = settings.get_run_router() && settings.autorouter.max_passes.map(|m| m >= 0).unwrap_or(true);
@@ -966,6 +972,8 @@ impl BatchAutorouter {
         let mut fewest_incomplete = i32::MAX;
         let mut incomplete_history: Vec<i32> = Vec::new();
         let mut rollbacks = 0;
+        // fastroute: router.autorouter.min_passes keeps the stagnation rules quiet this long
+        let min_passes = settings.autorouter.min_passes.unwrap_or(0);
         while continue_autorouting && !stop.is_stop_autorouter_requested() {
             if let Some(m) = settings.autorouter.max_passes {
                 if m > 0 && current_pass > m {
@@ -1005,7 +1013,7 @@ impl BatchAutorouter {
                         last_best_score = after.router_score;
                         log::debug!(
                             "Restoring an earlier board that has the score of {}.",
-                            format_score(after.router_score, after.incomplete_count, after.clearance_violation_count)
+                            format_score_with_unfixable(after.router_score, after.incomplete_count, after.clearance_violation_count, after.unfixable_violation_count)
                         );
                     }
                 }
@@ -1015,7 +1023,7 @@ impl BatchAutorouter {
                     "Auto-routing pass #{} was completed in {:.2} seconds with score {} (routed {}, failed {}, ripped {}).",
                     current_pass,
                     pass_start.elapsed().as_secs_f64(),
-                    format_score(after.router_score, after.incomplete_count, after.clearance_violation_count),
+                    format_score_with_unfixable(after.router_score, after.incomplete_count, after.clearance_violation_count, after.unfixable_violation_count),
                     counters.routed,
                     counters.not_routed,
                     counters.ripped
@@ -1065,7 +1073,7 @@ impl BatchAutorouter {
                 // fastroute: on boards where a pass takes long, stop once the passes no longer
                 // pay off (Java's stagnation rules only start after 8 passes).
                 let n = incomplete_history.len();
-                if pass_start.elapsed().as_secs_f64() >= SLOW_PASS_SECS && n > SLOW_STAGNATION_WINDOW {
+                if pass_start.elapsed().as_secs_f64() >= SLOW_PASS_SECS && n > SLOW_STAGNATION_WINDOW && current_pass >= min_passes {
                     let before = *incomplete_history[..n - SLOW_STAGNATION_WINDOW].iter().min().unwrap();
                     let recent = *incomplete_history[n - SLOW_STAGNATION_WINDOW..].iter().min().unwrap();
                     if recent - ignored > 0 && before - recent < ((before - ignored) / 50).max(1) {
@@ -1079,7 +1087,7 @@ impl BatchAutorouter {
                 }
             }
 
-            if current_pass >= STOP_AT_PASS_MINIMUM && continue_autorouting {
+            if current_pass >= STOP_AT_PASS_MINIMUM && current_pass >= min_passes && continue_autorouting {
                 if after.router_score > last_best_score + STAGNATION_SCORE_THRESHOLD {
                     consecutive_no_improvement_passes = 0;
                     last_best_score = after.router_score;
@@ -1151,8 +1159,8 @@ impl BatchAutorouter {
                 let b = stats.score(board, settings);
                 log::debug!(
                     "The final board state (score {}) is worse than the best board seen during routing (score {}). Restoring the best board as the final result.",
-                    format_score(current_final.router_score, current_final.incomplete_count, current_final.clearance_violation_count),
-                    format_score(b.router_score, b.incomplete_count, b.clearance_violation_count)
+                    format_score_with_unfixable(current_final.router_score, current_final.incomplete_count, current_final.clearance_violation_count, current_final.unfixable_violation_count),
+                    format_score_with_unfixable(b.router_score, b.incomplete_count, b.clearance_violation_count, b.unfixable_violation_count)
                 );
             }
         }
@@ -1168,7 +1176,7 @@ impl BatchAutorouter {
                 "Auto-routing stage completed: started with {} unrouted nets, completed in {:.2} seconds, final score: {}.",
                 self.initial_unrouted_count,
                 stage_start.elapsed().as_secs_f64(),
-                format_score(s.router_score, s.incomplete_count, s.clearance_violation_count)
+                format_score_with_unfixable(s.router_score, s.incomplete_count, s.clearance_violation_count, s.unfixable_violation_count)
             );
             if ignored > 0 {
                 log::info!(

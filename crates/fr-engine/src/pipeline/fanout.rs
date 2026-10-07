@@ -186,6 +186,9 @@ pub fn fanout_board(board: &mut RoutingBoard, settings: &RouterSettings, ctx: &P
     let mut last_board_hash = board_hash(board);
     let mut previous_fanned: std::collections::BTreeSet<i32> = std::collections::BTreeSet::new();
     for i in 0..max_passes {
+        if ctx.stop.is_stop_autorouter_requested() {
+            break;
+        }
         if let Some(d) = state.deadline {
             if Instant::now() >= d {
                 state.timed_out = true;
@@ -245,6 +248,9 @@ struct FanoutState {
 }
 
 /// Java `fanoutPass(passNo, listener)`: returns the number of pins fanouted in this pass.
+/// fastroute: progress line interval inside a long fanout pass.
+const PROGRESS_LOG_INTERVAL_SECS: f64 = 30.0;
+
 fn fanout_pass(
     board: &mut RoutingBoard,
     settings: &RouterSettings,
@@ -264,8 +270,22 @@ fn fanout_pass(
     let ripup_allowed = settings.fanout.ripup_allowed.unwrap_or(true);
     let effective_ripup_costs = if ripup_allowed { ripup_costs } else { -1 };
     let stop = &ctx.stop;
+    // fastroute: a progress line now and then (a pass over a big board takes many minutes)
+    let mut last_report = Instant::now();
     'components: for component in components {
         for pin in &component.pins {
+            if last_report.elapsed().as_secs_f64() >= PROGRESS_LOG_INTERVAL_SECS {
+                last_report = Instant::now();
+                log::info!(
+                    "Fanout pass #{}: {} of {} SMD pins checked in {:.0} s ({} fanned out, {} not routed).",
+                    pass_no + 1,
+                    total_smd_pin_count - pins_to_go,
+                    total_smd_pin_count,
+                    pass_start.elapsed().as_secs_f64(),
+                    routed,
+                    not_routed
+                );
+            }
             if let Some(m) = settings.fanout.max_items {
                 if m > 0 && state.total_items_fanouted >= m {
                     log::info!("Max items limit reached ({m}). Stopping fanout.");

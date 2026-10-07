@@ -122,6 +122,7 @@ as `--gui.enabled` are ignored. fastroute adds:
 | `--pairs=FILE` | Differential pairs: routed first, the second net following the first at the pair gap |
 | `--no-neckdown-classes=A,B` | Keep the full trace width of these classes at pins (controlled impedance) |
 | `--max-time=SECONDS` | Stop after this time and write the best result so far |
+| `--router.autorouter.min_passes=N` | The stagnation rules do not stop the autorouter before N passes (for long runs bounded by `--max-time`) |
 | `--initial-session=FILE` | Start from the wiring of a session file (e.g. a checkpoint of an earlier run) and continue routing and optimizing it |
 | `--live[=PORT]` | Watch the routing live in the web browser (`http://127.0.0.1:7878` by default, opened automatically): traces and airlines as they change, pass progress, unrouted connections per pass, log, and a Stop button. Results are unaffected |
 | `--report=FILE` | Write a JSON summary: statistics, timings, every unrouted connection and clearance violation |

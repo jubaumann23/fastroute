@@ -75,6 +75,9 @@ pub struct AutorouterSettings {
     pub algorithm: Option<String>,
     /// 0 means no limit.
     pub max_passes: Option<i32>,
+    /// fastroute: the stagnation rules do not stop the autorouter before this many passes
+    /// (0 = none; `max_passes` and `--max-time` still apply).
+    pub min_passes: Option<i32>,
     pub max_items: Option<i32>,
     pub max_threads: Option<i32>,
     pub save_intermediate_stages: Option<bool>,
@@ -243,6 +246,7 @@ impl AutorouterSettings {
         copy(&mut self.enabled, &s.enabled, &mut n);
         copy(&mut self.algorithm, &s.algorithm, &mut n);
         copy(&mut self.max_passes, &s.max_passes, &mut n);
+        copy(&mut self.min_passes, &s.min_passes, &mut n);
         copy(&mut self.max_items, &s.max_items, &mut n);
         copy(&mut self.max_threads, &s.max_threads, &mut n);
         copy(&mut self.save_intermediate_stages, &s.save_intermediate_stages, &mut n);

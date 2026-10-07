@@ -26,7 +26,7 @@ use fr_engine::board::{BasicBoard, ItemKey, ItemKind, RoutingBoard};
 use fr_engine::datastructures::StopToken;
 use fr_engine::drc::NetIncompletes;
 use fr_engine::ids::NetNo;
-use fr_engine::pipeline::{LiveEvent, Observer};
+use fr_engine::pipeline::LiveEvent;
 use fr_geom::{FloatPoint, Shape};
 
 const PAGE: &str = include_str!("live.html");
@@ -82,10 +82,6 @@ impl Live {
     }
 
     /// The pipeline observer.
-    pub fn observer(self: &Arc<Self>) -> Observer {
-        let l = self.clone();
-        Arc::new(move |board: &RoutingBoard, ev: &LiveEvent| l.observe(board, ev))
-    }
 
     pub fn observe(&self, board: &RoutingBoard, ev: &LiveEvent) {
         let t = self.secs();
@@ -237,6 +233,7 @@ impl Live {
             ("POST", "/stop") => {
                 log::warn!(target: "fastroute", "stop requested from the live viewer: finishing with the best result so far");
                 self.stop.request_stop();
+                super::stop_watchdog();
                 let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
             }
             _ => {

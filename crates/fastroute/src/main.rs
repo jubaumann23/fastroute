@@ -29,7 +29,7 @@ mod report;
 use std::io::Write as _;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use fr_engine::board::{TimeLimitMode, TimeLimitPolicy};
@@ -261,6 +261,8 @@ routed and coupled first, then fixed while the rest is routed:
 
 common --router.* settings (numbers, true/false, comma-separated lists):
   --router.autorouter.max_passes=N          passes (0 = unlimited)
+  --router.autorouter.min_passes=N          the stagnation rules do not stop the autorouter
+                                            before N passes (long runs with --max-time)
   --router.autorouter.ignore_net_classes=A,B  net classes left unrouted
   --router.autorouter.max_threads=N         threads of the parallel autorouting pass
                                             (1 = sequential pass as in Freerouting)
@@ -314,6 +316,26 @@ impl log::Log for Logger {
 static LOGGER: OnceLock<Logger> = OnceLock::new();
 /// The live viewer (`--live`), also fed with the log lines.
 static LIVE: OnceLock<Arc<live::Live>> = OnceLock::new();
+/// The stage the pipeline is in (named in the messages after a stop request).
+static STAGE: Mutex<String> = Mutex::new(String::new());
+
+/// After a stop request: says every half minute that the run is still finishing its current
+/// step, so that a long step on a big board is not taken for a hang.
+fn stop_watchdog() {
+    std::thread::spawn(|| {
+        let t = Instant::now();
+        loop {
+            std::thread::sleep(Duration::from_secs(30));
+            let stage = STAGE.lock().map(|s| s.clone()).unwrap_or_default();
+            log::warn!(
+                target: "fastroute",
+                "still finishing the current step of the {} stage ({:.0} s since the stop request); the session file is written when it ends (the checkpoint file holds the best board so far)",
+                if stage.is_empty() { "loading" } else { stage.as_str() },
+                t.elapsed().as_secs_f64()
+            );
+        }
+    });
+}
 
 /// Opens `url` in the default browser (best effort).
 fn open_browser(url: &str) {
@@ -503,7 +525,16 @@ fn run() -> Result<(), String> {
         enhancements: !args.parity && !args.no_enhancements,
         multi_start: args.multi_start,
         checkpoint,
-        observer: LIVE.get().map(|l| l.observer()),
+        observer: Some(Arc::new(|board, ev| {
+            if let pipeline::LiveEvent::Stage(name) = ev {
+                if let Ok(mut s) = STAGE.lock() {
+                    *s = name.to_string();
+                }
+            }
+            if let Some(live) = LIVE.get() {
+                live.observe(board, ev);
+            }
+        })),
     };
     if let Some(live) = LIVE.get() {
         live.publish_board(&board, &design_name);
@@ -519,6 +550,7 @@ fn run() -> Result<(), String> {
             }
             log::warn!(target: "fastroute", "stop requested: finishing with the best result so far");
             stop.request_stop();
+            stop_watchdog();
         });
     }
     if let Some(secs) = args.max_time {
@@ -527,6 +559,7 @@ fn run() -> Result<(), String> {
             std::thread::sleep(Duration::from_secs_f64(secs));
             log::warn!(target: "fastroute", "--max-time ({secs:.0} s) reached: finishing with the best result so far");
             stop.request_stop();
+            stop_watchdog();
         });
     }
     log::info!(
