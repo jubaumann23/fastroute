@@ -764,6 +764,15 @@ def lock_existing_tracks(board):
     return ids
 
 
+def via_diameter(via):
+    """The via's pad diameter. KiCad 9+ asks for the layer (the bare call asserts in KiCad 10 and
+    stops the process); older versions take no argument."""
+    try:
+        return via.GetWidth(pcbnew.F_Cu)
+    except TypeError:
+        return via.GetWidth()
+
+
 def stitching_vias(board):
     """The vias that no track touches: zone stitching / thermal vias (a via that only joins the
     copper zones of its net on two layers). Returns the vias, in board order."""
@@ -777,7 +786,7 @@ def stitching_vias(board):
         if v.GetClass() != "PCB_VIA" or v.GetNetCode() <= 0:
             continue
         c = v.GetPosition()
-        r = v.GetWidth() // 2
+        r = via_diameter(v) // 2
         if any(abs(x - c.x) <= r and abs(y - c.y) <= r for x, y in ends):
             continue
         out.append(v)
