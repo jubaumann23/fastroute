@@ -1036,25 +1036,29 @@ def fix_rule_area_keepouts(board, dsn_path):
     only forbid vias become via keepouts, areas that only forbid tracks wire keepouts
     (fastroute; Freerouting would block vias there as well). Returns (removed, converted).
     """
-    nonblocking, via_only, track_only = set(), set(), set()
+    # keyed by (layer, outline): a rule area that only carries a DRC rule may share its shape
+    # with a blocking one on the same layer (a tester lost six keepouts that way)
+    nonblocking, via_only, track_only, blocking = set(), set(), set(), set()
     for zone in board.Zones():
         if not zone.GetIsRuleArea():
             continue
         tracks, vias = zone.GetDoNotAllowTracks(), zone.GetDoNotAllowVias()
-        if tracks and vias:
-            continue
+        layers = [board.GetLayerName(l) for l in zone.GetLayerSet().Seq()]
         outline = zone.Outline()
         for i in range(outline.OutlineCount()):
             chain = outline.Outline(i)
-            key = _outline_key(
+            shape = _outline_key(
                 (chain.CPoint(k).x / 1000.0, -chain.CPoint(k).y / 1000.0)
                 for k in range(chain.PointCount())
             )
-            (track_only if tracks else via_only if vias else nonblocking).add(key)
+            group = blocking if tracks and vias else track_only if tracks else via_only if vias else nonblocking
+            for layer in layers:
+                group.add((layer, shape))
     if not nonblocking and not via_only and not track_only:
         return 0, 0
     text = Path(dsn_path).read_text(encoding="utf-8", errors="replace")
     out, i, removed, converted = [], 0, 0, 0
+    seen_blocking = set()
     while True:
         j = text.find("(keepout", i)
         if j < 0:
@@ -1063,9 +1067,17 @@ def fix_rule_area_keepouts(board, dsn_path):
         k = _scope_end(text, j)
         scope = text[j:k]
         nums = _numbers_after(scope, r"\(polygon\s+(?:\"[^\"]*\"|\S+)")
-        key = _outline_key(zip(nums[1::2], nums[2::2])) if len(nums) >= 7 else None
+        layer = re.search(r"\(polygon\s+(\"[^\"]*\"|\S+)", scope)
+        key = (layer.group(1).strip('"'), _outline_key(zip(nums[1::2], nums[2::2]))) if layer and len(nums) >= 7 else None
         out.append(text[i:j])
-        if key is not None and key in nonblocking:
+        if key is not None and key in blocking:
+            # the blocking area's own keepout stays; a same-shaped DRC-only area's copy goes
+            if key in seen_blocking:
+                removed += 1
+            else:
+                seen_blocking.add(key)
+                out.append(scope)
+        elif key is not None and key in nonblocking:
             removed += 1
         elif key is not None and key in via_only:
             out.append("(via_keepout" + scope[len("(keepout"):])
