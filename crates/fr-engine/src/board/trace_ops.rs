@@ -545,15 +545,17 @@ impl BasicBoard {
             let item = self.item(trace);
             (item.trace().layer, item.trace().half_width, item.net_numbers.clone(), item.clearance_class)
         };
+        // pcbkit hook H2b: pieces keep the parent's fixed state when the flag is on
+        let piece_fixed = if self.keep_fixed_on_split { self.item(trace).fixed_state() } else { crate::ids::FixedState::Unfixed };
         let lc = self.layer_count();
         let start_id = ItemId(crate::datastructures::IdGenerator::new_id(&mut self.communication.id_generator));
-        let start = super::item::Item::new_trace_tracked(start_id, start_piece, layer, half_width, &nets, cl, 0, crate::ids::FixedState::Unfixed, lc);
+        let start = super::item::Item::new_trace_tracked(start_id, start_piece, layer, half_width, &nets, cl, 0, piece_fixed, lc);
         let start_key = self.items.alloc(start);
         self.items.list_insert(start_key);
         self.journal_insert(start_key);
         self.items.get_mut(start_key).on_board = true;
         let end_id = ItemId(crate::datastructures::IdGenerator::new_id(&mut self.communication.id_generator));
-        let end = super::item::Item::new_trace_tracked(end_id, end_piece, layer, half_width, &nets, cl, 0, crate::ids::FixedState::Unfixed, lc);
+        let end = super::item::Item::new_trace_tracked(end_id, end_piece, layer, half_width, &nets, cl, 0, piece_fixed, lc);
         let end_key = self.items.alloc(end);
         self.items.list_insert(end_key);
         self.journal_insert(end_key);
