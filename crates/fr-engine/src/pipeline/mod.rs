@@ -184,6 +184,10 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
         settings.optimizer.algorithm = Some("freerouting-optimizer".to_string());
     }
     let mut autorouter = BatchAutorouter::for_job(board, settings);
+    // pcbkit hook H5: board-level order seed
+    if board.order_seed.is_some() {
+        autorouter.order_seed = board.order_seed;
+    }
     let mut outcome = PipelineOutcome::default();
 
     // runRoutingStage
@@ -269,7 +273,11 @@ fn multi_start(board: &mut RoutingBoard, start: &RoutingBoard, settings: &Router
                 observer: None,
             };
             let mut router = BatchAutorouter::for_job(&b, settings);
-            router.order_seed = Some(0x5eed_0000 + v as i64);
+            // pcbkit hook H5: variants derive from the board seed when one is set
+            router.order_seed = Some(match start.order_seed {
+                Some(s) => s.wrapping_mul(1_000_003).wrapping_add(v as i64),
+                None => 0x5eed_0000 + v as i64,
+            });
             router.pass_threads = 1; // the variants already run in parallel
             router.run_batch_loop(&mut b, settings, &variant_ctx);
             b.finish_autoroute();

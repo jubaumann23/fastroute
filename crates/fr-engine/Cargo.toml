@@ -14,3 +14,5 @@ rayon = "1"
 
 [dev-dependencies]
 num-bigint = "0.4"
+# pcbkit: hook tests load DSN boards through fr-io (cargo allows dev-dependency cycles)
+fr-io = { path = "../fr-io" }

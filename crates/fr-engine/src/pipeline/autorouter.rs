@@ -250,6 +250,12 @@ impl BatchAutorouter {
             if handled.contains(&item.id().0) {
                 continue;
             }
+            // pcbkit hook H6: skip items none of whose nets are in the route mask
+            if let Some(mask) = &board.route_nets {
+                if !item.net_numbers().iter().any(|&n| mask.get(n as usize).copied().unwrap_or(false)) {
+                    continue;
+                }
+            }
             let mut needs_routing = false;
             let mut has_plane_net = false;
             let net_count = item.net_count();

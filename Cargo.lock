@@ -153,6 +153,7 @@ name = "fr-engine"
 version = "0.1.13"
 dependencies = [
  "fr-geom",
+ "fr-io",
  "fr-jcompat",
  "fr-settings",
  "log",

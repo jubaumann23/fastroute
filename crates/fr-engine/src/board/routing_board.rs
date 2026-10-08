@@ -216,6 +216,10 @@ pub struct RoutingBoard {
     shove_failing_layer: LayerNo,
     /// Creation of the Java wall clock time limits.
     pub time_limits: TimeLimitPolicy,
+    // pcbkit hook H5: order seed for the pipeline's autorouter (None = upstream behaviour).
+    pub order_seed: Option<i64>,
+    // pcbkit hook H6: when Some, only nets with `mask[net_no] == true` are routed or fanned out.
+    pub route_nets: Option<Vec<bool>>,
     /// Java `autorouteEngine` (transient: not copied by `clone`, see
     /// [`crate::autoroute::router`]).
     pub autoroute_engine: crate::autoroute::router::EngineSlot,
@@ -261,6 +265,8 @@ impl RoutingBoard {
             shove_failing_obstacle: None,
             shove_failing_layer: -1,
             time_limits: TimeLimitPolicy::default(),
+            order_seed: None,
+            route_nets: None,
             autoroute_engine: Default::default(),
         }
     }
