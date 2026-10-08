@@ -89,6 +89,11 @@ fn sorted_components(board: &RoutingBoard, settings: &RouterSettings, skip_ignor
     };
     let smd_pins_with_nets: Vec<ItemKey> =
         board.get_smd_pins().into_iter().filter(|&p| board.item(p).net_count() > 0 && !ignored(p)).collect();
+    // pcbkit hook H6: fan out only pins of nets in the route mask
+    let smd_pins_with_nets: Vec<ItemKey> = match &board.route_nets {
+        Some(m) => smd_pins_with_nets.into_iter().filter(|&p| board.item(p).net_numbers().iter().any(|&n| m.get(n as usize).copied().unwrap_or(false))).collect(),
+        None => smd_pins_with_nets,
+    };
     let mut result = Vec::new();
     for i in 1..=board.components.count() {
         let component_id = board.components.get(i).id;
