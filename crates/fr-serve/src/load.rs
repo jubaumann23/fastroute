@@ -134,6 +134,7 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     // `load` replaces the board and drops locks and snapshots.
     session.board = Some(loaded);
     session.locks = locks;
+    session.snapshots.clear();
     Ok(result)
 }
 
