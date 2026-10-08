@@ -4,14 +4,26 @@
 #   1. cargo test --release --workspace (no parity test may be silently skipped)
 #   2. scripts/parity-route.sh on the pipeline_parity fixtures (needs the Java parity jar)
 #   3. router_conformance.py at --threads 1 and 2 (only if the built binary has `serve`)
-# Env: CARGO_SLOT (cargo wrapper), PCBKIT_CONFORMANCE (runner path), PCBKIT_JAVA (java binary).
+# Env (all required, no machine-specific defaults):
+#   CARGO_SLOT          cargo wrapper (shared build slots); set CARGO_SLOT=cargo for plain cargo
+#   PCBKIT_CONFORMANCE  path to the toolkit's scripts/router_conformance.py
+#   PCBKIT_STOCK_CLI    pinned stock fastroute v0.1.13 binary; its sha256 must equal the
+#                       STOCK_CLI_SHA256 line in docs/PCBKIT.md (stock-equivalence reference)
+# Optional: PCBKIT_JAVA (java binary), PCBKIT_BASE (ledger base, default v0.1.13).
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-SHARED_REF=/home/jubau/coolProjects/fastroute/reference
-SHARED_SLOT=/tmp/claude-1000/-home-jubau-coolProjects-claude-pcb-rules/09ebfdde-5d90-4ee9-adf5-b5e4340131ee/scratchpad/cargo_slot.sh
-if [ -x "$SHARED_SLOT" ]; then DEFAULT_SLOT=$SHARED_SLOT; else DEFAULT_SLOT=cargo; fi
-CARGO_SLOT=${CARGO_SLOT:-$DEFAULT_SLOT}
-CONF=${PCBKIT_CONFORMANCE:-/home/jubau/coolProjects/claude-pcb-rules/.claude/worktrees/rust-protocol/scripts/router_conformance.py}
+# The main checkout's reference/ (git-ignored) is shared by every worktree.
+SHARED_REF=$(dirname "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)")/reference
+MISSING=""
+for v in CARGO_SLOT PCBKIT_CONFORMANCE PCBKIT_STOCK_CLI; do
+  [ -n "${!v:-}" ] || MISSING="$MISSING $v"
+done
+if [ -n "$MISSING" ]; then
+  echo "pcbkit-gate: required env not set:$MISSING (see the header of $0 and docs/PCBKIT.md)" >&2
+  exit 2
+fi
+CONF=$PCBKIT_CONFORMANCE
+STOCK=$PCBKIT_STOCK_CLI
 cd "$ROOT" || exit 2
 
 if [ ! -e reference ] && [ -d "$SHARED_REF" ]; then
@@ -90,7 +102,17 @@ else
   row parity-route SKIP "no Java parity jar/jdk in reference/ (docs/PCBKIT.md)"
 fi
 
-# 3. protocol conformance.
+# 3. protocol conformance, stock equivalence against the pinned stock v0.1.13 binary.
+WANT_SHA=$(awk '/^STOCK_CLI_SHA256:/{print $2; exit}' docs/PCBKIT.md)
+if [ ! -x "$STOCK" ]; then
+  row stock-pin FAIL "PCBKIT_STOCK_CLI not executable: $STOCK"
+elif [ -z "$WANT_SHA" ]; then
+  row stock-pin FAIL "no STOCK_CLI_SHA256 line in docs/PCBKIT.md"
+elif [ "$(sha256sum "$STOCK" | cut -d' ' -f1)" != "$WANT_SHA" ]; then
+  row stock-pin FAIL "sha256 of $STOCK differs from docs/PCBKIT.md STOCK_CLI_SHA256"
+else
+  row stock-pin PASS "$("$STOCK" --version 2>&1 | head -1), sha256 ${WANT_SHA:0:12}"
+fi
 BIN=$ROOT/target/release/fastroute
 # `serve` is not listed in --help; a binary with serve exits 0 on an empty stdin, one
 # without it rejects `serve` as a CLI argument.
@@ -99,7 +121,7 @@ if "$BIN" serve </dev/null >/dev/null 2>&1; then
     row conformance FAIL "runner missing: $CONF"
   else
     EXTRA=()
-    python3 "$CONF" --help 2>&1 | grep -q -- '--stock-cli' && EXTRA=(--stock-cli "$BIN")
+    python3 "$CONF" --help 2>&1 | grep -q -- '--stock-cli' && EXTRA=(--stock-cli "$STOCK")
     for th in 1 2; do
       if python3 "$CONF" --server "$BIN serve" --threads "$th" "${EXTRA[@]}" >"$LOGDIR/conf-$th.log" 2>&1; then
         row "conformance-t$th" PASS ""

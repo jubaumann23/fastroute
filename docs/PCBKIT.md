@@ -39,10 +39,22 @@ holds `sha256  path-in-corpus  original-source` per file.
 ## Scripts
 
 * `scripts/pcbkit-gate.sh` (run from any fork worktree): `cargo test --release --workspace
-  --no-fail-fast` via `$CARGO_SLOT` (default: the shared cargo_slot.sh), fails on any skipped parity
-  test; Java-vs-Rust SES identity on bm02 and pic_programmer (`scripts/parity-route.sh`); when the
-  binary has `serve`, `router_conformance.py` at `--threads 1` and `2` (path override:
-  `PCBKIT_CONFORMANCE`; `--stock-cli` passed if the runner supports it). Prints a PASS/FAIL table.
+  --no-fail-fast` via `$CARGO_SLOT`, fails on any skipped parity test; Java-vs-Rust SES identity on
+  bm02 and pic_programmer (`scripts/parity-route.sh`); when the binary has `serve`,
+  `router_conformance.py` (`$PCBKIT_CONFORMANCE`) at `--threads 1` and `2`, with `--stock-cli` set to
+  the pinned stock binary `$PCBKIT_STOCK_CLI`. `CARGO_SLOT`, `PCBKIT_CONFORMANCE` and
+  `PCBKIT_STOCK_CLI` are required (exit 2 with the missing names otherwise; `CARGO_SLOT=cargo` for
+  plain cargo). The `stock-pin` step checks the stock binary's sha256 against the line below, so the
+  stock-equivalence check always compares against upstream v0.1.13, never against the fork itself.
+  Prints a PASS/FAIL table.
+
+  Pinned stock binary: `cargo build --release` of tag v0.1.13 (6e14035) in its own worktree
+  `fastroute-wt/base` (detached, clean), `target/release/fastroute`, `fastroute 0.1.13`:
+
+STOCK_CLI_SHA256: 0e1bfbeed55916db2dffd87474e9d4e04ab7e4c824faf09469bb33b335cc929e
+
+  Rebuilding that worktree changes the hash only if the toolchain changes; then re-pin here in the
+  same commit.
   `ledger` step: every path in `git diff --name-only ${PCBKIT_BASE:-v0.1.13}..HEAD` must be exempt
   (`crates/fr-serve/**`, `crates/*/tests/pcbkit_*.rs`, `crates/fastroute/tests/serve_*.rs`,
   `scripts/pcbkit-*.sh`, `docs/PCBKIT.md`, `Cargo.lock`) or appear in the PATCH LEDGER table below.
@@ -101,7 +113,7 @@ byte-identical to upstream (`pcbkit-ab.sh` proves it).
 |---|---|---|---|---|
 | H0 serve dispatch | `crates/fastroute/src/main.rs:790-793`, `crates/fastroute/Cargo.toml:14` | 4 + 1 | `serve` subcommand only | route `fastroute serve` to the server crate |
 | H0 dep | `crates/fr-engine/Cargo.toml:17-18` | 2 | dev-dependency only | `fr-io` dev-dep for the pcbkit hook tests |
-| H1 move | `crates/fr-engine/src/board/basic_board.rs:1049-1103` (`place_component`), `crates/fr-engine/src/structure/component.rs:95-101` (`Component::set_pose`), `:286-291` (`Components::set_pose`) | 55 + 7 + 6 | via protocol `move` only | apply part moves to the loaded board |
+| H1 move | `crates/fr-engine/src/board/basic_board.rs:1068-1121` (`place_component`), `crates/fr-engine/src/structure/component.rs:95-101` (`Component::set_pose`), `:286-291` (`Components::set_pose`) | 55 + 7 + 6 | via protocol `move` only | apply part moves to the loaded board |
 | H1b rigid wiring move | `crates/fr-engine/src/board/basic_board.rs:1049-1066` (`turn_translate_wiring`) | 18 | via protocol `move` (`carry: fixed`) only | turn a fixed trace/via by k*90 degrees about the old part origin and translate it, in place (same id), so plane fan-out follows its part |
 | H2b keep-fixed-on-split | `crates/fr-engine/src/board/basic_board.rs:74-75` (field `keep_fixed_on_split`), `:177` (init), `crates/fr-engine/src/board/shape_trace_entries.rs:92-96`, `crates/fr-engine/src/board/trace_ops.rs:548-558` | 2 + 1, 3, 5 | via protocol locks only | locked wires survive trace splitting. CAVEAT: upstream `remove_item` refuses UserFixed items, so a cut-out on a UserFixed parent leaves the parent and adds UserFixed duplicate pieces; locking must not cut out locked traces. |
 | H3 blockers | `crates/fr-engine/src/autoroute/control.rs` (`collect_blockers`, `AutorouteAttemptResult.blockers`), `crates/fr-engine/src/autoroute/engine.rs` (`blockers` field), `crates/fr-engine/src/autoroute/router.rs` (`autoroute_connection` wrapper), `crates/fr-engine/src/autoroute/maze.rs` (`note_blocker`, `note_wall_blockers` + 5 call sites), `crates/fr-engine/src/pipeline/autorouter.rs` (`BatchAutorouter::route_connection_alone`), test data `crates/fr-engine/tests/data/blocked.dsn` | ~75 | `ctrl.collect_blockers` (default false); only an extra push, no change to order, costs or RNG | report which items block a connection. Fixed items (pads, locked wires, keepouts) have no expansion room, so `note_wall_blockers` queries the tree for fixed items touching each expanded free room; rippable-item obstacles are recorded where `check_ripup` is negative. |
