@@ -58,6 +58,23 @@ impl AutorouteEngine {
         ripped_item_list: &mut ItemSet,
         ripup_costs: Option<&mut HashMap<ItemKey, i32>>,
     ) -> AutorouteAttemptResult {
+        // pcbkit H3: blockers are collected by the search into `self.blockers` (only when
+        // `ctrl.collect_blockers`) and attached to the result.
+        self.blockers.clear();
+        let mut result = self.autoroute_connection_inner(board, start_set, dest_set, ctrl, ripped_item_list, ripup_costs);
+        result.blockers = std::mem::take(&mut self.blockers);
+        result
+    }
+
+    fn autoroute_connection_inner(
+        &mut self,
+        board: &mut RoutingBoard,
+        start_set: &ItemSet,
+        dest_set: &ItemSet,
+        ctrl: &AutorouteControl,
+        ripped_item_list: &mut ItemSet,
+        ripup_costs: Option<&mut HashMap<ItemKey, i32>>,
+    ) -> AutorouteAttemptResult {
         self.process_board_changes(board);
         // (panics stand for Java exceptions, which are caught like in Java)
         let search_result = {

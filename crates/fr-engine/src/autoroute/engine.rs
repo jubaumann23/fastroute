@@ -331,6 +331,8 @@ pub struct AutorouteEngine {
     pub(crate) drills: Vec<ExpansionDrill>,
     pub(crate) item_infos: HashMap<ItemKey, ItemAutorouteInfo>,
     pub(crate) connections: Vec<Connection>,
+    /// pcbkit H3: blocker items of the last connection (see `AutorouteControl::collect_blockers`).
+    pub blockers: Vec<ItemKey>,
 }
 
 impl AutorouteEngine {
@@ -357,6 +359,7 @@ impl AutorouteEngine {
             drills: Vec::new(),
             item_infos: HashMap::new(),
             connections: Vec::new(),
+            blockers: Vec::new(),
         }
     }
 

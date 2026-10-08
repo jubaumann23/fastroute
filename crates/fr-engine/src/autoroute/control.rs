@@ -3,7 +3,7 @@
 use fr_geom::Point;
 use fr_settings::{ExpansionCostFactor, RouterSettings};
 
-use crate::board::{AutorouteAttemptState, RoutingBoard};
+use crate::board::{AutorouteAttemptState, ItemKey, RoutingBoard};
 use crate::ids::{ClearanceClassNo, LayerNo, NetNo};
 use crate::rules::ViaRule;
 
@@ -12,17 +12,19 @@ use crate::rules::ViaRule;
 pub struct AutorouteAttemptResult {
     pub state: AutorouteAttemptState,
     pub details: String,
+    /// pcbkit H3: items that blocked the search (empty unless `AutorouteControl::collect_blockers`).
+    pub blockers: Vec<ItemKey>,
 }
 
 impl AutorouteAttemptResult {
     /// Java `new AutorouteAttemptResult(state)`.
     pub fn new(state: AutorouteAttemptState) -> Self {
-        AutorouteAttemptResult { state, details: String::new() }
+        AutorouteAttemptResult { state, details: String::new(), blockers: Vec::new() }
     }
 
     /// Java `new AutorouteAttemptResult(state, details)`.
     pub fn with_details(state: AutorouteAttemptState, details: impl Into<String>) -> Self {
-        AutorouteAttemptResult { state, details: details.into() }
+        AutorouteAttemptResult { state, details: details.into(), blockers: Vec::new() }
     }
 }
 
@@ -70,6 +72,8 @@ pub struct AutorouteControl {
     /// The minimum cost value of all normal vias.
     pub min_normal_via_cost: f64,
     pub ripup_allowed: bool,
+    /// pcbkit H3: record the items that block the search (default false).
+    pub collect_blockers: bool,
     pub ripup_costs: i32,
     pub ripup_pass_no: i32,
     /// If true, the autoroute algorithm completes after the first drill.
@@ -166,6 +170,7 @@ impl AutorouteControl {
             attach_smd_allowed: false,
             min_normal_via_cost: 0.0,
             ripup_allowed: false,
+            collect_blockers: false,
             ripup_costs: 1000,
             ripup_pass_no: 1,
             is_fanout: false,

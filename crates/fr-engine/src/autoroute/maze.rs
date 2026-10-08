@@ -4,13 +4,13 @@
 
 use std::cmp::Ordering;
 
-use fr_geom::{FloatLine, FloatPoint, IntPoint, Line, LineSegment, Point, Polyline, Side, TileShape};
+use fr_geom::{ConvexShape, FloatLine, FloatPoint, IntPoint, Line, LineSegment, Point, Polyline, Side, TileShape};
 use fr_jcompat::{JavaRandom, JavaTreeSet};
 
 use crate::board::actions::forced_pad_router::CheckDrillResult;
 use crate::board::actions::forced_via_inserter;
 use crate::board::optimize::trace_shover::TraceShover;
-use crate::board::{ItemKey, ItemSelectionFilter, ItemSet, RoutingBoard, SelectableChoices};
+use crate::board::{ItemKey, ItemSelectionFilter, ItemSet, RoutingBoard, SelectableChoices, TreeObject};
 use crate::ids::{AngleRestriction, FixedState, LayerNo, NetNo};
 use crate::structure::Unit;
 
@@ -340,6 +340,7 @@ impl<'a> MazeSearchEngine<'a> {
             current_door_is_small = self.door_is_small(current_door, 2.0 * half_width_add);
         }
         self.eng.complete_neighbour_rooms(self.board, next_room);
+        self.note_wall_blockers(next_room); // pcbkit H3
         let shape_entry_middle = list_element.shape_entry.a.middle_point(&list_element.shape_entry.b);
         if ctrl.with_neckdown {
             if let Expandable::Target(t) = list_element.door {
@@ -444,6 +445,7 @@ impl<'a> MazeSearchEngine<'a> {
                         }
                     }
                     if !room_rippable {
+                        self.note_blocker(obstacle_item); // pcbkit H3
                         return true;
                     }
                 }
@@ -1013,14 +1015,17 @@ impl<'a> MazeSearchEngine<'a> {
         let section_room = room_arr[list_element.section_no_of_door as usize].expect("drill room");
         if let Some(obstacle_item) = self.eng.room(section_room).obstacle_item() {
             if !ctrl.ripup_allowed {
+                self.note_blocker(obstacle_item); // pcbkit H3
                 return;
             }
             let item = self.board.item(obstacle_item);
             if !item.is_via() {
+                self.note_blocker(obstacle_item); // pcbkit H3
                 return;
             }
             let padstack = item.padstack(self.board).expect("via padstack");
             if !ctrl.via_rule.contains_padstack(padstack.id, &self.board.rules.via_infos) || item.clearance_class() != ctrl.via_clearance_class {
+                self.note_blocker(obstacle_item); // pcbkit H3
                 return;
             }
             via_lower_bound = padstack.from_layer();
@@ -1167,6 +1172,38 @@ impl<'a> MazeSearchEngine<'a> {
 
     // ------------------------------------------------------------------------------------------
     // MazeRipupResolver
+
+    /// pcbkit H3: records the fixed items (pads, locked wires, keepouts: no expansion room, so
+    /// they never reach the obstacle arm) that touch a free room the search expanded. Inert
+    /// unless `ctrl.collect_blockers`.
+    fn note_wall_blockers(&mut self, room: RoomId) {
+        if !self.ctrl.collect_blockers || self.eng.room(room).is_obstacle() {
+            return;
+        }
+        let Some(shape) = self.eng.room(room).shape_opt().cloned() else { return };
+        let layer = self.room_layer(room);
+        let tree = self.eng.tree;
+        let net = self.ctrl.net_number;
+        let entries = self.board.overlapping_tree_entries_list(tree, &ConvexShape::Tile(shape.clone()), layer, &[]);
+        for e in entries {
+            let TreeObject::Item { key, .. } = e.object else { continue };
+            if self.board.item(key).is_routable() || !self.board.object_is_trace_obstacle(e.object, net) {
+                continue;
+            }
+            let Some(item_shape) = self.board.object_tree_shape(tree, e.object, e.shape_index) else { continue };
+            if shape.intersection(&item_shape).dimension() >= 1 {
+                self.note_blocker(key);
+            }
+        }
+    }
+
+    /// pcbkit H3: records an obstacle item that stopped the expansion (inert unless
+    /// `ctrl.collect_blockers`; dedup, insertion order).
+    fn note_blocker(&mut self, item: ItemKey) {
+        if self.ctrl.collect_blockers && !self.eng.blockers.contains(&item) {
+            self.eng.blockers.push(item);
+        }
+    }
 
     /// Java `MazeRipupResolver.checkRipup(listElement, obstacleItem, doorIsSmall)`: the ripup
     /// cost of the next room, or -1 if it cannot be ripped.
