@@ -1,0 +1,15 @@
+[package]
+name = "fr-serve"
+description = "fastroute serve: JSON-lines-over-stdio router protocol server (claude-pcb-rules router protocol 1.x)"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+fr-dsn = { path = "../fr-dsn" }
+fr-io = { path = "../fr-io" }
+fr-engine = { path = "../fr-engine" }
+fr-geom = { path = "../fr-geom" }
+fr-settings = { path = "../fr-settings" }
+log = "0.4"
+serde_json = "1"

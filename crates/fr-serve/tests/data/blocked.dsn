@@ -1,0 +1,87 @@
+(pcb blocked.dsn
+  (parser
+    (string_quote ")
+    (space_in_quoted_tokens on)
+    (host_cad "KiCad's Pcbnew")
+    (host_version "10.0.5")
+  )
+  (resolution um 10)
+  (unit um)
+  (structure
+    (layer F.Cu
+      (type signal)
+      (property
+        (index 0)
+      )
+    )
+    (layer B.Cu
+      (type signal)
+      (property
+        (index 1)
+      )
+    )
+    (boundary
+      (path pcb 0  30000 -25000  10000 -25000  10000 -10000  30000 -10000
+            30000 -25000)
+    )
+    (via "Via[0-1]_600:300_um")
+    (rule
+      (width 152.4)
+      (clearance 152.4)
+      (clearance 38.1 (type smd_smd))
+    )
+  )
+  (placement
+    (component "R_0603"
+      (place R1 14000 -14000 front 0 (PN 1k))
+      (place R2 26000 -14000 front 0 (PN 1k))
+      (place R3 14000 -21000 front 90 (PN 1k))
+      (place R4 26000 -21000 front 0 (PN 1k))
+    )
+  )
+  (library
+    (image "R_0603"
+      (outline (polygon signal 0  1475 -725  -1475 -725  -1475 725  1475 725))
+      (pin RoundRect[T]Pad_800.000000x950.000000_200.761000_um_0.000000_0 1 -825 0)
+      (pin RoundRect[T]Pad_800.000000x950.000000_200.761000_um_0.000000_0 2 825 0)
+    )
+    (padstack RoundRect[T]Pad_800.000000x950.000000_200.761000_um_0.000000_0
+      (shape (polygon F.Cu 0  -400 475  400 475  400 -475  -400 -475))
+      (attach off)
+    )
+    (padstack "Via[0-1]_600:300_um"
+      (shape (circle F.Cu 600))
+      (shape (circle B.Cu 600))
+      (attach off)
+    )
+  )
+  (network
+    (net N1
+      (pins R1-2 R2-1)
+    )
+    (net N2
+      (pins R1-1 R3-1)
+    )
+    (net N3
+      (pins R2-2 R4-2)
+    )
+    (net N4
+      (pins R3-2 R4-1)
+    )
+    (net GUARD
+    )
+    (class kicad_default N1 N2 N3 N4 GUARD
+      (circuit
+        (use_via "Via[0-1]_600:300_um")
+      )
+      (rule
+        (width 152.4)
+        (clearance 152.4)
+      )
+    )
+  )
+  (wiring
+    (wire (path F.Cu 152.4  24225 -22050  26125 -22050  26125 -19950  24225 -19950  24225 -22050)(net GUARD)(type fix))
+    (wire (path B.Cu 152.4  24225 -22050  26125 -22050  26125 -19950  24225 -19950  24225 -22050)(net GUARD)(type fix))
+  )
+)

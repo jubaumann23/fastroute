@@ -787,6 +787,10 @@ static GLOBAL: dhat::Alloc = dhat::Alloc;
 fn main() -> ExitCode {
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
+    // `fastroute serve`: the stdio router protocol server (crates/fr-serve)
+    if std::env::args().nth(1).as_deref() == Some("serve") {
+        return fr_serve::run();
+    }
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
