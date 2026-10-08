@@ -53,6 +53,19 @@ impl LockRegistry {
         self.nets.iter().any(|n| n == name)
     }
 
+    /// True if the trace or via with this id is locked (by id; see also [`Self::is_locked_net`]).
+    pub fn is_locked_wire(&self, id: i32) -> bool {
+        self.wires.contains(&id)
+    }
+
+    /// Forgets locks released by a `move` with `unlock: true`: the nets and the wiring item ids.
+    pub fn release(&mut self, nets: &[String], ids: &[i32]) {
+        self.nets.retain(|n| !nets.contains(n));
+        for id in ids {
+            self.wires.remove(id);
+        }
+    }
+
     /// Locked wiring items.
     pub fn locked_wire_count(&self) -> usize {
         self.wires.len()

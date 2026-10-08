@@ -142,6 +142,7 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
         }
     }
     if scratch {
+        // the router marks the pad stubs it creates shove-fixed; a DSN's own fixed wiring is `SystemFixed`
         let b = &mut work.board.board;
         let keys: Vec<_> = b
             .get_items()
@@ -149,7 +150,7 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
             .filter(|&k| {
                 let it = b.item(k);
                 (it.is_trace() || it.is_via())
-                    && it.fixed_state() == FixedState::Unfixed
+                    && matches!(it.fixed_state(), FixedState::Unfixed | FixedState::ShoveFixed)
                     && (routable.is_none() || it.net_numbers().iter().any(|&n| allowed(n)))
             })
             .collect();

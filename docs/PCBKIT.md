@@ -102,8 +102,23 @@ byte-identical to upstream (`pcbkit-ab.sh` proves it).
 | H0 serve dispatch | `crates/fastroute/src/main.rs:790-793`, `crates/fastroute/Cargo.toml:14` | 4 + 1 | `serve` subcommand only | route `fastroute serve` to the server crate |
 | H0 dep | `crates/fr-engine/Cargo.toml:17-18` | 2 | dev-dependency only | `fr-io` dev-dep for the pcbkit hook tests |
 | H1 move | `crates/fr-engine/src/board/basic_board.rs:1049-1103` (`place_component`), `crates/fr-engine/src/structure/component.rs:95-101` (`Component::set_pose`), `:286-291` (`Components::set_pose`) | 55 + 7 + 6 | via protocol `move` only | apply part moves to the loaded board |
+| H1b rigid wiring move | `crates/fr-engine/src/board/basic_board.rs:1049-1066` (`turn_translate_wiring`) | 18 | via protocol `move` (`carry: fixed`) only | turn a fixed trace/via by k*90 degrees about the old part origin and translate it, in place (same id), so plane fan-out follows its part |
 | H2b keep-fixed-on-split | `crates/fr-engine/src/board/basic_board.rs:74-75` (field `keep_fixed_on_split`), `:177` (init), `crates/fr-engine/src/board/shape_trace_entries.rs:92-96`, `crates/fr-engine/src/board/trace_ops.rs:548-558` | 2 + 1, 3, 5 | via protocol locks only | locked wires survive trace splitting. CAVEAT: upstream `remove_item` refuses UserFixed items, so a cut-out on a UserFixed parent leaves the parent and adds UserFixed duplicate pieces; locking must not cut out locked traces. |
 | H3 blockers | `crates/fr-engine/src/autoroute/control.rs` (`collect_blockers`, `AutorouteAttemptResult.blockers`), `crates/fr-engine/src/autoroute/engine.rs` (`blockers` field), `crates/fr-engine/src/autoroute/router.rs` (`autoroute_connection` wrapper), `crates/fr-engine/src/autoroute/maze.rs` (`note_blocker`, `note_wall_blockers` + 5 call sites), `crates/fr-engine/src/pipeline/autorouter.rs` (`BatchAutorouter::route_connection_alone`), test data `crates/fr-engine/tests/data/blocked.dsn` | ~75 | `ctrl.collect_blockers` (default false); only an extra push, no change to order, costs or RNG | report which items block a connection. Fixed items (pads, locked wires, keepouts) have no expansion room, so `note_wall_blockers` queries the tree for fixed items touching each expanded free room; rippable-item obstacles are recorded where `check_ripup` is negative. |
 | H5 order seed | `crates/fr-engine/src/board/routing_board.rs:219-220` (`order_seed` field), `:268` (init), `crates/fr-engine/src/pipeline/mod.rs:187-190` (`run_pipeline`), `:276-280` (`multi_start`) | 2 + 1 + 4 + 5 (1 replaced) | seed unset = upstream order | deterministic net order per request seed |
 | H6 net mask | `crates/fr-engine/src/board/routing_board.rs:221-222` (`route_nets` field), `:269` (init), `crates/fr-engine/src/pipeline/autorouter.rs:253-258`, `crates/fr-engine/src/pipeline/fanout.rs:92-96` | 2 + 1 + 6 + 5 | mask unset = all nets | route only a subset of nets |
 | T1 test-only | `scripts/parity-route.sh` (lines 15-21, 26, 28, 57, 59-60), `crates/fr-jcompat/tests/jdk_vectors.rs:293-320` | 17 and 16 | n/a | Linux support, see above |
+
+## Serve `move` semantics (capability `move`, `crates/fr-serve/src/ops/move_.rs`)
+
+* Rip set: traces and vias of the router (`Unfixed`, and `ShoveFixed`, which is what the router marks the pad stubs it creates; a
+  DSN states its own fixed wiring as `fix` = `SystemFixed`) reached from a moved part's pads through same-net copper overlap
+  (`all_contacts`, never through another pad). Locked = `UserFixed` or a locked net.
+* Carry (`carry: fixed`, default): `SystemFixed` traces/vias connected to the part's pads whose connected island touches only
+  that part's pads and planes move rigidly (turn by the rotation delta about the old origin, then translate). Only a delta
+  that is a multiple of 90 degrees carries; any other island stays put. Other `SystemFixed` wiring never moves.
+* `route.from = "scratch"` also removes `ShoveFixed` router stubs (otherwise a scratch route depended on the previous route).
+* Fidelity: move then `route scratch` equals a fresh load of the DSN with the edited place record then `route`
+  (`crates/fastroute/tests/serve_move.rs`, tiny and two corpus boards, with `carry: none`: a reload leaves DSN-fixed wiring behind).
+* Protocol coordinates are DSN resolution units: `board = round(units / resolution * scale)`; a pose from an SES place record
+  round-trips exactly.
