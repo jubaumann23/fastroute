@@ -34,6 +34,14 @@ pub fn source_bytes(v: &Value, what: &str) -> R<Vec<u8>> {
     }
 }
 
+/// The session name the stock CLI would write: the file stem of the DSN path (`main.rs` design_name),
+/// or, for inline text, the file stem of the DSN's pcb name.
+fn session_name(v: &Value, dsn: &Dsn) -> String {
+    let from_path = v.get("path").and_then(Value::as_str);
+    let source = from_path.unwrap_or(dsn.name.as_str());
+    std::path::Path::new(source).file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
 fn bad_dsn(line: u32, reason: String) -> ProtoError {
     ProtoError::new("bad_dsn", format!("line {line}: {reason}")).with_details(json!({ "line": line, "reason": reason }))
 }
@@ -75,10 +83,12 @@ fn unit_name(u: fr_dsn::model::Unit) -> &'static str {
 /// session import and release :432-448, outline wiring :449-456, post-load processing :457-475
 /// (enhancements on, not `--parity`), and the time limits of `--no-time-limits` :486-494 (count mode,
 /// the default factor: deterministic, never the wall clock).
-fn build(session: &Session, data: &[u8], dsn: &Dsn, ses: Option<&[u8]>) -> R<Board> {
+fn build(session: &Session, data: &[u8], dsn: &Dsn, ses: Option<&[u8]>, name: String) -> R<Board> {
     let procs = available_processors();
     let dsn_settings = DsnFileSettings::from_dsn(dsn);
-    let env = EnvironmentSettings::from_process_env();
+    // Hermetic (SPEC 7): no FREEROUTING__ROUTER__* environment source, so results depend only on the
+    // build, the hello settings and the inputs.
+    let env = EnvironmentSettings::default();
     let mut settings = headless_merger(&session.settings().cli, &env, Some(&dsn_settings), None, procs).merge(procs);
 
     let mut board = fr_io::post_load::load_from_specctra_dsn(data, &mut settings)
@@ -103,7 +113,7 @@ fn build(session: &Session, data: &[u8], dsn: &Dsn, ses: Option<&[u8]>) -> R<Boa
         mode: TimeLimitMode::Count { factor: fr_engine::datastructures::time_limit::DEFAULT_COUNT_FACTOR },
         fired: Some(Arc::new(AtomicBool::new(false))),
     };
-    Ok(Board { name: dsn.name.clone(), board, settings })
+    Ok(Board { name, board, settings })
 }
 
 pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
@@ -118,7 +128,8 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     if let Some(s) = &ses_bytes {
         check_ses(s)?;
     }
-    let loaded = build(session, &dsn_bytes, &dsn, ses_bytes.as_deref())?;
+    let name = session_name(&args["dsn"], &dsn);
+    let loaded = build(session, &dsn_bytes, &dsn, ses_bytes.as_deref(), name)?;
     let result = describe(&loaded.board, &dsn);
     // `load` replaces the board and drops locks and snapshots.
     session.board = Some(loaded);

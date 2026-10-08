@@ -246,39 +246,26 @@ fn export_to_path_matches_inline_and_budget_reports() {
 
 // ------------------------------------------------------------------------------ stock equivalence
 
-/// The pcb name of a DSN file (its first token after `(pcb`).
-fn pcb_name(dsn: &str) -> String {
-    let rest = dsn[dsn.find("(pcb").expect("(pcb header") + 4..].trim_start();
-    if let Some(q) = rest.strip_prefix('"') {
-        q[..q.find('"').unwrap()].to_string()
-    } else {
-        rest.split(|c: char| c.is_whitespace() || c == ')' || c == '(').next().unwrap().to_string()
-    }
-}
-
-/// Runs the stock CLI on `dsn` (copied to a file whose stem is the pcb name, as the session name is
-/// the file stem) and returns the SES text.
+/// Runs the stock CLI directly on `dsn` (the session is named after the file stem) with the
+/// `FREEROUTING__ROUTER__*` environment removed, and returns the SES text.
 fn stock_ses(dsn: &Path, threads: u32, extra: &[String]) -> Option<String> {
-    let text = std::fs::read_to_string(dsn).unwrap();
     static CALLS: AtomicUsize = AtomicUsize::new(0);
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
-        .join(format!("serve-stock-{}-{}", std::process::id(), CALLS.fetch_add(1, Ordering::SeqCst)));
-    std::fs::create_dir_all(&dir).unwrap();
-    let input = dir.join(format!("{}.dsn", pcb_name(&text)));
-    let output = dir.join("out.ses");
-    std::fs::write(&input, &text).unwrap();
+    let output = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("serve-stock-{}-{}.ses", std::process::id(), CALLS.fetch_add(1, Ordering::SeqCst)));
     let _ = std::fs::remove_file(&output);
-    let status = Command::new(BIN)
-        .args(["-de", input.to_str().unwrap(), "-do", output.to_str().unwrap(), "--no-time-limits"])
+    let mut cmd = Command::new(BIN);
+    cmd.args(["-de", dsn.to_str().unwrap(), "-do", output.to_str().unwrap(), "--no-time-limits"])
         .arg(format!("--router.autorouter.max_threads={threads}"))
         .arg(format!("--router.optimizer.max_threads={threads}"))
         .args(extra)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .unwrap();
+        .stderr(Stdio::null());
+    for (k, _) in std::env::vars().filter(|(k, _)| k.to_uppercase().starts_with("FREEROUTING__ROUTER__")) {
+        cmd.env_remove(k);
+    }
+    let status = cmd.status().unwrap();
     let ses = status.success().then(|| std::fs::read_to_string(&output).unwrap());
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&output);
     ses
 }
 
@@ -351,4 +338,65 @@ fn hello_reports_applied_settings() {
     assert_eq!(h["settings"]["applied"]["router.min_trace_width_um"], "100");
     assert_eq!(h["settings"]["unknown"], json!([]));
     s.finish();
+}
+
+/// A copy of tiny.dsn whose `(pcb ..)` is an absolute path, as toolkit DSNs have.
+fn absolute_name_dsn() -> PathBuf {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("serve-abs-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let text = std::fs::read_to_string(serve_data("tiny.dsn")).unwrap();
+    assert!(text.starts_with("(pcb tiny.dsn"));
+    let abs = dir.join("some_board.kicad_pcb");
+    let out = dir.join("board.dsn");
+    std::fs::write(&out, text.replacen("(pcb tiny.dsn", &format!("(pcb {}", abs.display()), 1)).unwrap();
+    out
+}
+
+#[test]
+fn ses_equals_stock_with_absolute_pcb_name() {
+    let dsn = absolute_name_dsn();
+    for threads in [1, 2] {
+        let serve = serve_ses(&dsn, threads, json!({})).expect("serve loads it");
+        let stock = stock_ses(&dsn, threads, &[]).expect("stock routes it");
+        assert!(serve.starts_with("(session board"), "{}", &serve[..60]);
+        assert_eq!(serve, stock, "threads {threads}");
+    }
+}
+
+#[test]
+fn text_load_names_the_session_after_the_pcb_name_stem() {
+    let mut s = Server::start();
+    s.hello(1, json!({}));
+    let text = std::fs::read_to_string(absolute_name_dsn()).unwrap();
+    let l = s.ok("load", json!({ "dsn": { "text": text } }));
+    assert!(l["name"].as_str().unwrap().ends_with("some_board.kicad_pcb"), "{l}");
+    s.ok("route", json!({ "seed": 0, "from": "scratch" }));
+    let ses = s.ses();
+    let first = ses.lines().next().unwrap();
+    assert!(first == "(session \"some_board\"", "{first}");
+    s.finish();
+}
+
+#[test]
+fn environment_does_not_change_serve_results() {
+    let run = |env: &[(&str, &str)]| {
+        let mut s = Server::start_with(env);
+        s.hello(1, json!({}));
+        s.ok("load", json!({ "dsn": path(&serve_data("blocked.dsn")) }));
+        let r = s.ok("route", json!({ "seed": 0, "from": "scratch" }));
+        let ses = s.ses();
+        s.finish();
+        (stable(r), ses)
+    };
+    let plain = run(&[]);
+    let with_env = run(&[("FREEROUTING__ROUTER__AUTOROUTER__MAX_PASSES", "1")]);
+    assert_eq!(plain, with_env);
+    assert_eq!(sha(&plain.1), sha(&with_env.1));
+}
+
+fn sha(s: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    format!("{:016x}", h.finish())
 }
