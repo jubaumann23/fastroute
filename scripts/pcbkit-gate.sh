@@ -72,7 +72,9 @@ fi
 
 # 3. protocol conformance.
 BIN=$ROOT/target/release/fastroute
-if "$BIN" serve --help >/dev/null 2>&1 && "$BIN" --help 2>&1 | grep -q 'serve'; then
+# `serve` is not listed in --help; a binary with serve exits 0 on an empty stdin, one
+# without it rejects `serve` as a CLI argument.
+if "$BIN" serve </dev/null >/dev/null 2>&1; then
   if [ ! -f "$CONF" ]; then
     row conformance FAIL "runner missing: $CONF"
   else
