@@ -134,3 +134,24 @@ byte-identical to upstream (`pcbkit-ab.sh` proves it).
   (`crates/fastroute/tests/serve_move.rs`, tiny and two corpus boards, with `carry: none`: a reload leaves DSN-fixed wiring behind).
 * Protocol coordinates are DSN resolution units: `board = round(units / resolution * scale)`; a pose from an SES place record
   round-trips exactly.
+
+## Serve `route` from scratch is placement-pure (`crates/fr-serve/src/load.rs` `rebuild_for_scratch`)
+
+* Contract (SPEC 7): `route` with `from: "scratch"` and all nets returns what a fresh `load` of the same placement plus one
+  scratch route returns, whatever the session did before (earlier routes, other seeds, moves, locks).
+  Tests: `crates/fastroute/tests/serve_scratch_fidelity.rs` (tiny, det/hb200, det/energy-12-1, threads 1 and 2).
+* Why ripping in place is not enough: after the rip the items (ids, kinds, fixed states), the settings, the rules and the
+  components equal a fresh load's (checked on hb200), yet the route differs (hb200: 619 wires against 595). The rest is private
+  `BasicBoard`/`RoutingBoard` state that history leaves behind (search trees, `undo`/`revision`, the trace half width
+  watermarks `min/max_trace_half_width`, `basic_board.rs:513-514`, which only ever widen). Setting the watermarks and the id
+  generator back did not change the result, so the residue is in the trees or journals; it is not isolated further.
+* So scratch rebuilds: the session keeps the `load` inputs (`Origin`: DSN bytes, initial SES, `lock_initial`) and the arguments of
+  every successful `move` (`Board::moves`). A scratch route with all nets builds a new board from the inputs, replays the moves
+  (`unlock: true`, as the live moves did; DSN-fixed fan-out is carried exactly as before), re-inserts the locked wiring
+  (`ops/lock.rs` `carry_locked_wiring`: new items under the ids they had, so `lock {wires:[id]}` keeps naming them), and raises
+  the id generator to the live maximum (ids are never reused, SPEC 4). Then the usual rip of `Unfixed`/`ShoveFixed` wiring runs.
+  No core change and no ledger row.
+* `route` with a net list and `from: "scratch"` stays in place: it keeps the other nets' wiring by definition, so it depends on
+  the session.
+* Locked wiring is the lock registry's `UserFixed` wiring, not DSN `fix` wires: the two route the other nets differently, so a
+  board with `fix` wires is not a reference for a locked one.

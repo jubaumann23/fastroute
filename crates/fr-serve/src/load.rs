@@ -13,7 +13,7 @@ use serde_json::{json, Map, Value};
 use crate::facts;
 use crate::ops::lock::LockRegistry;
 use crate::proto::{as_bool, as_obj, as_str, check_keys, req, ProtoError, R};
-use crate::session::{Board, Session};
+use crate::session::{Board, Origin, Session, Work};
 
 /// Bytes named by `{"path": ..}` or `{"text": ..}` (exactly one).
 pub fn source_bytes(v: &Value, what: &str) -> R<Vec<u8>> {
@@ -116,7 +116,8 @@ fn build(session: &Session, data: &[u8], dsn: &Dsn, ses: Option<&[u8]>, name: St
         fired: Some(Arc::new(AtomicBool::new(false))),
     };
     let locks = LockRegistry::after_load(&mut board, &own, lock_initial);
-    Ok((Board { name, board, settings }, locks))
+    let origin = Arc::new(Origin { dsn: data.to_vec(), ses: ses.map(<[u8]>::to_vec), lock_initial });
+    Ok((Board { origin, moves: Vec::new(), name, board, settings }, locks))
 }
 
 pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
@@ -136,6 +137,44 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     session.locks = locks;
     session.snapshots.clear();
     Ok(result)
+}
+
+/// Replaces the working board by what a fresh `load` of the session's inputs gives, with the session's
+/// placement and locked wiring put back: the state `route` from scratch starts from.
+///
+/// Ripping up wiring in place does not restore the board. Items, ids, settings, rules and components
+/// of a ripped board equal a fresh load's, yet routing it differs (hb200: 619 wires against 595), so
+/// the residue sits in the board's private search trees and watermarks that history leaves behind.
+/// The rebuild replays the successful `move`s (carrying DSN-fixed fan-out as they did), re-inserts the
+/// locked wiring and raises the id generator to the live maximum (ids are never reused, SPEC 4).
+pub fn rebuild_for_scratch(session: &Session, work: &mut Work) -> R<()> {
+    use fr_engine::datastructures::{IdGenerator, ItemIdGenerator};
+    let origin = work.board.origin.clone();
+    let dsn = parse_dsn(&origin.dsn)?;
+    let name = work.board.name.clone();
+    let (fresh, fresh_locks) = build(session, &origin.dsn, &dsn, origin.ses.as_deref(), name, origin.lock_initial)?;
+    let mut replay = Session::new();
+    replay.hello = session.hello.clone();
+    replay.board = Some(fresh);
+    replay.locks = fresh_locks;
+    for args in &work.board.moves {
+        let mut args = args.clone();
+        args.insert("unlock".into(), Value::Bool(true));
+        crate::ops::move_::handle(&mut replay, &args)
+            .map_err(|e| ProtoError::new("internal", format!("scratch rebuild: replaying a move failed: {}", e.message)))?;
+    }
+    let (mut board, mut locks) = (replay.board.take().expect("replay holds a board"), replay.locks);
+
+    let live_max = work.board.board.communication.id_generator.max_generated_id();
+    crate::ops::lock::carry_locked_wiring(&work.board.board, &work.locks, &mut board.board, &mut locks);
+    let gen = &mut board.board.communication.id_generator;
+    if gen.max_generated_id() < live_max {
+        *gen = ItemIdGenerator::with_last_generated_id(live_max);
+    }
+    board.moves = std::mem::take(&mut work.board.moves);
+    work.board = board;
+    work.locks = locks;
+    Ok(())
 }
 
 /// The `load` result for a prepared board.

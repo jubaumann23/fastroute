@@ -101,6 +101,10 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     let budget_ms = args.get("budget_ms").map(|v| as_int(v, 0, i64::MAX, "route.budget_ms")).transpose()?.unwrap_or(0);
 
     let mut work = session.begin()?;
+    if scratch && listed.is_none() {
+        // placement-pure: the same board a fresh load of this placement gives (docs/PCBKIT.md, "route from scratch")
+        crate::load::rebuild_for_scratch(session, &mut work)?;
+    }
     // Net numbers that may change in this request: the listed nets (all known, none locked-out),
     // or every net but the locked ones.
     let numbers = net_numbers(&work.board.board);

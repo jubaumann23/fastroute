@@ -8,9 +8,20 @@ use crate::ops::lock::LockRegistry;
 use crate::proto::{ProtoError, R};
 use crate::settings::SessionSettings;
 
+/// The inputs a board was built from; `route` from scratch rebuilds the board from them.
+pub struct Origin {
+    pub dsn: Vec<u8>,
+    pub ses: Option<Vec<u8>>,
+    pub lock_initial: bool,
+}
+
 /// A loaded board and what it was built with.
 #[derive(Clone)]
 pub struct Board {
+    /// What `load` was given (shared by the clones of snapshots and working copies).
+    pub origin: std::sync::Arc<Origin>,
+    /// Arguments of every successful `move` since `load`, in order (replayed by a rebuild).
+    pub moves: Vec<serde_json::Map<String, serde_json::Value>>,
     /// The SES session name: the stock CLI's (file stem of the DSN path; for a text load, of the pcb name).
     pub name: String,
     pub board: RoutingBoard,

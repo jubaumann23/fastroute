@@ -247,6 +247,7 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
         b.place_component(m.no, m.new_loc, m.new_rot, m.front).map_err(|e| ProtoError::bad_request(format!("{}: {e}", m.name)))?;
     }
 
+    work.board.moves.push(args.clone());
     let (_, unrouted) = facts::connections(&work.board.board);
     let result = json!({
         "moved": moves.len(),

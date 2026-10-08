@@ -153,6 +153,35 @@ impl LockRegistry {
     }
 }
 
+/// Puts the locked wiring of `live` on `fresh` (a rebuilt board): the nets, the flag of hook H2b and the
+/// locked traces and vias themselves, as new items with the ids they had (the id generator is left
+/// below the highest of them: the caller raises it). Whatever `fresh` locked on its own (a session imported with
+/// `lock_initial`) is dropped first: `live` decides what is still locked.
+pub(crate) fn carry_locked_wiring(live: &BasicBoard, live_locks: &LockRegistry, fresh: &mut RoutingBoard, fresh_locks: &mut LockRegistry) {
+    let stale: Vec<_> = fresh.get_items().into_iter().filter(|&k| is_wiring(fresh, k) && fresh_locks.wires.contains(&fresh.item(k).id().0)).collect();
+    for &k in &stale {
+        fresh.item_mut(k).set_fixed_state(FixedState::Unfixed);
+    }
+    fresh.remove_items(stale);
+    fresh.keep_fixed_on_split = live.keep_fixed_on_split;
+    fresh_locks.nets = live_locks.nets.clone();
+    let locked: Vec<_> = live.get_items().into_iter().filter(|&k| is_wiring(live, k) && live_locks.wires.contains(&live.item(k).id().0)).collect();
+    // the item list puts the newest item first: insert oldest first so the export keeps the live order
+    use fr_engine::datastructures::ItemIdGenerator;
+    for &k in locked.iter().rev() {
+        let it = live.item(k);
+        // the item keeps its id: clients name locked wires by id across routes. Ids of the rebuilt board
+        // and the live one agree below the locked wiring's, so none is taken twice.
+        fresh.communication.id_generator = ItemIdGenerator::with_last_generated_id(it.id().0 - 1);
+        if let Some(via) = it.as_via() {
+            fresh.insert_via(via.padstack_no(), it.center(live), it.net_numbers(), it.clearance_class(), FixedState::UserFixed, via.attach_allowed);
+        } else if let Some(t) = it.as_trace() {
+            fresh.insert_trace_without_cleaning(t.polyline().clone(), t.layer(), t.half_width(), it.net_numbers(), it.clearance_class(), FixedState::UserFixed);
+        }
+    }
+    fresh_locks.reconcile(fresh);
+}
+
 pub(crate) fn user_fixed_wiring(board: &BasicBoard) -> BTreeSet<i32> {
     board
         .get_items()
