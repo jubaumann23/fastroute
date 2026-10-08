@@ -2,6 +2,9 @@
 //! stdin/stdout, docs/router-protocol/SPEC.md in that repository). One request line, one response
 //! line; logs go to stderr only. All protocol logic lives in this crate; the CLI only dispatches
 //! `fastroute serve` here.
+//!
+//! Hermetic: the `FREEROUTING__ROUTER__*` environment is NOT read (SPEC 7); only the hello settings
+//! and the DSN's own settings reach the router, so the cache key covers every input.
 
 mod facts;
 mod load;

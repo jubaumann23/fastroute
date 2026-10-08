@@ -11,7 +11,7 @@ use crate::settings::SessionSettings;
 /// A loaded board and what it was built with.
 #[derive(Clone)]
 pub struct Board {
-    /// The DSN's pcb name (also the SES name).
+    /// The SES session name: the stock CLI's (file stem of the DSN path; for a text load, of the pcb name).
     pub name: String,
     pub board: RoutingBoard,
     /// Merged router settings of this board (CLI source, environment, the DSN's own).
