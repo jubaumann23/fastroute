@@ -71,6 +71,8 @@ pub struct BasicBoard {
     pub(crate) search_trees: SearchTreeManager,
     pub(crate) normalize_suppressed_net_nos: BTreeSet<NetNo>,
     pub(crate) revision: i32,
+    /// pcbkit hook H2b: pieces of a split trace inherit the parent's fixed state (default off).
+    pub keep_fixed_on_split: bool,
     max_trace_half_width: i32,
     min_trace_half_width: i32,
     pub pre_existing_clearance_violations_count: i32,
@@ -172,6 +174,7 @@ impl BasicBoard {
             search_trees: SearchTreeManager::default(),
             normalize_suppressed_net_nos: BTreeSet::new(),
             revision: 0,
+            keep_fixed_on_split: false,
             max_trace_half_width: 1000,
             min_trace_half_width: 10000,
             pre_existing_clearance_violations_count: 0,
@@ -1041,6 +1044,61 @@ impl BasicBoard {
         if self.item(key).is_pin() {
             self.invalidate_edge_pin_net_cache();
         }
+    }
+
+    /// pcbkit hook H1: moves/rotates a placed component to a new pose on its current side.
+    ///
+    /// Updates the component record, then re-derives every item of the component (pins,
+    /// keepouts incl. via/place keepouts, component outlines) and re-inserts it into the
+    /// search trees. The result equals loading a DSN whose place record has the new pose. It
+    /// does NOT rip up wiring (the caller does). A side change is refused (protocol 1.0).
+    pub fn place_component(&mut self, no: ComponentNo, location: fr_geom::IntPoint, rotation_deg: f64, front: bool) -> Result<(), String> {
+        if no <= 0 || no > self.components.count() {
+            return Err(format!("place_component: no such component {no}"));
+        }
+        let component = self.components.get(no);
+        if !component.is_placed() {
+            return Err(format!("place_component: component {no} is not placed"));
+        }
+        if component.placed_on_front() != front {
+            return Err(format!("place_component: side change of component {no} is not supported"));
+        }
+        let keys = self.get_component_items(no);
+        for key in &keys {
+            self.save_for_undo(*key);
+            self.tree_remove(*key);
+        }
+        let location = Point::Int(location);
+        let translation = location.difference_by(&Point::ZERO);
+        Arc::make_mut(&mut self.components).set_pose(no, location, rotation_deg);
+        for key in &keys {
+            {
+                let item = self.items.get_mut(*key);
+                match &mut item.kind {
+                    ItemKind::ObstacleArea(a) => {
+                        a.translation = translation.clone();
+                        a.rotation_in_degree = rotation_deg;
+                    }
+                    ItemKind::ConductionArea(c) => {
+                        c.area.translation = translation.clone();
+                        c.area.rotation_in_degree = rotation_deg;
+                    }
+                    ItemKind::ComponentOutline(o) => {
+                        o.translation = translation.clone();
+                        o.rotation_in_degree = rotation_deg;
+                    }
+                    _ => {}
+                }
+                item.reset_pin_center();
+            }
+            self.clear_derived_data(*key);
+        }
+        for key in &keys {
+            self.tree_insert(*key);
+        }
+        self.increment_revision();
+        self.invalidate_edge_pin_net_cache();
+        Ok(())
     }
 
     // ------------------------------------------------------------------------------------------

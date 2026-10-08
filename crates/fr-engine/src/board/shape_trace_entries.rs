@@ -89,9 +89,11 @@ impl BasicBoard {
             self.fast_cutout_trace(trace, start, end);
         } else {
             let (half_width, nets, cl) = (item.trace().half_width(), item.net_numbers().to_vec(), item.clearance_class());
+            // pcbkit hook H2b: pieces keep the parent's fixed state when the flag is on
+            let piece_fixed = if self.keep_fixed_on_split { item.fixed_state() } else { FixedState::Unfixed };
             self.remove_item(trace);
             for piece in pieces {
-                self.insert_trace_without_cleaning_tracked(piece, layer, half_width, &nets, cl, FixedState::Unfixed);
+                self.insert_trace_without_cleaning_tracked(piece, layer, half_width, &nets, cl, piece_fixed);
             }
         }
     }

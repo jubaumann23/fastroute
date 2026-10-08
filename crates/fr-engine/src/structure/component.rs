@@ -92,6 +92,13 @@ impl Component {
         self.on_front
     }
 
+    // pcbkit hook H1
+    /// pcbkit hook H1: sets the pose (location and rotation) without touching the side.
+    pub fn set_pose(&mut self, location: Point, rotation_in_degree: f64) {
+        self.location = Some(location);
+        self.rotation_in_degree = normalize_rotation(rotation_in_degree);
+    }
+
     /// Translates the location (the pins on the board must be moved separately).
     pub fn translate_by(&mut self, vector: &Vector) {
         if let Some(location) = &self.location {
@@ -274,6 +281,12 @@ impl Components {
     /// All components in id order.
     pub fn get_all(&self) -> std::slice::Iter<'_, Component> {
         self.component_arr.iter()
+    }
+
+    /// pcbkit hook H1: sets the pose of a component (the items on the board must be updated
+    /// by the caller, see `BasicBoard::place_component`).
+    pub fn set_pose(&mut self, component_id: ComponentNo, location: Point, rotation_in_degree: f64) {
+        self.get_mut(component_id).set_pose(location, rotation_in_degree);
     }
 
     /// Moves the component with the given id (Java `move`).
