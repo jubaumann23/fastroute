@@ -26,6 +26,12 @@ impl LockRegistry {
         self.nets.iter().any(|n| n == name)
     }
 
+    /// Forgets locks released by a `move` with `unlock: true`: the nets and `items` wiring items.
+    pub fn release(&mut self, nets: &[String], items: usize) {
+        self.nets.retain(|n| !nets.contains(n));
+        self.wires = self.wires.saturating_sub(items);
+    }
+
     /// Locked wiring items.
     pub fn locked_wire_count(&self) -> usize {
         self.wires

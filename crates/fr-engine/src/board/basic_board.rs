@@ -1046,6 +1046,25 @@ impl BasicBoard {
         }
     }
 
+    /// pcbkit hook H1b: rigidly moves a trace or via in place (same id): turns it by `factor`
+    /// times 90 degrees around `pole`, then translates it by `vector`.
+    pub fn turn_translate_wiring(&mut self, key: ItemKey, factor: i32, pole: &fr_geom::IntPoint, vector: &Vector) {
+        self.save_for_undo(key);
+        self.tree_remove(key);
+        match &mut self.items.get_mut(key).kind {
+            ItemKind::Trace(t) => {
+                t.polyline = t.polyline.turn_90_degree(factor, pole).translate_by(vector);
+                t.line_ids = super::optimize::tracked::fresh_line_ids(t.polyline.lines.len());
+            }
+            ItemKind::Via(v) => v.center = v.center.turn_90_degree(factor, &Point::Int(*pole)).translate_by(vector),
+            _ => {}
+        }
+        self.items.get_mut(key).clear_derived_data();
+        self.clear_derived_data(key);
+        self.tree_insert(key);
+        self.increment_revision();
+    }
+
     /// pcbkit hook H1: moves/rotates a placed component to a new pose on its current side.
     ///
     /// Updates the component record, then re-derives every item of the component (pins,
