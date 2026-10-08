@@ -12,13 +12,20 @@ set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DSN=$1; OUT=$2; shift 2
 mkdir -p "$OUT"
+# macOS: time -l (RSS in bytes). GNU time (Linux): -f prints the same two line shapes (RSS in kB).
+if /usr/bin/time -l true >/dev/null 2>&1; then
+  TIMECMD="/usr/bin/time -l"; RSS_DIV=1048576
+else
+  TIMECMD="/usr/bin/time -f %e_real\n%M_maximum_resident_set_size"; RSS_DIV=1024
+fi
+export RSS_DIV
 NAME=$(basename "$DSN" .dsn)
 FASTROUTE=${FASTROUTE:-${CARGO_TARGET_DIR:-$ROOT/target}/release/fastroute}
 
 if [ "${SKIP_JAVA:-0}" != 1 ] || [ ! -f "$OUT/$NAME.java.ses" ]; then
-  /usr/bin/time -l "$ROOT/scripts/java-parity.sh" "$DSN" "$OUT/$NAME.java.ses" "$@" > "$OUT/$NAME.java.log" 2>&1
+  $TIMECMD "$ROOT/scripts/java-parity.sh" "$DSN" "$OUT/$NAME.java.ses" "$@" > "$OUT/$NAME.java.log" 2>&1
 fi
-/usr/bin/time -l "$FASTROUTE" -de "$DSN" -do "$OUT/$NAME.rust.ses" --parity "$@" > "$OUT/$NAME.rust.log" 2>&1
+$TIMECMD "$FASTROUTE" -de "$DSN" -do "$OUT/$NAME.rust.ses" --parity "$@" > "$OUT/$NAME.rust.log" 2>&1
 
 python3 - "$OUT/$NAME" <<'EOF'
 import re, sys
@@ -47,10 +54,10 @@ def passes(path):
 def usage(path):
     real = rss = None
     for line in open(path, errors="replace"):
-        m = re.match(r"\s*([0-9.]+) real", line)
+        m = re.match(r"\s*([0-9.]+)[ _]real", line)
         if m: real = float(m.group(1))
-        m = re.match(r"\s*(\d+)\s+maximum resident set size", line)
-        if m: rss = int(m.group(1)) / 1048576
+        m = re.match(r"\s*(\d+)[\s_]+maximum[\s_]+resident[\s_]+set[\s_]+size", line)
+        if m: rss = int(m.group(1)) / float(__import__("os").environ.get("RSS_DIV", "1048576"))
     return real, rss
 j, r = passes(base + ".java.log"), passes(base + ".rust.log")
 sj = open(base + ".java.ses", "rb").read() if __import__("os").path.exists(base + ".java.ses") else b""
