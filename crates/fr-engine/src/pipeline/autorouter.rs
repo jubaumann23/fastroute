@@ -10,7 +10,7 @@ use std::time::Instant;
 use fr_settings::{ExpansionCostFactor, RouterSettings};
 
 use crate::autoroute::router::{route_connection, ConnectionRouterParams};
-use crate::autoroute::AutorouteAttemptResult;
+use crate::autoroute::{AutorouteAttemptResult, AutorouteControl};
 use crate::board::{AutorouteAttemptState, ItemKey, ItemSet, RoutingBoard, StopConnectionOption};
 use crate::datastructures::StopToken;
 use crate::drc::clearance_violation::clearance_violation_count;
@@ -153,6 +153,40 @@ impl BatchAutorouter {
         router.remove_tails(&mut b, option, None);
         let after_tails = incomplete_count(&b, None);
         (outcome.result, ripped.len(), [before, after, after_tails])
+    }
+
+    /// pcbkit H3: routes `from_pin` to `to_pin` once, alone, on a copy of `board` with rip-up
+    /// off and blocker collection on. Returns whether it routed, the items that blocked the
+    /// search (item keys of `board`; copies keep keys; dedup, insertion order) and the ids of the
+    /// items the route added (empty when it failed). `board` is not modified.
+    pub fn route_connection_alone(board: &RoutingBoard, from_pin: ItemKey, to_pin: ItemKey, settings: &RouterSettings) -> (bool, Vec<ItemKey>, Vec<ItemId>) {
+        let mut b = board.clone();
+        let it = b.item(from_pin);
+        if it.net_count() != 1 {
+            return (false, Vec::new(), Vec::new());
+        }
+        let net = it.net_number(0);
+        let contains_plane = b.rules.nets.get(net).map(|n| n.contains_plane()).unwrap_or(false);
+        let via_costs = if contains_plane { settings.get_plane_via_costs() } else { settings.get_via_costs() };
+        let mut ctrl = AutorouteControl::new(&b, net, settings, via_costs, settings.get_trace_costs());
+        ctrl.ripup_allowed = false;
+        ctrl.collect_blockers = true;
+        let (mut start, mut dest) = (ItemSet::new(), ItemSet::new());
+        start.insert(b.item(from_pin).id(), from_pin);
+        dest.insert(b.item(to_pin).id(), to_pin);
+        let time_limit = b.time_limits.make(100000);
+        b.init_autoroute(net, ctrl.trace_clearance_class, None, Some(time_limit), false);
+        let max_id = crate::datastructures::IdGenerator::max_generated_id(&b.communication.id_generator);
+        let mut ripped = ItemSet::new();
+        let result = b.autoroute_connection(&start, &dest, &ctrl, &mut ripped, None);
+        let routed = result.state == AutorouteAttemptState::Routed;
+        let added: Vec<ItemId> = if routed {
+            b.get_items().into_iter().map(|k| b.item(k).id()).filter(|id| id.0 > max_id).collect()
+        } else {
+            Vec::new()
+        };
+        // blockers describe a failure: a routed connection reports none
+        (routed, if routed { Vec::new() } else { result.blockers }, added)
     }
 
     /// Tells the live viewer (if any) that a connection of pass `pass_no` was committed.
