@@ -133,6 +133,7 @@ dependencies = [
  "fr-engine",
  "fr-geom",
  "fr-io",
+ "fr-serve",
  "fr-settings",
  "log",
  "mimalloc",
@@ -189,6 +190,19 @@ version = "0.1.13"
 dependencies = [
  "num-bigint",
  "num-traits",
+]
+
+[[package]]
+name = "fr-serve"
+version = "0.1.13"
+dependencies = [
+ "fr-dsn",
+ "fr-engine",
+ "fr-geom",
+ "fr-io",
+ "fr-settings",
+ "log",
+ "serde_json",
 ]
 
 [[package]]
