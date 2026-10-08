@@ -126,7 +126,7 @@ fn error_codes() {
     assert_eq!(h["threads"], 2);
     assert_eq!(h["settings"]["unknown"], json!(["router.nope"]));
     assert_eq!(h["settings"]["applied"]["router.autorouter.max_threads"], "2");
-    assert_eq!(h["capabilities"], json!(["budget"]));
+    assert_eq!(h["capabilities"], json!(["budget", "incremental", "seed"]));
     s.err("hello", json!({ "protocol": "1.0.0", "client": "c", "threads": 2 }), "bad_state");
     // not loaded
     s.err("route", json!({ "seed": 0 }), "not_loaded");
@@ -151,7 +151,7 @@ fn error_codes() {
     s.err("route", json!({}), "bad_request");
     s.err("route", json!({ "seed": -1 }), "bad_request");
     s.err("route", json!({ "seed": 0, "bogus": 1 }), "bad_request");
-    s.err("route", json!({ "seed": 0, "nets": ["N1"] }), "unsupported");
+    s.err("route", json!({ "seed": 0, "nets": ["NOSUCHNET"] }), "unknown_net");
     s.err("export", json!({ "format": "dxf" }), "bad_request");
     s.err("export", json!({ "format": "ses", "path": "relative.ses" }), "bad_request");
     s.err("export", json!({ "format": "ses", "path": "/no/such/dir/out.ses" }), "io_error");
@@ -204,7 +204,7 @@ fn tiny_routes_complete_and_two_processes_agree() {
         let r = s.ok("route", json!({ "seed": 0, "nets": "all", "from": "scratch" }));
         assert_eq!(r["complete"], true, "{r}");
         assert_eq!(r["unrouted_connections"], json!([]));
-        assert_eq!(r["seed_used"], false);
+        assert_eq!(r["seed_used"], true);
         assert_eq!(r["budget_hit"], false);
         let ses = s.ses();
         s.finish();

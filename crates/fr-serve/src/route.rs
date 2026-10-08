@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use fr_engine::board::BasicBoard;
+use fr_engine::board::{BasicBoard, RoutingBoard};
 use fr_engine::datastructures::StopToken;
 use fr_engine::ids::FixedState;
 use fr_engine::pipeline::{self, LiveEvent, OptimizerMode, PipelineContext};
@@ -14,10 +14,10 @@ use crate::facts;
 use crate::proto::{as_int, as_str, check_keys, req, ProtoError, R};
 use crate::session::Session;
 
-/// `route.seed` selects a variant: not yet (any seed is accepted and ignored).
-pub const SEED_CLAIMED: bool = false;
-/// `route.nets` as a list: not yet.
-pub const INCREMENTAL_CLAIMED: bool = false;
+/// `route.seed` selects a variant: seed 0 is the stock order, seed > 0 sets hook H5 (`order_seed`).
+pub const SEED_CLAIMED: bool = true;
+/// `route.nets` as a list: hook H6 (`route_nets` mask) plus the request-scoped fixing of the other nets.
+pub const INCREMENTAL_CLAIMED: bool = true;
 
 /// fastroute multi-start of the stock CLI (`--multi-start`, main.rs:70); protocol 1.0 has no setting.
 const MULTI_START: usize = 4;
@@ -72,19 +72,24 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     check_keys(args, &["seed", "nets", "from", "budget_ms"], "route")?;
     // `seed` is required; with the `seed` capability absent any value is accepted and ignored.
     let seed = as_int(req(args, "seed", "route")?, 0, 2_147_483_647, "route.seed")?;
+    let mut listed: Option<Vec<String>> = None;
     match args.get("nets") {
         None => {}
         Some(Value::String(s)) if s == "all" => {}
         Some(Value::String(s)) => return Err(ProtoError::bad_request(format!("route.nets: '{s}' is neither \"all\" nor a list"))),
         Some(Value::Array(list)) => {
+            let mut names = Vec::with_capacity(list.len());
             for n in list {
-                if as_str(n, "route.nets item")?.is_empty() {
+                let name = as_str(n, "route.nets item")?;
+                if name.is_empty() {
                     return Err(ProtoError::bad_request("route.nets items must be non-empty net names"));
                 }
+                names.push(name.to_string());
             }
             if !INCREMENTAL_CLAIMED {
                 return Err(ProtoError::unsupported("route.nets as a list", "incremental"));
             }
+            listed = Some(names);
         }
         Some(_) => return Err(ProtoError::bad_request("route.nets must be \"all\" or a list of net names")),
     }
@@ -96,15 +101,62 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     let budget_ms = args.get("budget_ms").map(|v| as_int(v, 0, i64::MAX, "route.budget_ms")).transpose()?.unwrap_or(0);
 
     let mut work = session.begin()?;
+    // Net numbers that may change in this request: the listed nets (all known, none locked-out),
+    // or every net but the locked ones.
+    let numbers = net_numbers(&work.board.board);
+    let routable: Option<Vec<i32>> = match &listed {
+        Some(names) => {
+            let mut v = Vec::with_capacity(names.len());
+            for n in names {
+                match numbers.iter().find(|(name, _)| name == n) {
+                    Some(&(_, no)) => v.push(no),
+                    None => return Err(unknown_net(n)),
+                }
+            }
+            Some(v)
+        }
+        None => None,
+    };
+    let locked: Vec<i32> =
+        numbers.iter().filter(|(name, _)| work.locks.is_locked_net(name)).map(|&(_, no)| no).collect();
+    let mask_wanted = routable.is_some() || !locked.is_empty();
+    let allowed = |no: i32| routable.as_ref().map_or(true, |r| r.contains(&no)) && !locked.contains(&no);
+    // H6 mask over net numbers (index 0 is "no net").
+    let mask: Option<Vec<bool>> = mask_wanted.then(|| {
+        let max = work.board.board.rules.nets.max_net_number().max(0) as usize;
+        (0..=max).map(|n| n > 0 && allowed(n as i32)).collect()
+    });
+    // Wiring of nets outside the request is fixed for its duration; remember the exact prior state.
+    let mut saved: Vec<(fr_engine::ids::ItemId, FixedState)> = Vec::new();
+    if routable.is_some() {
+        let b = &mut work.board.board;
+        for k in b.get_items() {
+            let it = b.item(k);
+            if !(it.is_trace() || it.is_via()) || it.fixed_state() != FixedState::Unfixed {
+                continue;
+            }
+            if it.net_numbers().iter().all(|&n| !allowed(n)) {
+                saved.push((it.id(), it.fixed_state()));
+                b.item_mut(k).set_fixed_state(FixedState::UserFixed);
+            }
+        }
+    }
     if scratch {
         let b = &mut work.board.board;
         let keys: Vec<_> = b
             .get_items()
             .into_iter()
-            .filter(|&k| (b.item(k).is_trace() || b.item(k).is_via()) && b.item(k).fixed_state() == FixedState::Unfixed)
+            .filter(|&k| {
+                let it = b.item(k);
+                (it.is_trace() || it.is_via())
+                    && it.fixed_state() == FixedState::Unfixed
+                    && (routable.is_none() || it.net_numbers().iter().any(|&n| allowed(n)))
+            })
             .collect();
         b.remove_items(keys);
     }
+    work.board.board.order_seed = (seed > 0).then_some(seed);
+    work.board.board.route_nets = mask;
 
     let threads = session.settings().threads;
     let stop = StopToken::new();
@@ -128,11 +180,30 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     let budget = Budget::start(budget_ms as u64, &stop);
     pipeline::run_pipeline(&mut work.board.board, &mut work.board.settings, &ctx);
     let budget_hit = budget.finish();
+    // Per-request knobs never outlive the request; the fixed states of the other nets return.
+    work.board.board.order_seed = None;
+    work.board.board.route_nets = None;
+    for (id, state) in saved {
+        if let Some(k) = work.board.board.get_item(id) {
+            work.board.board.item_mut(k).set_fixed_state(state);
+        }
+    }
     let wall_ms = t0.elapsed().as_millis() as i64;
 
     let result = summarize(&work.board.board, &work.locks, seed, passes.load(Ordering::SeqCst), budget_hit, wall_ms);
     session.commit(work);
     Ok(result)
+}
+
+/// `(name, net number)` of every net, in net-number (DSN network) order.
+fn net_numbers(board: &RoutingBoard) -> Vec<(String, i32)> {
+    (1..=board.rules.nets.max_net_number())
+        .filter_map(|n| board.rules.nets.get(n).map(|x| (x.name.clone(), n)))
+        .collect()
+}
+
+fn unknown_net(name: &str) -> ProtoError {
+    ProtoError::new("unknown_net", format!("route.nets: the board has no net '{name}'")).with_details(json!({ "name": name }))
 }
 
 fn summarize(
