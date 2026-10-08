@@ -43,8 +43,11 @@ holds `sha256  path-in-corpus  original-source` per file.
   test; Java-vs-Rust SES identity on bm02 and pic_programmer (`scripts/parity-route.sh`); when the
   binary has `serve`, `router_conformance.py` at `--threads 1` and `2` (path override:
   `PCBKIT_CONFORMANCE`; `--stock-cli` passed if the runner supports it). Prints a PASS/FAIL table.
-  Last result on the unmodified branch: 213 tests executed, 0 skipped, parity routes identical,
-  conformance SKIP (no `serve`), exit 0 (about 40 s warm).
+  `ledger` step: every path in `git diff --name-only ${PCBKIT_BASE:-v0.1.13}..HEAD` must be exempt
+  (`crates/fr-serve/**`, `crates/*/tests/pcbkit_*.rs`, `crates/fastroute/tests/serve_*.rs`,
+  `scripts/pcbkit-*.sh`, `docs/PCBKIT.md`, `Cargo.lock`) or appear in the PATCH LEDGER table below.
+  Last result: see the commit that last touched this line; conformance runs at t1 and t2 (SKIP only
+  if the binary has no `serve`), exit 0.
 * `scripts/pcbkit-ab.sh [--parity] [--quick] <base> <new> [threads...]`: routes the corpus
   (`crates/fr-io/testdata/dsn` + `reference/pcbkit-corpus`, sha256-deduplicated) with both binaries
   under `--no-time-limits`, thread flags set to N (default 1 and 4), `cmp`s the SES, prints
@@ -57,9 +60,11 @@ holds `sha256  path-in-corpus  original-source` per file.
 * `scripts/parity-route.sh` assumed macOS `/usr/bin/time -l`; it now also handles GNU time (RSS
   divisor via `RSS_DIV`). Output on macOS is unchanged.
 * `crates/fr-jcompat/tests/jdk_vectors.rs` `sum_matches_jdk` failed on x86: `inf - inf` yields a
-  NaN with the sign bit set, while the vectors come from Java's `Double.doubleToLongBits`, which
-  collapses every NaN to `0x7ff8000000000000`. The test now canonicalizes NaN the same way
-  (`double_to_long_bits`); all other comparisons are unchanged.
+  NaN with the sign bit set (0xfff8...). The generator `crates/fr-jcompat/java/MiscGen.java:65-67`
+  writes `Double.doubleToRawLongBits` (not `doubleToLongBits`), so the vectors hold the positive
+  quiet NaN 0x7ff8... only because they were generated on a platform where `inf - inf` is 0x7ff8...
+  (ARM); on x86 Java and Rust alike give 0xfff8.... The test now compares NaN-ness only for NaN
+  results (`canonical_nan_bits`); every non-NaN comparison is unchanged and bit-exact.
 * Observation, not changed: `pic_programmer` parity log lines differ from Java's only by an
   added annotation ("1 of them pre-existing between fixed items"); the SES is byte-identical, so
   the gate judges on `ses=IDENTICAL`.
@@ -84,10 +89,11 @@ byte-identical to upstream (`pcbkit-ab.sh` proves it).
 
 | Hook | File:line | Lines changed | Default-off flag | Why |
 |---|---|---|---|---|
-| H0 serve dispatch | `crates/fastroute/src/main.rs` (line set when merged) | TBD | `serve` subcommand only | route `fastroute serve` to the server crate |
-| H1 move | TBD | TBD | via protocol `move` only | apply part moves to the loaded board |
-| H2b keep-fixed-on-split | TBD | TBD | via protocol locks only | locked wires survive trace splitting |
+| H0 serve dispatch | `crates/fastroute/src/main.rs:790-793`, `crates/fastroute/Cargo.toml:14` | 4 + 1 | `serve` subcommand only | route `fastroute serve` to the server crate |
+| H0 dep | `crates/fr-engine/Cargo.toml:17-18` | 2 | dev-dependency only | `fr-io` dev-dep for the pcbkit hook tests |
+| H1 move | `crates/fr-engine/src/board/basic_board.rs:1049-1103` (`place_component`), `crates/fr-engine/src/structure/component.rs:95-101` (`Component::set_pose`), `:286-291` (`Components::set_pose`) | 55 + 7 + 6 | via protocol `move` only | apply part moves to the loaded board |
+| H2b keep-fixed-on-split | `crates/fr-engine/src/board/basic_board.rs:74-75` (field `keep_fixed_on_split`), `:177` (init), `crates/fr-engine/src/board/shape_trace_entries.rs:92-96`, `crates/fr-engine/src/board/trace_ops.rs:548-558` | 2 + 1, 3, 5 | via protocol locks only | locked wires survive trace splitting. CAVEAT: upstream `remove_item` refuses UserFixed items, so a cut-out on a UserFixed parent leaves the parent and adds UserFixed duplicate pieces; locking must not cut out locked traces. |
 | H3 blockers | TBD | TBD | via protocol `blockers` only | report which items block a connection |
-| H5 order seed | TBD | TBD | seed unset = upstream order | deterministic net order per request seed |
-| H6 net mask | TBD | TBD | mask unset = all nets | route only a subset of nets |
-| T1 test-only | `scripts/parity-route.sh`, `crates/fr-jcompat/tests/jdk_vectors.rs` | about 17 and 12 | n/a | Linux support, see above |
+| H5 order seed | `crates/fr-engine/src/board/routing_board.rs:219-220` (`order_seed` field), `:268` (init), `crates/fr-engine/src/pipeline/mod.rs:187-190` (`run_pipeline`), `:276-280` (`multi_start`) | 2 + 1 + 4 + 5 (1 replaced) | seed unset = upstream order | deterministic net order per request seed |
+| H6 net mask | `crates/fr-engine/src/board/routing_board.rs:221-222` (`route_nets` field), `:269` (init), `crates/fr-engine/src/pipeline/autorouter.rs:253-258`, `crates/fr-engine/src/pipeline/fanout.rs:92-96` | 2 + 1 + 6 + 5 | mask unset = all nets | route only a subset of nets |
+| T1 test-only | `scripts/parity-route.sh` (lines 15-21, 26, 28, 57, 59-60), `crates/fr-jcompat/tests/jdk_vectors.rs:293-320` | 17 and 16 | n/a | Linux support, see above |
