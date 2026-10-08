@@ -2,6 +2,13 @@
 //! dashes, the values strings, numbers or booleans. They are parsed and merged exactly like the
 //! CLI does (`main.rs` `CliSettings::parse` then `headless_merger`), so a setting means the same
 //! on the stock command line and over the protocol.
+//!
+//! `router.copper_to_edge_clearance_um` and `router.min_trace_width_um` need no serve-specific
+//! mapping: both are ordinary `RouterSettings` fields (fr-settings settings.rs:185,193) set by the
+//! same `CliSettings::parse`, and consumed after the merge by fr-io post_load.rs:101 (reached from
+//! `prepare_for_routing`, as in the CLI) and fr-engine autoroute/control.rs:346. The upstream
+//! defaults (defaults.rs:16, 250 um; no minimum width) apply until the client sends its own values.
+//! Tests: `crates/fastroute/tests/serve_settings.rs`.
 
 use std::collections::BTreeMap;
 
