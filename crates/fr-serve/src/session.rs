@@ -32,11 +32,15 @@ pub struct Session {
     pub refused: bool,
     pub board: Option<Board>,
     pub locks: LockRegistry,
+    /// Snapshots by id (`s<n>`), dropped by `load`.
+    pub snapshots: std::collections::BTreeMap<String, Work>,
+    /// Last snapshot number handed out (never reused, not even across `load`).
+    pub snapshot_counter: u64,
 }
 
 impl Session {
     pub fn new() -> Self {
-        Session { hello: None, refused: false, board: None, locks: LockRegistry::default() }
+        Session { hello: None, refused: false, board: None, locks: LockRegistry::default(), snapshots: Default::default(), snapshot_counter: 0 }
     }
 
     /// A working copy of the loaded state, or `not_loaded`.
