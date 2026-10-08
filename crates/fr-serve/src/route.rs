@@ -156,7 +156,8 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
         b.remove_items(keys);
     }
     work.board.board.order_seed = (seed > 0).then_some(seed);
-    work.board.board.route_nets = mask;
+    // locked nets get no new wiring: they are left out of the route mask (SPEC 5.4)
+    work.board.board.route_nets = work.locks.route_mask(&work.board.board, mask);
 
     let threads = session.settings().threads;
     let stop = StopToken::new();
@@ -188,6 +189,9 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
             work.board.board.item_mut(k).set_fixed_state(state);
         }
     }
+    // pieces of split locked traces replace the ids they came from (after the temporary
+    // UserFixed states above are restored, so they never count as locked)
+    work.locks.reconcile(&work.board.board);
     let wall_ms = t0.elapsed().as_millis() as i64;
 
     let result = summarize(&work.board.board, &work.locks, seed, passes.load(Ordering::SeqCst), budget_hit, wall_ms);

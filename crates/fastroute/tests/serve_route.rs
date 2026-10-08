@@ -139,7 +139,10 @@ fn open(dsn: &Path, threads: u32) -> Server {
 fn capabilities_and_errors() {
     let mut s = Server::start();
     let h = s.hello(1, json!({}));
-    assert_eq!(h["capabilities"], json!(["budget", "incremental", "seed"]));
+    // the exact claimed set is pinned in serve_baseline.rs; here only this module's two
+    for cap in ["incremental", "seed"] {
+        assert!(h["capabilities"].as_array().unwrap().contains(&json!(cap)), "{h}");
+    }
     s.ok("load", json!({ "dsn": path(&serve_data("tiny.dsn")) }));
     let e = s.err("route", json!({ "seed": 0, "nets": ["N1", "NOPE"] }), "unknown_net");
     assert_eq!(e["details"]["name"], "NOPE");
