@@ -246,25 +246,15 @@ fn export_to_path_matches_inline_and_budget_reports() {
 
 // ------------------------------------------------------------------------------ stock equivalence
 
-/// The pcb name of a DSN file (its first token after `(pcb`).
-fn pcb_name(dsn: &str) -> String {
-    let rest = dsn[dsn.find("(pcb").expect("(pcb header") + 4..].trim_start();
-    if let Some(q) = rest.strip_prefix('"') {
-        q[..q.find('"').unwrap()].to_string()
-    } else {
-        rest.split(|c: char| c.is_whitespace() || c == ')' || c == '(').next().unwrap().to_string()
-    }
-}
-
-/// Runs the stock CLI on `dsn` (copied to a file whose stem is the pcb name, as the session name is
-/// the file stem) and returns the SES text.
+/// Runs the stock CLI on `dsn` (copied to a file with the same name, as the session name is the file
+/// stem and `serve` names it after the loaded path's stem) and returns the SES text.
 fn stock_ses(dsn: &Path, threads: u32, extra: &[String]) -> Option<String> {
     let text = std::fs::read_to_string(dsn).unwrap();
     static CALLS: AtomicUsize = AtomicUsize::new(0);
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("serve-stock-{}-{}", std::process::id(), CALLS.fetch_add(1, Ordering::SeqCst)));
     std::fs::create_dir_all(&dir).unwrap();
-    let input = dir.join(format!("{}.dsn", pcb_name(&text)));
+    let input = dir.join(dsn.file_name().unwrap());
     let output = dir.join("out.ses");
     std::fs::write(&input, &text).unwrap();
     let _ = std::fs::remove_file(&output);

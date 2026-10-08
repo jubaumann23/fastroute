@@ -118,7 +118,10 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     if let Some(s) = &ses_bytes {
         check_ses(s)?;
     }
-    let loaded = build(session, &dsn_bytes, &dsn, ses_bytes.as_deref())?;
+    let mut loaded = build(session, &dsn_bytes, &dsn, ses_bytes.as_deref())?;
+    // The stock CLI names the session after the DSN file stem (main.rs design_name); do the same.
+    let named = args["dsn"].get("path").and_then(Value::as_str).unwrap_or(dsn.name.as_str());
+    loaded.name = std::path::Path::new(named).file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let result = describe(&loaded.board, &dsn);
     // `load` replaces the board and drops locks and snapshots.
     session.board = Some(loaded);

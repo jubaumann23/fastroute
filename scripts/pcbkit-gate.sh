@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # pcbkit fork gate. Run from any fork worktree; exit 0 only if every applicable step passes.
+#   0. ledger: changed paths vs the PATCH LEDGER in docs/PCBKIT.md
 #   1. cargo test --release --workspace (no parity test may be silently skipped)
 #   2. scripts/parity-route.sh on the pipeline_parity fixtures (needs the Java parity jar)
 #   3. router_conformance.py at --threads 1 and 2 (only if the built binary has `serve`)
@@ -7,7 +8,9 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SHARED_REF=/home/jubau/coolProjects/fastroute/reference
-CARGO_SLOT=${CARGO_SLOT:-/tmp/claude-1000/-home-jubau-coolProjects-claude-pcb-rules/09ebfdde-5d90-4ee9-adf5-b5e4340131ee/scratchpad/cargo_slot.sh}
+SHARED_SLOT=/tmp/claude-1000/-home-jubau-coolProjects-claude-pcb-rules/09ebfdde-5d90-4ee9-adf5-b5e4340131ee/scratchpad/cargo_slot.sh
+if [ -x "$SHARED_SLOT" ]; then DEFAULT_SLOT=$SHARED_SLOT; else DEFAULT_SLOT=cargo; fi
+CARGO_SLOT=${CARGO_SLOT:-$DEFAULT_SLOT}
 CONF=${PCBKIT_CONFORMANCE:-/home/jubau/coolProjects/claude-pcb-rules/.claude/worktrees/rust-protocol/scripts/router_conformance.py}
 cd "$ROOT" || exit 2
 
@@ -22,6 +25,23 @@ row() { # name status detail
   ROWS+=("$(printf '%-28s %-6s %s' "$1" "$2" "$3")")
   [ "$2" = FAIL ] && FAIL=1
 }
+
+# 0. patch ledger: every changed upstream path must be listed in docs/PCBKIT.md.
+BASE=${PCBKIT_BASE:-v0.1.13}
+if CHANGED=$(git diff --name-only "$BASE"..HEAD 2>"$LOGDIR/ledger.err"); then
+  LEDGER=$(awk '/^## PATCH LEDGER/{f=1} f && /^\|/' docs/PCBKIT.md)
+  UNLISTED=""
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    case "$f" in
+      crates/fr-serve/*|crates/*/tests/pcbkit_*.rs|crates/fastroute/tests/serve_*.rs|scripts/pcbkit-*.sh|docs/PCBKIT.md|Cargo.lock) continue ;;
+    esac
+    printf '%s' "$LEDGER" | grep -qF -- "$f" || UNLISTED="$UNLISTED $f"
+  done <<<"$CHANGED"
+  if [ -z "$UNLISTED" ]; then row ledger PASS "all changed paths listed or exempt"; else row ledger FAIL "unlisted:$UNLISTED"; fi
+else
+  row ledger FAIL "git diff $BASE..HEAD failed: $(head -1 "$LOGDIR/ledger.err")"
+fi
 
 # 1. workspace tests, output kept so skip lines can be counted.
 TLOG=$LOGDIR/test.log
