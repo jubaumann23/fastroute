@@ -48,6 +48,31 @@ holds `sha256  path-in-corpus  original-source` per file.
   stock-equivalence check always compares against upstream v0.1.13, never against the fork itself.
   Prints a PASS/FAIL table.
 
+  **Phases** (each one foreground call, well under the 600 s limit; the no-flag run does all of it
+  in one call and takes about 9 to 10 minutes under load):
+
+  | `--phase` | runs | measured wall time |
+  |---|---|---|
+  | `tests-core` | `cargo test` for every crate except `fastroute`, plus fastroute `--bins` and its non-`serve_*` test targets (`pipeline_parity`) | 12 to 19 s |
+  | `tests-serve-a` | fastroute `serve_*` targets except move and snapshot (baseline, congestion, lock, route, settings) | 112 to 120 s |
+  | `tests-serve-b` | fastroute `serve_move` | 150 to 211 s |
+  | `tests-serve-c` | fastroute `serve_snapshot` | 204 to 218 s |
+  | `final` | records check, ledger, parity-skips, parity-route, stock-pin, conformance t1 and t2 | 30 to 50 s (includes the `--list` coverage pass) |
+
+  Times were measured on the shared box at load average 9 to 17 with a warm build (a cold
+  release build of the workspace adds about 150 s to whichever phase runs first, so build once with
+  `cargo test --release --workspace --no-run` before the phases). Every phase must stay under
+  480 s; if a `serve_*` target grows past that, move it to its own phase in `phase_cargo_args`.
+
+  Each test phase writes `target/pcbkit-gate/<phase>.<HEAD sha>.{log,rc}`; the `.rc` holds `rc`,
+  `executed`, `dirty` and `binsha` (sha256 of `target/release/fastroute`). The skip-line rule
+  applies to every phase log. `final` refuses with a FAIL row when a record for the current HEAD is
+  missing or failed, the worktree is dirty (now or when the record was taken), the binary sha
+  differs from the recorded one, or the phases do not cover the workspace: the test names from
+  `cargo test --release --workspace -- --list` must all appear in the executed names of the
+  phase logs. Run the test phases on the commit you intend to report, then `final`; any commit
+  after them makes the records stale.
+
   Pinned stock binary: `cargo build --release` of tag v0.1.13 (6e14035) in its own worktree
   `fastroute-wt/base` (detached, clean), `target/release/fastroute`, `fastroute 0.1.13`:
 
