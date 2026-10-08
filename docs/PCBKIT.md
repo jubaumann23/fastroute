@@ -82,6 +82,16 @@ holds `sha256  path-in-corpus  original-source` per file.
    hooks default-off, drift must equal step 2.
 5. Re-run `router_conformance.py` (gate does this at threads 1 and 2) and bump the router build hash.
 
+## Locking (serve, capability `locking`)
+
+No new core hook. `crates/fr-serve/src/ops/lock.rs`: a trace or via is locked iff it is `UserFixed`
+and not part of the DSN's own `UserFixed` wiring (`LockRegistry::base`). Hook H2b
+(`keep_fixed_on_split`) is switched on with the first lock or `load.lock_initial`, not at load, so a
+board that never locks is byte-identical to the stock CLI. Locked nets are subtracted from the H6 mask
+in `route.rs` (mask stays `None` when nothing is locked); the registry is re-derived from the board
+after every route. `export` writes locked items like routed wiring (no `(type protect)`). Wire ids are
+the board's `ItemId`s. An empty `lock {"nets": []}` is a query.
+
 ## PATCH LEDGER
 
 Every change to upstream-owned files. Hooks are default off: with the flag unset the output is

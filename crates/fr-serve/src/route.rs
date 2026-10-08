@@ -124,10 +124,15 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
             }
         })),
     };
+    // locked nets get no new wiring: they are left out of the route mask (SPEC 5.4)
+    work.board.board.route_nets = work.locks.route_mask(&work.board.board, None);
     let t0 = Instant::now();
     let budget = Budget::start(budget_ms as u64, &stop);
     pipeline::run_pipeline(&mut work.board.board, &mut work.board.settings, &ctx);
     let budget_hit = budget.finish();
+    work.board.board.route_nets = None;
+    // pieces of split locked traces replace the ids they came from
+    work.locks.reconcile(&work.board.board);
     let wall_ms = t0.elapsed().as_millis() as i64;
 
     let result = summarize(&work.board.board, &work.locks, seed, passes.load(Ordering::SeqCst), budget_hit, wall_ms);

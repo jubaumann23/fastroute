@@ -126,7 +126,7 @@ fn error_codes() {
     assert_eq!(h["threads"], 2);
     assert_eq!(h["settings"]["unknown"], json!(["router.nope"]));
     assert_eq!(h["settings"]["applied"]["router.autorouter.max_threads"], "2");
-    assert_eq!(h["capabilities"], json!(["budget"]));
+    assert_eq!(h["capabilities"], json!(["budget", "locking"]));
     s.err("hello", json!({ "protocol": "1.0.0", "client": "c", "threads": 2 }), "bad_state");
     // not loaded
     s.err("route", json!({ "seed": 0 }), "not_loaded");
@@ -141,7 +141,6 @@ fn error_codes() {
     let e = s.err("load", json!({ "dsn": path(&serve_data("tiny.dsn")), "ses": { "text": "this is not a session" } }), "bad_ses");
     assert!(e["details"]["line"].is_u64() && e["details"]["reason"].is_string(), "{e}");
     s.err("load", json!({ "dsn": path(&serve_data("tiny.dsn")), "ses": { "text": "(pcb nope)" } }), "bad_ses");
-    s.err("load", json!({ "dsn": path(&serve_data("tiny.dsn")), "lock_initial": true }), "unsupported");
     // a failed load leaves the session unloaded
     s.err("route", json!({ "seed": 0 }), "not_loaded");
     let l = s.ok("load", json!({ "dsn": path(&serve_data("tiny.dsn")) }));
@@ -156,7 +155,7 @@ fn error_codes() {
     s.err("export", json!({ "format": "ses", "path": "relative.ses" }), "bad_request");
     s.err("export", json!({ "format": "ses", "path": "/no/such/dir/out.ses" }), "io_error");
     // ops of capabilities this build does not claim
-    for op in ["move", "lock", "unlock", "blockers", "congestion", "snapshot", "restore"] {
+    for op in ["move", "blockers", "congestion", "snapshot", "restore"] {
         s.err(op, json!({}), "unsupported");
     }
     // shutdown takes no arguments

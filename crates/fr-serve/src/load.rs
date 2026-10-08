@@ -83,7 +83,7 @@ fn unit_name(u: fr_dsn::model::Unit) -> &'static str {
 /// session import and release :432-448, outline wiring :449-456, post-load processing :457-475
 /// (enhancements on, not `--parity`), and the time limits of `--no-time-limits` :486-494 (count mode,
 /// the default factor: deterministic, never the wall clock).
-fn build(session: &Session, data: &[u8], dsn: &Dsn, ses: Option<&[u8]>, name: String) -> R<Board> {
+fn build(session: &Session, data: &[u8], dsn: &Dsn, ses: Option<&[u8]>, name: String, lock_initial: bool) -> R<(Board, LockRegistry)> {
     let procs = available_processors();
     let dsn_settings = DsnFileSettings::from_dsn(dsn);
     // Hermetic (SPEC 7): no FREEROUTING__ROUTER__* environment source, so results depend only on the
@@ -98,8 +98,10 @@ fn build(session: &Session, data: &[u8], dsn: &Dsn, ses: Option<&[u8]>, name: St
         b.get_items().into_iter().filter(|&k| b.item(k).is_trace() || b.item(k).is_via()).map(|k| b.item(k).id()).collect()
     };
     let before = wiring_ids(&board);
-    if fr_io::post_load::prepare_for_routing(&mut board, &mut settings, ses).is_some() {
+    let own = LockRegistry::user_fixed_ids(&board);
+    if fr_io::post_load::prepare_for_routing(&mut board, &mut settings, ses).is_some() && !lock_initial {
         // the session reader fixes what it imports; here it is a starting point that may be ripped
+        // (with `lock_initial` it stays fixed: that is the lock)
         let imported: Vec<_> = wiring_ids(&board).difference(&before).copied().collect();
         fr_engine::diffpair::release_pairs(&mut board, &imported);
     }
@@ -113,7 +115,8 @@ fn build(session: &Session, data: &[u8], dsn: &Dsn, ses: Option<&[u8]>, name: St
         mode: TimeLimitMode::Count { factor: fr_engine::datastructures::time_limit::DEFAULT_COUNT_FACTOR },
         fired: Some(Arc::new(AtomicBool::new(false))),
     };
-    Ok(Board { name, board, settings })
+    let locks = LockRegistry::after_load(&mut board, &own, lock_initial);
+    Ok((Board { name, board, settings }, locks))
 }
 
 pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
@@ -121,19 +124,16 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     let dsn_bytes = source_bytes(req(args, "dsn", "load")?, "load.dsn")?;
     let ses_bytes = args.get("ses").map(|v| source_bytes(v, "load.ses")).transpose()?;
     let lock_initial = args.get("lock_initial").map(|v| as_bool(v, "load.lock_initial")).transpose()?.unwrap_or(false);
-    if lock_initial {
-        return Err(ProtoError::unsupported("load.lock_initial", "locking"));
-    }
     let dsn = parse_dsn(&dsn_bytes)?;
     if let Some(s) = &ses_bytes {
         check_ses(s)?;
     }
     let name = session_name(&args["dsn"], &dsn);
-    let loaded = build(session, &dsn_bytes, &dsn, ses_bytes.as_deref(), name)?;
+    let (loaded, locks) = build(session, &dsn_bytes, &dsn, ses_bytes.as_deref(), name, lock_initial)?;
     let result = describe(&loaded.board, &dsn);
     // `load` replaces the board and drops locks and snapshots.
     session.board = Some(loaded);
-    session.locks = LockRegistry::default();
+    session.locks = locks;
     Ok(result)
 }
 

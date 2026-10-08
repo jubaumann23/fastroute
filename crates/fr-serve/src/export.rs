@@ -19,7 +19,8 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
         }
     }
     let loaded = session.loaded()?;
-    let bytes = fr_io::ses_writer::ses_bytes(&loaded.board, &loaded.name);
+    let view = session.locks.written_as_routed(&loaded.board);
+    let bytes = fr_io::ses_writer::ses_bytes(view.as_ref().unwrap_or(&loaded.board), &loaded.name);
     let mut result = json!({ "format": "ses", "bytes": bytes.len(), "sha256": sha256_hex(&bytes) });
     match path {
         Some(p) => {
