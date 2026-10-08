@@ -291,6 +291,16 @@ fn hashmap_matches_jdk() {
 // ---------------------------------------------------------------------------------------------
 // DoubleStream.sum / average / DoubleSummaryStatistics
 
+/// `Double.doubleToLongBits`: every NaN collapses to the canonical 0x7ff8000000000000 (the sign of
+/// a NaN produced by inf - inf is platform dependent: x86 sets it, ARM does not).
+fn double_to_long_bits(v: f64) -> i64 {
+    if v.is_nan() {
+        0x7ff8_0000_0000_0000
+    } else {
+        v.to_bits() as i64
+    }
+}
+
 #[test]
 fn sum_matches_jdk() {
     let text = data("sum.txt");
@@ -300,12 +310,12 @@ fn sum_matches_jdk() {
         let h: Vec<&str> = head.split_whitespace().collect();
         let vals: Vec<f64> = vals.split_whitespace().map(|t| f64::from_bits(t.parse::<i64>().unwrap() as u64)).collect();
         let sum = compensated_sum(vals.iter().copied());
-        assert_eq!(sum.to_bits() as i64, h[0].parse::<i64>().unwrap(), "{line}");
+        assert_eq!(double_to_long_bits(sum), h[0].parse::<i64>().unwrap(), "{line}");
         let avg = compensated_average(vals.iter().copied());
         let want_avg = if h[1] == "none" { None } else { Some(h[1].parse::<i64>().unwrap()) };
-        assert_eq!(avg.map(|a| a.to_bits() as i64), want_avg, "{line}");
+        assert_eq!(avg.map(|a| double_to_long_bits(a)), want_avg, "{line}");
         let st: CompensatedSum = vals.iter().copied().collect();
-        assert_eq!(st.sum().to_bits() as i64, h[2].parse::<i64>().unwrap(), "{line}");
+        assert_eq!(double_to_long_bits(st.sum()), h[2].parse::<i64>().unwrap(), "{line}");
         n += 1;
     }
     assert_eq!(n, 1500);
