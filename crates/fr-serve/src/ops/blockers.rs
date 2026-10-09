@@ -2,8 +2,19 @@
 //!
 //! The connection is routed alone on a copy of the board as loaded plus the locked wiring (every
 //! unlocked routed trace and via removed) with core hook H3 (`collect_blockers`, rip-up off).
-//! Failure: `blocked`, the objects are the H3 keys. Success: `congestion`, the objects are the
-//! current routed items of other nets that touch the alone route (with clearance).
+//! Failure: `blocked`. Success: `congestion`. The named objects are causal, checked by the same
+//! alone-route (falsified on the corpus boards by `tests/serve_blockers.rs`):
+//!
+//! * the H3 hits of a failed attempt are every item the search touched, hundreds on a real board;
+//!   [`causal_set`] removes the wires and vias among them, round by round, until the attempt routes,
+//!   then keeps the shortest prefix (nearest first) that is enough. Pins, keepouts and the boundary
+//!   cannot be removed, so they are named only when removing every wire and via is not enough;
+//! * `congestion` is attributed on the board with the routed wiring kept: when the connection fails
+//!   there too, its causal set names the routed wires that stand in the way. The wiring on the
+//!   free path (first answer of this op) is the fallback when the attempt routes on the kept board;
+//! * an attempt that routes but adds nothing found the two ends already joined by copper that the
+//!   connectivity does not accept (a fixed wire ending on a corner of another, a T-junction): the
+//!   class is `blocked` and the two items at the gap are named.
 
 use fr_engine::board::{BasicBoard, ItemKey, ItemKind, ObstacleKind, RoutingBoard};
 use fr_engine::ids::FixedState;
@@ -42,7 +53,7 @@ fn net_name(board: &BasicBoard, n: i32) -> Option<String> {
 }
 
 /// The pin item labelled `REF-PIN`.
-fn pin_by_label(board: &BasicBoard, label: &str) -> Option<ItemKey> {
+pub(crate) fn pin_by_label(board: &BasicBoard, label: &str) -> Option<ItemKey> {
     board.get_items().into_iter().find(|&k| {
         let it = board.item(k);
         it.is_pin() && it.component_no() > 0 && facts::label(board, k, (0, 0)) == label
@@ -264,6 +275,155 @@ fn nearest_wiring(board: &BasicBoard, net: i32, a: Pt, b: Pt, take: usize) -> Ve
     v.into_iter().take(take).map(|(_, _, k)| k).collect()
 }
 
+/// The alone-route of one open connection, with the board it ran on.
+pub(crate) struct AloneRun {
+    pub routed: bool,
+    pub hits: Vec<ItemKey>,
+    pub added: Vec<fr_engine::ids::ItemId>,
+    pub after: RoutingBoard,
+    pub alone: RoutingBoard,
+}
+
+/// Routes `conn` alone on `current` as loaded plus locked wiring (every unlocked routed trace and via
+/// removed), with core hook H3 (`collect_blockers`, rip-up off). `remove` lists item ids that are also
+/// taken off that board first (the falsification test removes the objects a `blocked` answer named;
+/// the ends of the connection are never removed); `keep_routed` keeps the routed wiring too (the board
+/// a targeted route after a rip-up sees). `None` when an end has no pin.
+pub(crate) fn alone_route(
+    current: &RoutingBoard,
+    conn: &Unrouted,
+    net_no: i32,
+    settings: &fr_settings::RouterSettings,
+    remove: &[i32],
+    keep_routed: bool,
+) -> Option<AloneRun> {
+    // the board as loaded plus locked wiring: every unlocked routed trace and via goes
+    let mut alone = current.clone();
+    let doomed: Vec<ItemKey> = alone
+        .get_items()
+        .into_iter()
+        .filter(|&k| {
+            let it = alone.item(k);
+            (it.is_trace() || it.is_via()) && matches!(it.fixed_state(), FixedState::Unfixed | FixedState::ShoveFixed)
+        })
+        .collect();
+    if !keep_routed {
+        alone.remove_items(doomed);
+    }
+    if !remove.is_empty() {
+        let ends = [current.item(conn.from_item).id().0, current.item(conn.to_item).id().0];
+        let gone: Vec<ItemKey> = remove
+            .iter()
+            .filter(|id| !ends.contains(id))
+            .filter_map(|&id| alone.get_item(fr_engine::ids::ItemId(id)))
+            .collect();
+        for k in gone {
+            // fixed wiring is a deliberate removal here (a copy): demote it so the board lets it go;
+            // pins (component pads) stay, the board never removes them
+            if alone.item(k).is_trace() || alone.item(k).is_via() {
+                alone.item_mut(k).set_fixed_state(FixedState::Unfixed);
+            }
+            alone.remove_item(k);
+        }
+    }
+
+    // A pin end is the pin. Another end (a wire or via of fixed or locked wiring) is that item, which
+    // the alone board keeps; if it was removed with the routed wiring, the nearest other pin of the net.
+    let kept = |k: ItemKey| alone.get_item(current.item(k).id());
+    let from_pin = pin_by_label(&alone, &conn.from).or_else(|| kept(conn.from_item));
+    let to_pin = pin_by_label(&alone, &conn.to).or_else(|| kept(conn.to_item));
+    let from_pin = from_pin.or_else(|| nearest_pin(&alone, net_no, conn.from_xy, to_pin));
+    let to_pin = to_pin.or_else(|| nearest_pin(&alone, net_no, conn.to_xy, from_pin));
+    let (from_pin, to_pin) = (from_pin?, to_pin?);
+    let (routed, hits, added, after) = BatchAutorouter::route_connection_alone_on(&alone, from_pin, to_pin, settings);
+    Some(AloneRun { routed, hits, added, after, alone })
+}
+
+/// True for the items the causal search may take off: wires and vias; with `routed_only` just the
+/// routed ones (unfixed), which are the ones a rip-up can remove.
+fn removable(board: &BasicBoard, key: ItemKey, routed_only: bool) -> bool {
+    let it = board.item(key);
+    (it.is_trace() || it.is_via()) && (!routed_only || matches!(it.fixed_state(), FixedState::Unfixed | FixedState::ShoveFixed))
+}
+
+/// Wires and vias that make `conn` fail, found by removing them: `Some(keys)` is a set that, taken off
+/// the board of the attempt, lets the connection route, shortest first-by-round prefix; `None` when
+/// removing every wire and via the search touched, round after round, never lets it route.
+fn causal_set(
+    current: &RoutingBoard,
+    conn: &Unrouted,
+    net_no: i32,
+    settings: &fr_settings::RouterSettings,
+    keep_routed: bool,
+    first: &AloneRun,
+    near: &dyn Fn(ItemKey) -> i64,
+) -> Option<Vec<ItemKey>> {
+    const ROUNDS: usize = 16;
+    let mut order: Vec<ItemKey> = Vec::new();
+    let mut hits = first.hits.clone();
+    for _ in 0..ROUNDS {
+        let mut fresh: Vec<ItemKey> = hits.iter().copied().filter(|&k| removable(&first.alone, k, keep_routed) && !order.contains(&k)).collect();
+        if fresh.is_empty() && keep_routed {
+            // The search names only what it ran into; routed wiring can stand in the way without
+            // being named. Every other net's routed item, nearest to the line first, is a candidate.
+            let b = &first.alone;
+            fresh = b
+                .get_items()
+                .into_iter()
+                .filter(|&k| removable(b, k, true) && !b.item(k).net_numbers().contains(&net_no) && !order.contains(&k))
+                .collect();
+        }
+        if fresh.is_empty() {
+            return None;
+        }
+        fresh.sort_by_key(|&k| (near(k), first.alone.item(k).id().0));
+        order.extend(fresh);
+        let ids: Vec<i32> = order.iter().map(|&k| first.alone.item(k).id().0).collect();
+        let run = alone_route(current, conn, net_no, settings, &ids, keep_routed)?;
+        if run.routed {
+            // shortest prefix of `order` that is enough (removing more never hurts)
+            let (mut lo, mut hi) = (1, order.len());
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                let ids: Vec<i32> = order[..mid].iter().map(|&k| first.alone.item(k).id().0).collect();
+                if alone_route(current, conn, net_no, settings, &ids, keep_routed).is_some_and(|r| r.routed) {
+                    hi = mid;
+                } else {
+                    lo = mid + 1;
+                }
+            }
+            order.truncate(lo);
+            return Some(order);
+        }
+        hits = run.hits;
+    }
+    None
+}
+
+/// The nearest pair of items of the two sides of an open connection (by bounding-box gap): the
+/// place where copper meets without being connected, or the narrowest gap to route across.
+fn gap_items(board: &BasicBoard, conn: &Unrouted) -> Vec<ItemKey> {
+    let net = conn.net_no;
+    let side = |k: ItemKey| -> Vec<ItemKey> { board.connected_set(k, net, false).iter().collect() };
+    let (a, b) = (side(conn.from_item), side(conn.to_item));
+    let gap = |x: ItemKey, y: ItemKey| -> i64 {
+        let (p, q) = (board.item(x).bounding_box(board), board.item(y).bounding_box(board));
+        let dx = (p.ll.x.max(q.ll.x) as i64 - p.ur.x.min(q.ur.x) as i64).max(0);
+        let dy = (p.ll.y.max(q.ll.y) as i64 - p.ur.y.min(q.ur.y) as i64).max(0);
+        dx.max(dy)
+    };
+    let mut best: Option<(i64, i32, i32, ItemKey, ItemKey)> = None;
+    for &x in &a {
+        for &y in &b {
+            let cand = (gap(x, y), board.item(x).id().0, board.item(y).id().0, x, y);
+            if best.map_or(true, |bb| (cand.0, cand.1, cand.2) < (bb.0, bb.1, bb.2)) {
+                best = Some(cand);
+            }
+        }
+    }
+    best.map(|(_, _, _, x, y)| vec![x, y]).unwrap_or_default()
+}
+
 pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     check_keys(args, &["connection", "max"], "blockers")?;
     let max = args.get("max").map(|v| as_int(v, 1, 1 << 20, "blockers.max")).transpose()?.unwrap_or(DEFAULT_MAX) as usize;
@@ -282,41 +442,40 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
         return Ok(json!({ "connection": echo, "class": "routed", "blockers": [] }));
     };
 
-    // the board as loaded plus locked wiring: every unlocked routed trace and via goes
-    let mut alone = current.clone();
-    let doomed: Vec<ItemKey> = alone
-        .get_items()
-        .into_iter()
-        .filter(|&k| {
-            let it = alone.item(k);
-            (it.is_trace() || it.is_via()) && matches!(it.fixed_state(), FixedState::Unfixed | FixedState::ShoveFixed)
-        })
-        .collect();
-    alone.remove_items(doomed);
-
-    // A pin end is the pin. Another end (a wire or via of fixed or locked wiring) is that item, which
-    // the alone board keeps; if it was removed with the routed wiring, the nearest other pin of the net.
-    let kept = |k: ItemKey| alone.get_item(current.item(k).id());
-    let from_pin = pin_by_label(&alone, &conn.from).or_else(|| kept(conn.from_item));
-    let to_pin = pin_by_label(&alone, &conn.to).or_else(|| kept(conn.to_item));
-    let from_pin = from_pin.or_else(|| nearest_pin(&alone, q.net_no, conn.from_xy, to_pin));
-    let to_pin = to_pin.or_else(|| nearest_pin(&alone, q.net_no, conn.to_xy, from_pin));
-    let (Some(from_pin), Some(to_pin)) = (from_pin, to_pin) else {
-        return Err(ProtoError::new("unknown_connection", "the connection has no pin ends on this board").with_details(echo));
-    };
-    let (routed, hits, added, after) = BatchAutorouter::route_connection_alone_on(&alone, from_pin, to_pin, &loaded.settings);
+    let echo_err = echo.clone();
+    let alone_run = alone_route(current, conn, q.net_no, &loaded.settings, &[], false)
+        .ok_or_else(|| ProtoError::new("unknown_connection", "the connection has no pin ends on this board").with_details(echo_err))?;
+    let AloneRun { routed, added, .. } = &alone_run;
+    let (routed, alone, after) = (*routed, &alone_run.alone, &alone_run.after);
 
     let a = (conn.from_xy[0] as f64, conn.from_xy[1] as f64);
     let b = (conn.to_xy[0] as f64, conn.to_xy[1] as f64);
     let locks = &session.locks;
-    let (class, mut found): (&str, Vec<Found>) = if routed {
-        let mut keys = congestion_keys(current, &after, &added, q.net_no);
-        if added.is_empty() || keys.is_empty() {
-            keys = nearest_wiring(current, q.net_no, a, b, max.saturating_mul(4));
-        }
+    let settings = &loaded.settings;
+    let near = |board: &BasicBoard, k: ItemKey| describe(board, locks, k, a, b).map_or(i64::MAX, |f| f.dist);
+    let (class, mut found): (&str, Vec<Found>) = if routed && added.is_empty() {
+        // routed with nothing added: the ends are joined by copper the connectivity does not accept
+        ("blocked", gap_items(current, conn).into_iter().filter_map(|k| describe(current, locks, k, a, b)).collect())
+    } else if routed {
+        // attribute on the board with the routed wiring kept; the free path is the fallback
+        let keep = alone_route(current, conn, q.net_no, settings, &[], true);
+        let causal = keep.as_ref().filter(|r| !r.routed).and_then(|r| {
+            causal_set(current, conn, q.net_no, settings, true, r, &|k| near(&r.alone, k)).map(|keys| (keys, r))
+        });
+        let keys = match causal {
+            Some((keys, _)) => keys,
+            None => {
+                let mut keys = congestion_keys(current, after, added, q.net_no);
+                if keys.is_empty() {
+                    keys = nearest_wiring(current, q.net_no, a, b, max.saturating_mul(4));
+                }
+                keys
+            }
+        };
         ("congestion", keys.into_iter().filter_map(|k| describe(current, locks, k, a, b)).collect())
     } else {
-        ("blocked", hits.into_iter().filter_map(|k| describe(&alone, locks, k, a, b)).collect())
+        let keys = causal_set(current, conn, q.net_no, settings, false, &alone_run, &|k| near(alone, k)).unwrap_or_else(|| alone_run.hits.clone());
+        ("blocked", keys.into_iter().filter_map(|k| describe(alone, locks, k, a, b)).collect())
     };
     found.sort_by(|x, y| (x.dist, x.kind, &x.ref_, &x.pin, x.id).cmp(&(y.dist, y.kind, &y.ref_, &y.pin, y.id)));
     found.truncate(max);

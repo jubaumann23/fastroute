@@ -57,7 +57,7 @@ holds `sha256  path-in-corpus  original-source` per file.
   | `tests-serve-a` | fastroute `serve_*` targets except move, snapshot, blockers and scratch_fidelity (baseline, combined, congestion, lock, route, settings) | 112 to 120 s |
   | `tests-serve-b` | fastroute `serve_move` | 150 to 290 s |
   | `tests-serve-c` | fastroute `serve_snapshot` | 204 to 261 s |
-  | `tests-serve-d` | fastroute `serve_blockers` (blocked.dsn, errors, determinism, hb200 and energy-12-1 opens) | 25 to 45 s |
+  | `tests-serve-d` | fastroute `serve_blockers` (blocked.dsn, errors, determinism, hb200 and energy-12-1 opens, the causality falsification) | 140 to 150 s |
   | `tests-serve-e` | fastroute `serve_scratch_fidelity` alone (it is the slowest target) | 200 to 305 s |
 | `final` | records check, coverage, ledger, parity-skips, parity-route, stock-pin, conformance t1 and t2, plain-bin, conformance-plain-t1 | 160 s (includes the `--list` coverage pass and the plain-binary build) |
 
@@ -240,3 +240,35 @@ byte-identical to upstream (`pcbkit-ab.sh` proves it).
   the session.
 * Locked wiring is the lock registry's `UserFixed` wiring, not DSN `fix` wires: the two route the other nets differently, so a
   board with `fix` wires is not a reference for a locked one.
+
+## Serve `blockers` names causal objects (`crates/fr-serve/src/ops/blockers.rs`, falsified by `tests/serve_blockers.rs`)
+
+The first version named what the alone-route touched. On a real board that is hundreds of items (energy-12-1
+U3 opens: 421 to 440 objects), and the fallbacks (`nearest_wiring`, the wiring on the free path) named wires
+that did not matter. Falsification on hb200 and energy-12-1 (seed 0, one thread; rip-up of the named routed
+wires, then `route nets: [net]`; or the named wiring taken off a copy, then the alone-route) found:
+
+| open | first answer | cause found | now |
+|---|---|---|---|
+| hb200 `MCU.VDD_1V1` C18-1 to a via | congestion, 3 wires named, ripping them did not route it (nor did the pipeline with nothing ripped) | the free path touches 3 wires, but with the routed wiring kept other nets' wires also block; the search names none of them | congestion; 5 to 8 routed wires named, found by `causal_set`; ripping them routes the net (control without rip: open) |
+| hb200 `I2C_BUS_SDA` R10-1 to a via; energy-12-1 `MCU.XOUT` C20-1 to Y1-3 | congestion, nearest wires named | the alone-route returns "routed" with nothing added: fixed copper of the net already joins the ends for the maze, but not for the connectivity (energy-12-1: a fixed wire ends on the corner of another, a T-junction, `(wire (path F.Cu 150 37400 -38200 39270 -38200))` ends where `(path ... 39270 -39100 39270 -38200 ...)` has a corner) | `blocked`; the two items at the gap are named (`gap_items`). Not routable by any router; the DSN writer must split the wire at the junction |
+| energy-12-1 U3-21, U3-24, U3-51 (`MCU.XOUT_R`, `MCU.SWCLK`, `MCU.QSPI_IO3`) | blocked, 20 objects, 3 to 10 of them wires, removing them did not unblock | the first 20 touched objects are not a cut; more rounds are needed | blocked; 5, 18 and 20 fixed wires and vias (DSN fanout copper of GND, VDD_1V1, VDD_3V3 and the neighbouring signals), removing them lets the alone-route succeed |
+
+`causal_set`: remove the wires and vias among the hits (round by round, then, on the kept board, every other
+net's routed item nearest the line when the search names none), until the attempt routes, then keep the shortest
+prefix that is enough (binary search; removing more never hurts). Pins, keepouts and the boundary are named only
+when taking off all wiring is not enough. Class rules: strip-mode alone-route fails: `blocked`; routes with items
+added: `congestion`, attributed on the board with the routed wiring kept; routes with nothing added: `blocked`
+(SPEC 5.6 calls this `congestion`; the SPEC does not cover it, and a contract patch should say so).
+
+Comparison with the earlier manual attribution (lock test, pitfall 8: "own_via blames point at U3's own fanout
+via"): the named vias alone do NOT unblock U3-21 (2 vias), U3-24 (6) or U3-51 (6); with the fixed wires named next to
+them they do. Fanout vias are part of the answer, not all of it. Every named wire and via of these opens is fixed
+copper from the DSN, so the router cannot rip it: the fix lies in the DSN (do not emit that fanout), not in the
+placement of a movable part. Seeds 1 and 2 give the same opens (hb200 seed 1: the congestion open again, 5 wires, fixed
+by ripping them; seed 2 routes it).
+
+The test (`named_blockers_are_causal_on_corpus_boards`) uses `fr_serve::falsify::Probe` (feature `test-hooks`, never in
+a shipped build): the protocol has no op that removes one wire, so the test removes items in-process. A ripped board
+routes slightly differently from a fresh one (see "route from scratch is placement-pure"); the pipeline check is a
+sufficient-condition check, with a control route in the same state.

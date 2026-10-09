@@ -245,3 +245,110 @@ fn corpus_boards_name_their_blockers() {
     }
     eprintln!("corpus opens: {total}");
 }
+
+// ---- falsification: are the named blockers causal? -------------------------------------------
+//
+// The corpus boards are routed from scratch with seed 0 (one thread). For every open connection the
+// test takes the named objects off the board and checks that the connection then routes:
+//   congestion  rip up the named routed wires and vias (the ones that are not fixed), then route
+//               that net with the real pipeline (`route nets: [net]`, the other nets stay as they are);
+//   blocked     take every named wire and via off a copy (fixed wiring too: it is the only thing
+//               left on the alone board) and route the connection alone. A pin, keepout or the
+//               boundary cannot be taken off; one is named only when taking off all wiring is not
+//               enough, and then the open is infeasible by geometry, which the test asserts.
+// A control route (same request, nothing ripped) shows which congestion opens the rip-up really fixed.
+
+use fr_serve::falsify::Probe;
+
+fn is_open(r: &Value, c: &Value) -> bool {
+    let k = conn(c);
+    r["unrouted_connections"].as_array().unwrap().iter().any(|u| {
+        u["net"] == k["net"] && ((u["from"] == k["from"] && u["to"] == k["to"]) || (u["from"] == k["to"] && u["to"] == k["from"]))
+    })
+}
+
+/// Ids of the named objects a rip-up can remove: routed wires and vias, neither fixed nor locked.
+fn rippable(list: &[Value]) -> Vec<i64> {
+    let routed: Vec<Value> = list.iter().filter(|x| x["fixed"] == false && x["locked"] == false).cloned().collect();
+    Probe::wire_ids(&routed)
+}
+
+#[derive(Default, Debug)]
+struct Tally {
+    congestion: usize,
+    /// congestion opens that route after the named wires are ripped up
+    fixed_by_rip: usize,
+    /// ... of which the control route (nothing ripped) leaves open
+    fixed_only_by_rip: usize,
+    blocked: usize,
+    /// blocked opens whose alone route succeeds once the named wiring is taken off
+    fixed_by_removal: usize,
+    /// blocked opens that name a pin (or other item that cannot be taken off)
+    names_immovable: usize,
+}
+
+fn kinds(list: &[Value]) -> String {
+    let mut n: std::collections::BTreeMap<String, usize> = Default::default();
+    for x in list {
+        let tag = format!("{}{}{}", x["kind"].as_str().unwrap(), if x["fixed"] == true { "(fixed)" } else { "" }, x["net"].as_str().map(|s| format!(":{s}")).unwrap_or_default());
+        *n.entry(tag).or_default() += 1;
+    }
+    n.iter().map(|(k, v)| format!("{k}x{v}")).collect::<Vec<_>>().join(" ")
+}
+
+fn falsify_board(name: &str, seed: i64) -> Tally {
+    let dsn = corpus_dir().join("det").join(name).join("board.dsn");
+    let mut p = Probe::open(dsn.canonicalize().unwrap().to_str().unwrap(), 1);
+    let r = p.call("route", json!({ "seed": seed, "from": "scratch" }));
+    let snap = p.call("snapshot", json!({}))["snapshot"].as_str().unwrap().to_string();
+    let mut t = Tally::default();
+    for c in r["unrouted_connections"].as_array().unwrap() {
+        let k = conn(c);
+        let b = p.call("blockers", json!({ "connection": k }));
+        let list = b["blockers"].as_array().unwrap().clone();
+        let tag = format!("{name}/seed{seed} {} {}->{}", c["net"], c["from"], c["to"]);
+        assert!(!list.is_empty(), "{tag}: names nothing");
+        match b["class"].as_str().unwrap() {
+            "congestion" => {
+                t.congestion += 1;
+                let control = !is_open(&p.call("route", json!({ "seed": seed, "nets": [c["net"]] })), c);
+                p.call("restore", json!({ "snapshot": snap }));
+                let ids = rippable(&list);
+                let gone = p.rip(&ids);
+                let ok = !is_open(&p.call("route", json!({ "seed": seed, "nets": [c["net"]] })), c);
+                p.call("restore", json!({ "snapshot": snap }));
+                eprintln!("{tag}: congestion; names {} ({}); {gone} ripped; routes after rip {ok}, control without rip {control}", list.len(), kinds(&list));
+                t.fixed_by_rip += ok as usize;
+                t.fixed_only_by_rip += (ok && !control) as usize;
+            }
+            "blocked" => {
+                t.blocked += 1;
+                let immovable: Vec<&Value> = list.iter().filter(|x| !matches!(x["kind"].as_str(), Some("wire" | "via"))).collect();
+                let wiring = Probe::wire_ids(&list);
+                let ok = p.alone_without(&k, &wiring);
+                // the earlier manual attribution blamed the fanout vias alone: do the named vias suffice?
+                let vias: Vec<Value> = list.iter().filter(|x| x["kind"] == "via").cloned().collect();
+                let vias_only = p.alone_without(&k, &Probe::wire_ids(&vias));
+                eprintln!("{tag}: blocked; names {} ({}); alone route after taking the named wiring off: {ok}; the {} named vias alone: {vias_only}", list.len(), kinds(&list), vias.len());
+                t.fixed_by_removal += ok as usize;
+                t.names_immovable += !immovable.is_empty() as usize;
+                assert!(ok || !immovable.is_empty(), "{tag}: taking off the named wiring does not unblock it and no pin or keepout is named");
+            }
+            other => panic!("{tag}: class {other}"),
+        }
+    }
+    eprintln!("{name}/seed{seed}: {t:?}");
+    t
+}
+
+#[test]
+fn named_blockers_are_causal_on_corpus_boards() {
+    let (mut congestion, mut fixed) = (0, 0);
+    for (name, seed) in [("hb200", 0), ("energy-12-1", 0), ("hb200", 1)] {
+        let t = falsify_board(name, seed);
+        congestion += t.congestion;
+        fixed += t.fixed_by_rip;
+    }
+    assert!(congestion >= 1, "the corpus has a congestion-class open");
+    assert!(fixed * 5 >= congestion * 4, "ripping the named wires fixed {fixed} of {congestion} congestion opens (need 80%)");
+}

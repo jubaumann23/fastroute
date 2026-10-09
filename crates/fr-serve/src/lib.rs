@@ -17,6 +17,11 @@ mod sha256;
 
 pub mod ops;
 
+/// In-process probe for the blockers falsification test (test-only).
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub mod falsify;
+
 /// Re-exported for the CLI crate's protocol tests (the only place besides this crate that speaks JSON).
 #[doc(hidden)]
 pub use serde_json;
