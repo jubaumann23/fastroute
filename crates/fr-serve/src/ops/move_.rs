@@ -184,6 +184,36 @@ fn parse_moves(board: &BasicBoard, args: &Map<String, Value>) -> R<Vec<Move>> {
     Ok(moves)
 }
 
+/// The moved component's pads (all layers) must lie inside the bounding box of the board outline
+/// (not a polygon test). The caller runs this on the Work clone, so an error leaves the session as it was.
+fn check_on_board(board: &BasicBoard, m: &Move) -> R<()> {
+    let mut pads: Option<fr_geom::IntBox> = None;
+    for pin in board.get_component_pins(m.no) {
+        let bb = board.item(pin).bounding_box(board);
+        pads = Some(pads.map_or(bb, |u| u.union_int_box(&bb)));
+    }
+    let Some(pads) = pads else { return Ok(()) };
+    let outline = facts::boundary(board);
+    let inside = pads.ll.x as i64 >= outline[0]
+        && pads.ll.y as i64 >= outline[1]
+        && pads.ur.x as i64 <= outline[2]
+        && pads.ur.y as i64 <= outline[3];
+    if inside {
+        return Ok(());
+    }
+    let ct = board.communication.coordinate_transform;
+    let res = board.communication.resolution as f64;
+    let to_units = |b: &fr_geom::IntBox| {
+        let r = ct.board_to_dsn_box(b);
+        let (x1, x2) = (r[0].min(r[2]), r[0].max(r[2]));
+        let (y1, y2) = (r[1].min(r[3]), r[1].max(r[3]));
+        [(x1 * res).round() as i64, (y1 * res).round() as i64, (x2 * res).round() as i64, (y2 * res).round() as i64]
+    };
+    let outline_box = fr_geom::IntBox::new(outline[0] as i32, outline[1] as i32, outline[2] as i32, outline[3] as i32);
+    Err(ProtoError::bad_request(format!("{}: pose puts the part outside the board outline", m.name))
+        .with_details(json!({ "ref": m.name, "bbox": to_units(&pads), "boundary": to_units(&outline_box) })))
+}
+
 pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     check_keys(args, &["moves", "carry", "unlock"], "move")?;
     let carry = match args.get("carry").map(|v| as_str(v, "move.carry")).transpose()? {
@@ -245,6 +275,7 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
             }
         }
         b.place_component(m.no, m.new_loc, m.new_rot, m.front).map_err(|e| ProtoError::bad_request(format!("{}: {e}", m.name)))?;
+        check_on_board(b, m)?;
     }
 
     work.board.moves.push(args.clone());
