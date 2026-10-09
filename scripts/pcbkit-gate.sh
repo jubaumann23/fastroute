@@ -3,11 +3,12 @@
 # Usage: pcbkit-gate.sh [--phase <name>]
 #   (no flag)        everything in one call, as before (can exceed a 600 s foreground limit)
 #   --phase tests-core     workspace tests except the fastroute serve_* corpus targets
-#   --phase tests-serve-a  fastroute serve_* targets except move, snapshot, blockers, scratch_fidelity
+#   --phase tests-serve-a  fastroute serve_* targets except move, snapshot, blockers, scratch_fidelity, determinism_load
 #   --phase tests-serve-b  fastroute serve_move
 #   --phase tests-serve-c  fastroute serve_snapshot
 #   --phase tests-serve-d  fastroute serve_blockers
 #   --phase tests-serve-e  fastroute serve_scratch_fidelity (alone: ~200 s)
+#   --phase tests-serve-f  fastroute serve_determinism_load (8 oversubscribed concurrent servers, ~100 to 320 s)
 #   --phase final          ledger, parity-skips, parity-route, stock-pin, conformance t1/t2, plain-bin
 #                          (shipped binary has no test hooks) and refusal unless fresh records of all test phases cover the workspace
 # Each test phase writes target/pcbkit-gate/<phase>.<HEAD sha>.{log,rc} (rc holds rc, executed
@@ -29,12 +30,12 @@ PHASE=""
 case "${1:-}" in
   "") ;;
   --phase) PHASE=${2:-}; [ $# -eq 2 ] || { echo "pcbkit-gate: --phase needs exactly one name" >&2; exit 2; } ;;
-  *) echo "pcbkit-gate: usage: $0 [--phase tests-core|tests-serve-a|tests-serve-b|tests-serve-c|tests-serve-d|tests-serve-e|final]" >&2; exit 2 ;;
+  *) echo "pcbkit-gate: usage: $0 [--phase tests-core|tests-serve-a|tests-serve-b|tests-serve-c|tests-serve-d|tests-serve-e|tests-serve-f|final]" >&2; exit 2 ;;
 esac
-TEST_PHASES="tests-core tests-serve-a tests-serve-b tests-serve-c tests-serve-d tests-serve-e"
+TEST_PHASES="tests-core tests-serve-a tests-serve-b tests-serve-c tests-serve-d tests-serve-e tests-serve-f"
 case " $TEST_PHASES final " in
   *" $PHASE "*) ;;
-  *) [ -z "$PHASE" ] || echo "pcbkit-gate: unknown phase '$PHASE' (tests-core tests-serve-a tests-serve-b tests-serve-c tests-serve-d tests-serve-e final)" >&2
+  *) [ -z "$PHASE" ] || echo "pcbkit-gate: unknown phase '$PHASE' (tests-core tests-serve-a tests-serve-b tests-serve-c tests-serve-d tests-serve-e tests-serve-f final)" >&2
      [ -z "$PHASE" ] || exit 2 ;;
 esac
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -134,13 +135,14 @@ phase_cargo_args() { # phase
     tests-serve-a)
       for f in crates/fastroute/tests/serve_*.rs; do
         t=$(basename "$f" .rs)
-        case "$t" in serve_move|serve_snapshot|serve_blockers|serve_scratch_fidelity) ;; *) others="$others --test $t" ;; esac
+        case "$t" in serve_move|serve_snapshot|serve_blockers|serve_scratch_fidelity|serve_determinism_load) ;; *) others="$others --test $t" ;; esac
       done
       echo "-p fastroute$others" ;;
     tests-serve-b) echo "-p fastroute --test serve_move" ;;
     tests-serve-c) echo "-p fastroute --test serve_snapshot" ;;
     tests-serve-d) echo "-p fastroute --test serve_blockers" ;;
     tests-serve-e) echo "-p fastroute --test serve_scratch_fidelity" ;;
+    tests-serve-f) echo "-p fastroute --test serve_determinism_load" ;;
   esac
 }
 

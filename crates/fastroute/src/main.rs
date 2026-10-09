@@ -525,7 +525,7 @@ fn run() -> Result<(), String> {
             }
         }) as pipeline::Checkpoint
     });
-    let ctx = PipelineContext { stop, wall_clock_limits: limits, optimizer_mode,
+    let ctx = PipelineContext { stop, wall_clock_limits: limits, deterministic: false, optimizer_mode,
         enhancements: !args.parity && !args.no_enhancements,
         multi_start: args.multi_start,
         checkpoint,

@@ -806,7 +806,7 @@ impl BatchOptimizer {
             if ctx.stop.is_stop_requested() || (!ignore_deadline && deadline_passed(self.deadline)) {
                 break;
             }
-            if start.elapsed() >= budget || rejected_in_row >= GREEDY_MAX_REJECTED_IN_ROW {
+            if (!ctx.deterministic && start.elapsed() >= budget) || rejected_in_row >= GREEDY_MAX_REJECTED_IN_ROW {
                 log::info!(
                     "Optimizer greedy phase stopped after {tried} of {total} candidates ({:.1} s, {}).",
                     start.elapsed().as_secs_f64(),
