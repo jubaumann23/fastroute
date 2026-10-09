@@ -233,6 +233,7 @@ step_contract_pin() {
     row contract-pin FAIL "runner $CONF has local changes against ${GOT:0:12}"; return 1
   fi
   row contract-pin PASS "toolkit contract ${GOT:0:12} ($(git -C "$DIR" log -1 --format=%s HEAD | cut -c1-60))"
+  return 0
 }
 
 step_conformance() {
@@ -243,7 +244,7 @@ step_conformance() {
     if [ ! -f "$CONF" ]; then
       row conformance FAIL "runner missing: $CONF"
     elif ! step_contract_pin; then
-      :
+      row conformance FAIL "not run: the runner is not the pinned contract"
     else
       python3 "$CONF" --help 2>&1 | grep -q -- '--stock-cli' && EXTRA=(--stock-cli "$STOCK")
       for th in 1 2; do
