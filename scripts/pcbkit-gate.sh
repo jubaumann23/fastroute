@@ -80,13 +80,13 @@ step_ledger() {
     while IFS= read -r f; do
       [ -z "$f" ] && continue
       case "$f" in
-        crates/fr-serve/*|crates/*/tests/pcbkit_*.rs|crates/fastroute/tests/serve_*.rs|scripts/pcbkit-*.sh|docs/PCBKIT.md|Cargo.lock) continue ;;
+        crates/fr-serve/*|crates/*/tests/pcbkit_*.rs|crates/fastroute/tests/serve_*.rs|scripts/pcbkit-*.sh|scripts/pcbkit/*|docs/PCBKIT.md|docs/PCBKIT-*.md|Cargo.lock) continue ;;
       esac
       printf '%s' "$LEDGER" | grep -qF -- "$f" || UNLISTED="$UNLISTED $f"
     done <<<"$CHANGED"
     if [ -z "$UNLISTED" ]; then row ledger PASS "all changed paths listed or exempt"; else row ledger FAIL "unlisted:$UNLISTED"; fi
     # Core files the fork changes against the base (everything not exempt), for review.
-    CORE=$(printf '%s\n' "$CHANGED" | grep -v -e '^crates/fr-serve/' -e '^crates/[^/]*/tests/' -e '^scripts/pcbkit-' -e '^docs/PCBKIT.md$' -e '^Cargo.lock$' -e '^$')
+    CORE=$(printf '%s\n' "$CHANGED" | grep -v -e '^crates/fr-serve/' -e '^crates/[^/]*/tests/' -e "^scripts/pcbkit-" -e "^scripts/pcbkit/" -e "^docs/PCBKIT.md$" -e "^docs/PCBKIT-" -e '^Cargo.lock$' -e '^$')
     row core-files INFO "$(printf '%s\n' "$CORE" | grep -c .) vs $BASE: $(printf '%s\n' "$CORE" | paste -sd' ')"
   else
     row ledger FAIL "git diff $BASE..HEAD failed: $(head -1 "$LOGDIR/ledger.err")"

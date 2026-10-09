@@ -92,7 +92,7 @@ CONTRACT_COMMIT: 3fc599c34fb1bea792e6e3a9dc4f43ba9ba73918
   same commit.
   `ledger` step: every path in `git diff --name-only ${PCBKIT_BASE:-v0.1.13}..HEAD` must be exempt
   (`crates/fr-serve/**`, `crates/*/tests/pcbkit_*.rs`, `crates/fastroute/tests/serve_*.rs`,
-  `scripts/pcbkit-*.sh`, `docs/PCBKIT.md`, `Cargo.lock`) or appear in the PATCH LEDGER table below.
+  `scripts/pcbkit-*.sh`, `scripts/pcbkit/*`, `docs/PCBKIT.md`, `docs/PCBKIT-*.md`, `Cargo.lock`) or appear in the PATCH LEDGER table below.
   Last result: see the commit that last touched this line; conformance runs at t1 and t2 (SKIP only
   if the binary has no `serve`), exit 0.
 * `scripts/pcbkit-ab.sh [--parity] [--quick] [--shard i/n] <base> <new> [threads...]`: routes the corpus
