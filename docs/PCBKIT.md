@@ -79,6 +79,14 @@ holds `sha256  path-in-corpus  original-source` per file.
 
 STOCK_CLI_SHA256: 0e1bfbeed55916db2dffd87474e9d4e04ab7e4c824faf09469bb33b335cc929e
 
+  Pinned toolkit contract (the `rust-protocol` commit whose `scripts/router_conformance.py` the
+  `final` phase runs; `contract-pin` prints it and FAILs on any other commit or a modified runner):
+
+CONTRACT_COMMIT: 3fc599c34fb1bea792e6e3a9dc4f43ba9ba73918
+
+  Re-pin it here, in the same commit, when the toolkit publishes a contract patch the fork passes.
+  `final` also prints an INFO row `core-files` listing the non-exempt files changed against the base.
+
   Rebuilding that worktree changes the hash only if the toolchain changes; then re-pin here in the
   same commit.
   `ledger` step: every path in `git diff --name-only ${PCBKIT_BASE:-v0.1.13}..HEAD` must be exempt

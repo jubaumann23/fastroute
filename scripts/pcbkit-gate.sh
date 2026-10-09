@@ -82,6 +82,9 @@ step_ledger() {
       printf '%s' "$LEDGER" | grep -qF -- "$f" || UNLISTED="$UNLISTED $f"
     done <<<"$CHANGED"
     if [ -z "$UNLISTED" ]; then row ledger PASS "all changed paths listed or exempt"; else row ledger FAIL "unlisted:$UNLISTED"; fi
+    # Core files the fork changes against the base (everything not exempt), for review.
+    CORE=$(printf '%s\n' "$CHANGED" | grep -v -e '^crates/fr-serve/' -e '^crates/[^/]*/tests/' -e '^scripts/pcbkit-' -e '^docs/PCBKIT.md$' -e '^Cargo.lock$' -e '^$')
+    row core-files INFO "$(printf '%s\n' "$CORE" | grep -c .) vs $BASE: $(printf '%s\n' "$CORE" | paste -sd' ')"
   else
     row ledger FAIL "git diff $BASE..HEAD failed: $(head -1 "$LOGDIR/ledger.err")"
   fi
@@ -213,6 +216,25 @@ step_stock_pin() {
   fi
 }
 
+# The conformance runner must come from the pinned toolkit contract commit (CONTRACT_COMMIT
+# in docs/PCBKIT.md), with the runner file unmodified. Prints the commit it ran from.
+step_contract_pin() {
+  local WANT GOT DIR
+  WANT=$(awk '/^CONTRACT_COMMIT:/{print $2; exit}' docs/PCBKIT.md)
+  DIR=$(cd "$(dirname "$CONF")" && pwd)
+  GOT=$(git -C "$DIR" rev-parse HEAD 2>/dev/null)
+  if [ -z "$WANT" ]; then
+    row contract-pin FAIL "no CONTRACT_COMMIT line in docs/PCBKIT.md"; return 1
+  elif [ -z "$GOT" ]; then
+    row contract-pin FAIL "runner $CONF is not in a git checkout"; return 1
+  elif [ "$GOT" != "$WANT" ]; then
+    row contract-pin FAIL "runner checkout at ${GOT:0:12}, pinned ${WANT:0:12} (re-pin docs/PCBKIT.md CONTRACT_COMMIT)"; return 1
+  elif ! git -C "$DIR" diff --quiet HEAD -- "$(basename "$CONF")"; then
+    row contract-pin FAIL "runner $CONF has local changes against ${GOT:0:12}"; return 1
+  fi
+  row contract-pin PASS "toolkit contract ${GOT:0:12} ($(git -C "$DIR" log -1 --format=%s HEAD | cut -c1-60))"
+}
+
 step_conformance() {
   local EXTRA=() th
   # `serve` is not listed in --help; a binary with serve exits 0 on an empty stdin, one
@@ -220,6 +242,8 @@ step_conformance() {
   if "$BIN" serve </dev/null >/dev/null 2>&1; then
     if [ ! -f "$CONF" ]; then
       row conformance FAIL "runner missing: $CONF"
+    elif ! step_contract_pin; then
+      :
     else
       python3 "$CONF" --help 2>&1 | grep -q -- '--stock-cli' && EXTRA=(--stock-cli "$STOCK")
       for th in 1 2; do
