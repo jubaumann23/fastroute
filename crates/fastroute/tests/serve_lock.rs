@@ -234,6 +234,7 @@ fn lock_initial_locks_the_imported_session() {
 }
 
 #[test]
+#[ignore = "on-demand (scripts/pcbkit-bench.sh): routes the energy-12-1 corpus board; tiny.dsn covers the same invariant in locked_nets_survive_five_seeded_reroutes"]
 fn no_lock_leak_on_energy_12() {
     let mut s = Server::start(2);
     s.ok("load", json!({ "dsn": { "path": corpus("det/energy-12-1/board.dsn") } }));

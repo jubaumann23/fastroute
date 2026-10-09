@@ -176,6 +176,7 @@ fn seeds_are_deterministic_across_processes_and_reported() {
 }
 
 #[test]
+#[ignore = "on-demand (scripts/pcbkit-bench.sh): routes corpus boards"]
 fn seed_changes_a_real_board_deterministically() {
     let dsn = corpus("energy-12-1");
     let run = |seed: i64| {
@@ -221,16 +222,19 @@ fn incremental_tiny() {
 }
 
 #[test]
+#[ignore = "on-demand (scripts/pcbkit-bench.sh): routes corpus boards"]
 fn incremental_corpus_energy() {
     incremental_leaves_others(&corpus("energy-12-1"), None);
 }
 
 #[test]
+#[ignore = "on-demand (scripts/pcbkit-bench.sh): routes corpus boards"]
 fn incremental_corpus_hb200() {
     incremental_leaves_others(&corpus("hb200"), None);
 }
 
 #[test]
+#[ignore = "on-demand (scripts/pcbkit-bench.sh): routes corpus boards"]
 fn incremental_corpus_heuristic_baseline() {
     incremental_leaves_others(&corpus("heuristic-baseline-1"), None);
 }

@@ -258,21 +258,25 @@ fn tiny_locked_net_t2() {
 }
 
 #[test]
+#[ignore = "on-demand (scripts/pcbkit-bench.sh): routes a corpus board several times"]
 fn hb200_t1() {
     check_board("hb200", 1);
 }
 
 #[test]
+#[ignore = "on-demand (scripts/pcbkit-bench.sh): routes a corpus board several times"]
 fn hb200_t2() {
     check_board("hb200", 2);
 }
 
 #[test]
+#[ignore = "on-demand (scripts/pcbkit-bench.sh): routes a corpus board several times"]
 fn energy_12_1_t1() {
     check_board("energy-12-1", 1);
 }
 
 #[test]
+#[ignore = "on-demand (scripts/pcbkit-bench.sh): routes a corpus board several times"]
 fn energy_12_1_t2() {
     check_board("energy-12-1", 2);
 }

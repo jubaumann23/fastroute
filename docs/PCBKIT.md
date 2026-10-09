@@ -38,43 +38,42 @@ holds `sha256  path-in-corpus  original-source` per file.
 
 ## Scripts
 
-* `scripts/pcbkit-gate.sh` (run from any fork worktree): `cargo test --release --workspace
-  --no-fail-fast` via `$CARGO_SLOT`, fails on any skipped parity test; Java-vs-Rust SES identity on
-  bm02 and pic_programmer (`scripts/parity-route.sh`); when the binary has `serve`,
-  `router_conformance.py` (`$PCBKIT_CONFORMANCE`) at `--threads 1` and `2`, with `--stock-cli` set to
-  the pinned stock binary `$PCBKIT_STOCK_CLI`. `CARGO_SLOT`, `PCBKIT_CONFORMANCE` and
-  `PCBKIT_STOCK_CLI` are required (exit 2 with the missing names otherwise; `CARGO_SLOT=cargo` for
-  plain cargo). The `stock-pin` step checks the stock binary's sha256 against the line below, so the
-  stock-equivalence check always compares against upstream v0.1.13, never against the fork itself.
-  Prints a PASS/FAIL table.
+* `scripts/pcbkit-gate.sh` (no arguments; run from any fork worktree): the FAST gate. **Owner rule
+  (2026-10-09, binding): the test suite is unit tests that check "x does y", not runs of real boards;
+  the gate runs in seconds.** It does exactly two things: the `ledger` step below, and
+  `cargo test --release --workspace` with the upstream slow tests skipped by name (`SKIP_UPSTREAM`
+  in the script) and every `#[ignore]`d test not run, plus the rule that no test may skip itself for a
+  missing input. `CARGO_SLOT` is required (`CARGO_SLOT=cargo` for plain cargo). The gate builds a
+  cheaper release flavour (no LTO, 16 codegen units, no debug info) into its own `target/pcbkit-gate`,
+  so `target/release` keeps the shipped profile for the bench and a one-file edit rebuilds in seconds
+  instead of over a minute. Measured 2026-10-09: 11 s warm (294 tests run, 25 ignored, 3 upstream
+  skipped); a touched `fr-serve` source adds the rebuild, about 20 s in total, a touched `fr-engine`
+  source about 35 s.
+* `scripts/pcbkit-bench.sh <subcommand>`: everything that is not a unit test, run by hand, one foreground
+  call per subcommand. Nothing in it is part of the gate.
 
-  **Phases** (each one foreground call, well under the 600 s limit; the no-flag run does all of it
-  in one call and takes about 9 to 10 minutes under load):
-
-  | `--phase` | runs | measured wall time |
+  | subcommand | runs | measured wall time |
   |---|---|---|
-  | `tests-core` | `cargo test` for every crate except `fastroute`, plus fastroute `--bins` and its non-`serve_*` test targets (`pipeline_parity`) | 12 to 45 s |
-  | `tests-serve-a` | fastroute `serve_*` targets except move, snapshot, blockers and scratch_fidelity (baseline, combined, congestion, lock, route, settings) | 112 to 120 s |
-  | `tests-serve-b` | fastroute `serve_move` | 150 to 290 s |
-  | `tests-serve-c` | fastroute `serve_snapshot` | 204 to 261 s |
-  | `tests-serve-d` | fastroute `serve_blockers` (blocked.dsn, errors, determinism, hb200 and energy-12-1 opens, the causality falsification) | 140 to 150 s |
-  | `tests-serve-e` | fastroute `serve_scratch_fidelity` alone (it is the slowest target) | 200 to 305 s |
-  | `tests-serve-f` | fastroute `serve_determinism_load` (F1: 8 concurrent servers at 2 threads on det/hb200 under `4 x cores` busy threads, two repetitions, SES bytes identical; each wait has a 900 s hard timeout) | 100 to 320 s |
-| `final` | records check, coverage, ledger, parity-skips, parity-route, stock-pin, conformance t1 and t2, plain-bin, conformance-plain-t1 | 160 s (includes the `--list` coverage pass and the plain-binary build) |
+  | `ignored [cargo args]` | all `#[ignore = "on-demand ..."]` tests except the determinism sweep: corpus boards routed, rip-up falsification, snapshot/scratch fidelity on hb200 and energy-12-1, stock equivalence on all fr-io test DSNs. Split with cargo args, e.g. `ignored -p fastroute --test serve_snapshot` | `serve_blockers` 59 s, `serve_move` 125 s, `serve_route` 34 s, `serve_settings` 50 s, `serve_baseline` 4 s, `serve_lock` 8 s, `serve_snapshot` + `serve_scratch_fidelity` 327 s; about 10 min in total |
+  | `determinism` | `serve_determinism_load`: 8 concurrent servers at 2 threads on det/hb200 under `4 x cores` busy threads, two repetitions, SES bytes identical (F1); each wait has a 900 s hard timeout | 100 to 320 s |
+  | `upstream` | the upstream test files the gate trims: `fr-engine` `board_replay` (`autoroute_operations_match_java`, 6.3 s) and `fastroute` `pipeline_parity` (`parallel_optimizer_is_deterministic` 1.8 s, `bm02_full_pipeline_matches_java` 1.0 s) | 59 s including the build |
+  | `parity-route` | Java vs Rust SES identity on bm02 and pic_programmer (`scripts/parity-route.sh`, needs the Java parity jar) | 49 s |
+  | `stock-pin` | `$PCBKIT_STOCK_CLI` sha256 equals the `STOCK_CLI_SHA256` line below | 0 s |
+  | `plain-bin` | builds the shipped binary (no `test-hooks`) into `target/pcbkit-plain`; fails if `FR_SERVE_TEST_PANIC` is in it | 41 s |
+  | `conformance` | `router_conformance.py` (`$PCBKIT_CONFORMANCE`, must be the `CONTRACT_COMMIT` checkout) at `--threads 1` and `2` on the plain binary, with `--stock-cli $PCBKIT_STOCK_CLI` | minutes |
+  | `all` | every subcommand above in that order (over a 600 s foreground limit; call them one by one) | |
 
-  Times were measured on the shared box at load average 8 to 17 with a warm build (a cold
-  release build of the workspace adds about 150 s to whichever phase runs first, so build once with
-  `cargo test --release --workspace --no-run` before the phases). Every phase must stay under
-  480 s; if a `serve_*` target grows past that, move it to its own phase in `phase_cargo_args`.
-
-  Each test phase writes `target/pcbkit-gate/<phase>.<HEAD sha>.{log,rc}`; the `.rc` holds `rc`,
-  `executed`, `dirty` and `binsha` (sha256 of `target/release/fastroute`). The skip-line rule
-  applies to every phase log. `final` refuses with a FAIL row when a record for the current HEAD is
-  missing or failed, the worktree is dirty (now or when the record was taken), the binary sha
-  differs from the recorded one, or the phases do not cover the workspace: the test names from
-  `cargo test --release --workspace -- --list` must all appear in the executed names of the
-  phase logs. Run the test phases on the commit you intend to report, then `final`; any commit
-  after them makes the records stale.
+  Run the bench before a release and after a rebase (`scripts/pcbkit-rebase.sh --full` does), not on every
+  commit. Where an `#[ignore]`d test was the only coverage of a behaviour, a small test on a tiny
+  synthetic board stays in the gate: `serve_blockers` `named_blockers_are_causal_on_the_blocked_fixture`
+  (causal blockers on blocked.dsn), `serve_move` `move_then_route_from_current_returns_and_is_deterministic_on_tiny`
+  (F2 at threads 2 and 4) and `move_then_route_equals_reload_tiny`, `serve_lock`
+  `locked_nets_survive_five_seeded_reroutes`, `serve_snapshot` `tiny_threads_{1,4}`, `serve_scratch_fidelity`
+  `tiny_*`, `serve_route` `incremental_tiny` and `seeds_are_deterministic_across_processes_and_reported`,
+  `serve_settings` (edge clearance and stock equivalence on tiny.dsn with a shrunk outline, written at test
+  time), `serve_baseline` (stock equivalence on tiny and blocked), and the `fr-engine` unit tests
+  `pcbkit_min_width_tests` for the minimum-width clamp. A new test that routes a corpus board gets
+  `#[ignore = "on-demand (scripts/pcbkit-bench.sh): <why>"]`.
 
   Pinned stock binary: `cargo build --release` of tag v0.1.13 (6e14035) in its own worktree
   `fastroute-wt/base` (detached, clean), `target/release/fastroute`, `fastroute 0.1.13`:
@@ -82,12 +81,12 @@ holds `sha256  path-in-corpus  original-source` per file.
 STOCK_CLI_SHA256: 0e1bfbeed55916db2dffd87474e9d4e04ab7e4c824faf09469bb33b335cc929e
 
   Pinned toolkit contract (the `rust-protocol` commit whose `scripts/router_conformance.py` the
-  `final` phase runs; `contract-pin` prints it and FAILs on any other commit or a modified runner):
+  bench `conformance` subcommand runs; `contract-pin` prints it and FAILs on any other commit or a modified runner):
 
 CONTRACT_COMMIT: 3fc599c34fb1bea792e6e3a9dc4f43ba9ba73918
 
   Re-pin it here, in the same commit, when the toolkit publishes a contract patch the fork passes.
-  `final` also prints an INFO row `core-files` listing the non-exempt files changed against the base.
+  The gate prints an INFO row `core-files` listing the non-exempt files changed against the base.
 
   Rebuilding that worktree changes the hash only if the toolchain changes; then re-pin here in the
   same commit.
@@ -128,7 +127,7 @@ CONTRACT_COMMIT: 3fc599c34fb1bea792e6e3a9dc4f43ba9ba73918
   results (`canonical_nan_bits`); every non-NaN comparison is unchanged and bit-exact.
 * Observation, not changed: `pic_programmer` parity log lines differ from Java's only by an
   added annotation ("1 of them pre-existing between fixed items"); the SES is byte-identical, so
-  the gate judges on `ses=IDENTICAL`.
+  the bench judges on `ses=IDENTICAL`.
 
 ## Rebasing on a new upstream tag
 
@@ -140,11 +139,11 @@ CONTRACT_COMMIT: 3fc599c34fb1bea792e6e3a9dc4f43ba9ba73918
 2. Build the old and new upstream binaries (`cargo build --release` at each tag) and run
    `scripts/pcbkit-ab.sh <old-upstream-bin> <new-upstream-bin>` to see the expected drift in the
    corpus (differences here are upstream's, not ours).
-3. Run `scripts/pcbkit-gate.sh` (upstream tests and parity must stay green; re-seed
+3. Run `scripts/pcbkit-gate.sh`, then `scripts/pcbkit-bench.sh upstream` and `parity-route` (upstream tests and parity must stay green; re-seed
    `reference/freerouting` if upstream names a new parity commit and rebuild the jar as above).
 4. Run `scripts/pcbkit-ab.sh <pcbkit-before-rebase-bin> <pcbkit-after-rebase-bin>`; with the
    hooks default-off, drift must equal step 2.
-5. Re-run `router_conformance.py` (gate does this at threads 1 and 2) and bump the router build hash.
+5. Re-run `router_conformance.py` (`pcbkit-bench.sh conformance` does this at threads 1 and 2) and bump the router build hash.
 
 ## `fastroute serve` usage
 
@@ -166,8 +165,8 @@ PCBKIT_FASTROUTE_SERVE_CMD="/home/jubau/coolProjects/fastroute/target/pcbkit-pla
 
 Build that binary with `CARGO_TARGET_DIR=<checkout>/target/pcbkit-plain cargo build --release -p fastroute`: it is the
 shipped binary, without the `test-hooks` feature. `target/release/fastroute` is built by `cargo test` WITH test-hooks
-(it contains the `FR_SERVE_TEST_PANIC` fault injection), so do not point the toolkit at it. The gate's `plain-bin` row
-builds it this way and fails if `strings` finds `FR_SERVE_TEST_PANIC`; `conformance-plain-t1` runs the runner on it.
+(it contains the `FR_SERVE_TEST_PANIC` fault injection), so do not point the toolkit at it. The bench `plain-bin` subcommand
+builds it this way and fails if `strings` finds `FR_SERVE_TEST_PANIC`; `conformance` runs the runner on it.
 
 (any absolute path to a built `fastroute` binary followed by the word `serve`). Conformance:
 
@@ -211,6 +210,7 @@ byte-identical to upstream (`pcbkit-ab.sh` proves it).
 | H6 net mask | `crates/fr-engine/src/board/routing_board.rs:221-222` (`route_nets` field), `:269` (init), `crates/fr-engine/src/pipeline/autorouter.rs:253-258`, `crates/fr-engine/src/pipeline/fanout.rs:92-96` | +14 (routing_board 2+1, autorouter 6, fanout 5) | mask unset = all nets | route only a subset of nets |
 | F2 stale rooms + bounded retry | `crates/fr-engine/src/board/routing_board.rs` (`clone_for_worker`), `crates/fr-engine/src/pipeline/autorouter.rs:140,170,672` and `crates/fr-engine/src/pipeline/optimizer.rs:424,819` (clone sites switched to it), `crates/fr-engine/src/autoroute/engine.rs` (`MAX_ROOM_FAULTS`, `take_engine_fault`, `room_faults`, test hook), `crates/fr-engine/Cargo.toml` (`test-hooks` feature) | +15 routing_board, 1 line each at the 5 clone sites, +45 engine.rs, +3 Cargo.toml | rooms: none present = identical output; fault counter: only after 8 consecutive panics | a worker board must not carry expansion rooms of an engine it does not have (F2); a repeating completion panic can no longer loop |
 | H7 deterministic | `crates/fr-engine/src/pipeline/mod.rs` (`PipelineContext.deterministic` field + default, `multi_start` variant ctx, multi-start skip guard, default optimizer budget guard), `crates/fr-engine/src/pipeline/optimizer.rs` (greedy-phase wall budget guard), `crates/fr-engine/src/pipeline/autorouter.rs` (slow-pass stagnation guard), `crates/fastroute/src/main.rs` (`deterministic: false` in the CLI's ctx literal) | +10 -4 in fr-engine core (mod.rs +8 -2 incl. 4 doc lines, optimizer.rs +1 -1, autorouter.rs +1 -1), +1 -1 main.rs | `ctx.deterministic` (default false; only `fr-serve` sets it) | serve results independent of CPU load (F1): no wall-clock decision changes the output |
+| H8 min-width clamp | `crates/fr-engine/src/autoroute/control.rs` (`clamp_neckdown_half_width` now calls the free `clamp_half_width_to_min`, plus the `pcbkit_min_width_tests` unit-test module) | +30 -5 | none (behaviour unchanged; `router.min_trace_width_um` unset = no clamp) | the neck-down floor is unit-testable without routing a board (owner rule 2026-10-09) |
 | T1 test-only | `scripts/parity-route.sh` (lines 15-21, 26, 28, 57, 59-60), `crates/fr-jcompat/tests/jdk_vectors.rs:293-320` | 17 and 16 | n/a | Linux support, see above |
 
 ## F2: move, then route from the current board at 2+ threads (fixed)
@@ -254,7 +254,7 @@ An explicit client `budget` still means wall time and is the only nondeterminist
 unchanged (`deterministic: false`), so on a board where the stock run itself hits one of these stops under load, serve
 (which never stops there) differs from it. Measured without load, seed 0, `sweep.py --equiv-only --threads 1,2`,
 core corpus (9 boards, 36 rows): all rows SAME or SAME-ERR, 0 bad; `pcbkit-ab.sh --quick` before vs after: ALL SAME.
-No stock-equivalence row had to be excluded. Test: `serve_determinism_load` (phase `tests-serve-f`); on the shared
+No stock-equivalence row had to be excluded. Test: `serve_determinism_load` (`pcbkit-bench.sh determinism`); on the shared
 development host it was already green before the fix (the greedy stop needs a trial that takes over 2 s, which a
 loaded host did not produce for hb200 or energy-12-1), so it is a regression guard, not a proven red-to-green test.
 

@@ -252,11 +252,13 @@ fn move_then_route_equals_reload_tiny() {
 }
 
 #[test]
+#[ignore = "on-demand (scripts/pcbkit-bench.sh): routes the energy-8 corpus board twice"]
 fn move_then_route_equals_reload_corpus_energy8() {
     assert_move_equals_reload("energy8", &corpus("runs/energy-8/base/layout/.route/board.dsn"), "R4", 10000, 0, None, false);
 }
 
 #[test]
+#[ignore = "on-demand (scripts/pcbkit-bench.sh): routes the heuristic-baseline corpus board twice"]
 fn move_then_route_equals_reload_corpus_heuristic() {
     assert_move_equals_reload("heuristic", &corpus("runs/heuristic-baseline/base/layout/.route/board.dsn"), "R6", 10000, -5000, Some(180), false);
 }
@@ -290,18 +292,19 @@ impl Drop for Watchdog {
 
 const HANG_SECS: u64 = 240;
 
+/// `unit_scale` converts the DSN file unit to board resolution units (tiny.dsn: um, resolution um 10).
 /// Scratch route, move R2 and C18 by 1000 units in x, route nets:all from:current; the SES afterwards.
-fn move_two_then_route_current(dsn: &Path, threads: u32) -> String {
+fn move_two_then_route_current(dsn: &Path, threads: u32, refs: [&str; 2], unit_scale: f64) -> String {
     let text = std::fs::read_to_string(dsn).unwrap();
     let mut s = Server::start();
     let _wd = Watchdog::start(s.child.id(), HANG_SECS);
     s.hello(threads, json!({}));
     s.ok("load", json!({ "dsn": path(dsn) }));
     s.ok("route", SCRATCH());
-    for name in ["R2", "C18"] {
+    for name in refs {
         let (x, y, rot, at, end) = place_record(&text, name);
         let side = if text[at..end].contains(" back ") { "back" } else { "front" };
-        let mv = json!({ "ref": name, "x": x.round() as i64 + 1000, "y": y.round() as i64, "rot": rot.round() as i64 % 360, "side": side });
+        let mv = json!({ "ref": name, "x": (x * unit_scale).round() as i64 + 1000, "y": (y * unit_scale).round() as i64, "rot": rot.round() as i64 % 360, "side": side });
         s.ok("move", json!({ "moves": [mv] }));
     }
     let r = s.ok("route", json!({ "seed": 0, "nets": "all", "from": "current" }));
@@ -312,11 +315,12 @@ fn move_two_then_route_current(dsn: &Path, threads: u32) -> String {
 }
 
 #[test]
+#[ignore = "on-demand (scripts/pcbkit-bench.sh): routes the energy-12-1 corpus board 8 times at 2 and 4 threads"]
 fn move_then_route_from_current_returns_at_threads_2_and_4_and_is_deterministic() {
     let dsn = corpus("det/energy-12-1/board.dsn");
     for threads in [2, 4] {
-        let a = move_two_then_route_current(&dsn, threads);
-        let b = move_two_then_route_current(&dsn, threads);
+        let a = move_two_then_route_current(&dsn, threads, ["R2", "C18"], 10.0);
+        let b = move_two_then_route_current(&dsn, threads, ["R2", "C18"], 10.0);
         assert!(a == b, "two server processes differ at threads {threads} after move + route from current");
     }
 }
@@ -334,5 +338,17 @@ fn a_worker_panic_is_an_internal_error_not_a_hang() {
         assert!(e["message"].as_str().unwrap().contains("route"), "{e}");
         assert_eq!(s.ses(), before, "a failed route leaves the session board unchanged");
         s.finish();
+    }
+}
+
+/// Fast stand-in for the energy-12-1 F2 test: move two parts, route from the current board at 2 and 4
+/// threads; it returns (no livelock) and two server processes agree.
+#[test]
+fn move_then_route_from_current_returns_and_is_deterministic_on_tiny() {
+    let dsn = serve_data("tiny.dsn");
+    for threads in [2, 4] {
+        let a = move_two_then_route_current(&dsn, threads, ["R3", "R4"], 10.0);
+        let b = move_two_then_route_current(&dsn, threads, ["R3", "R4"], 10.0);
+        assert!(a == b, "two server processes differ at threads {threads} after move + route from current");
     }
 }

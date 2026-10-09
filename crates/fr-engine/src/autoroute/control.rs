@@ -115,11 +115,7 @@ impl AutorouteControl {
     /// fastroute extension: a neck-down half width raised to the board minimum
     /// (`router.min_trace_width_um`); unchanged when no minimum is set.
     pub fn clamp_neckdown_half_width(&self, half_width: i32) -> i32 {
-        if self.min_trace_half_width > 0 && half_width > 0 {
-            half_width.max(self.min_trace_half_width)
-        } else {
-            half_width
-        }
+        clamp_half_width_to_min(self.min_trace_half_width, half_width)
     }
 
     /// Java `new AutorouteControl(board, netNumber, settings)`.
@@ -348,6 +344,16 @@ pub(crate) fn jmin(a: f64, b: f64) -> f64 {
     }
 }
 
+/// A neck-down half width raised to `min_half_width`; a zero minimum or a zero (no neck-down) width
+/// is left alone.
+fn clamp_half_width_to_min(min_half_width: i32, half_width: i32) -> i32 {
+    if min_half_width > 0 && half_width > 0 {
+        half_width.max(min_half_width)
+    } else {
+        half_width
+    }
+}
+
 /// Board-unit half width for `router.min_trace_width_um` (0 if unset); converted
 /// like the necked-retry width in `router.rs`.
 fn min_trace_half_width(board: &RoutingBoard, settings: &RouterSettings) -> i32 {
@@ -363,4 +369,26 @@ fn min_trace_half_width(board: &RoutingBoard, settings: &RouterSettings) -> i32 
     )) as i32;
     // Round the half width up so that 2 * half >= the requested width.
     (width + 1) / 2
+}
+
+#[cfg(test)]
+mod pcbkit_min_width_tests {
+    use super::clamp_half_width_to_min;
+
+    #[test]
+    fn a_neckdown_below_the_minimum_is_raised_to_it() {
+        assert_eq!(clamp_half_width_to_min(70, 50), 70);
+    }
+
+    #[test]
+    fn a_neckdown_at_or_above_the_minimum_is_unchanged() {
+        assert_eq!(clamp_half_width_to_min(70, 70), 70);
+        assert_eq!(clamp_half_width_to_min(70, 90), 90);
+    }
+
+    #[test]
+    fn no_minimum_or_no_neckdown_leaves_the_width_alone() {
+        assert_eq!(clamp_half_width_to_min(0, 50), 50);
+        assert_eq!(clamp_half_width_to_min(70, 0), 0);
+    }
 }

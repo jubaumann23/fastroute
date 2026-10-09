@@ -2,10 +2,10 @@
 # pcbkit-rebase.sh: replay the pcbkit patch set onto another upstream tag as ONE net patch.
 #
 # Usage: pcbkit-rebase.sh [--quick | --full] [--resume] [--force] [--fetch] [--base TAG] [--src REF] <target-tag>
-#   default   worktree + stock build + net patch + build + conformance t1/t2 + gate phase tests-core
-#   --quick   same without tests-core (conformance only; a few minutes)
-#   --full    every test phase and `final` of scripts/pcbkit-gate.sh (about 30 min; each phase is a
-#             separate foreground call, so run it with --resume per phase set if your shell has a time limit)
+#   default   worktree + stock build + net patch + build + conformance t1/t2 + the fast gate (scripts/pcbkit-gate.sh)
+#   --quick   same without the gate (conformance only; a few minutes)
+#   --full    default plus the on-demand bench (scripts/pcbkit-bench.sh: ignored, determinism, upstream,
+#             parity-route; about 20 min, so run it with --resume if your shell has a time limit)
 #   --resume  reuse an existing rebase worktree (skip create, stock build and patch apply)
 #   --force   remove an existing rebase worktree and its branch first (only ones this script made)
 #   --fetch   run `git fetch upstream --tags` first (read-only network access, off by default)
@@ -18,7 +18,7 @@
 #   2. build the STOCK binary of <tag> (conformance --stock-cli, STOCK_CLI_SHA256 re-pin)
 #   3. `git diff BASE SRC | git apply --3way --index`; report per file and per PATCH LEDGER hook site
 #   4. commit the patch (and the STOCK_CLI_SHA256 re-pin), build the shipped binary (no test-hooks)
-#   5. router_conformance.py at threads 1 and 2, then the gate phases of the chosen mode
+#   5. router_conformance.py at threads 1 and 2, then the gate (and, for --full, the bench) of the chosen mode
 # It only reads pcbkit (SRC), writes only its own worktree + branch, and never pushes or fetches
 # unless --fetch is given. Exit 0 only if every executed step passed; 1 on conflicts or failures; 2 usage.
 # Env: PCBKIT_CONFORMANCE (required: path to the toolkit's router_conformance.py),
@@ -160,19 +160,26 @@ for th in 1 2; do
   fi
 done
 
-run_gate() { # phase...
-  local ph
-  for ph in "$@"; do
-    if CARGO_SLOT=$CARGO_SLOT PCBKIT_BASE=$TARGET PCBKIT_STOCK_CLI=$STOCK scripts/pcbkit-gate.sh --phase "$ph" >"target/rebase/gate-$ph.log" 2>&1; then
-      row "gate-$ph" PASS "$(grep -E 'PASS' "target/rebase/gate-$ph.log" | tail -n1 | cut -c1-60)"
+run_gate() {
+  if CARGO_SLOT=$CARGO_SLOT PCBKIT_BASE=$TARGET scripts/pcbkit-gate.sh >target/rebase/gate.log 2>&1; then
+    row gate PASS "$(grep -E 'PASS' target/rebase/gate.log | tail -n1 | cut -c1-60)"
+  else
+    row gate FAIL "see $WT/target/rebase/gate.log"
+  fi
+}
+run_bench() { # subcommand...
+  local sub
+  for sub in "$@"; do
+    if CARGO_SLOT=$CARGO_SLOT PCBKIT_STOCK_CLI=$STOCK scripts/pcbkit-bench.sh "$sub" >"target/rebase/bench-$sub.log" 2>&1; then
+      row "bench-$sub" PASS "$(grep -E 'PASS' "target/rebase/bench-$sub.log" | tail -n1 | cut -c1-60)"
     else
-      row "gate-$ph" FAIL "see $WT/target/rebase/gate-$ph.log"
+      row "bench-$sub" FAIL "see $WT/target/rebase/bench-$sub.log"
     fi
   done
 }
 case "$MODE" in
   quick) ;;
-  default) run_gate tests-core ;;
-  full) run_gate tests-core tests-serve-a tests-serve-b tests-serve-c tests-serve-d tests-serve-e tests-serve-f final ;;
+  default) run_gate ;;
+  full) run_gate; run_bench ignored determinism upstream parity-route ;;
 esac
 finish

@@ -290,8 +290,12 @@ fn serve_ses(dsn: &Path, threads: u32, settings: Value) -> Option<String> {
     Some(ses)
 }
 
-fn boards() -> Vec<PathBuf> {
+/// The two tracked protocol fixtures; with `all`, also every fr-io test DSN (about 6 s of routing).
+fn boards(all: bool) -> Vec<PathBuf> {
     let mut v = vec![serve_data("tiny.dsn"), serve_data("blocked.dsn")];
+    if !all {
+        return v;
+    }
     let mut extra: Vec<PathBuf> = std::fs::read_dir(manifest().join("../fr-io/testdata/dsn"))
         .unwrap()
         .map(|e| e.unwrap().path())
@@ -303,9 +307,9 @@ fn boards() -> Vec<PathBuf> {
 }
 
 /// serve and the stock CLI give the same session, or both refuse the board; returns the boards compared.
-fn assert_equivalent(settings: Value, flags: &[String]) -> usize {
+fn assert_equivalent(settings: Value, flags: &[String], all: bool) -> usize {
     let mut compared = 0;
-    for dsn in boards() {
+    for dsn in boards(all) {
         for threads in [1, 2] {
             let (serve, stock) = (serve_ses(&dsn, threads, settings.clone()), stock_ses(&dsn, threads, flags));
             assert_eq!(serve, stock, "{} at {threads} thread(s), flags {flags:?}", dsn.display());
@@ -317,14 +321,31 @@ fn assert_equivalent(settings: Value, flags: &[String]) -> usize {
 
 #[test]
 fn serve_route_equals_stock_cli() {
-    assert!(assert_equivalent(json!({}), &[]) >= 10);
+    assert!(assert_equivalent(json!({}), &[], false) >= 4);
+}
+
+#[test]
+#[ignore = "on-demand (scripts/pcbkit-bench.sh): routes every fr-io test DSN at 1 and 2 threads, ~6 s"]
+fn serve_route_equals_stock_cli_on_all_test_boards() {
+    assert!(assert_equivalent(json!({}), &[], true) >= 10);
+}
+
+fn edge_and_width() -> (Value, [String; 2]) {
+    let flags = ["--router.copper_to_edge_clearance_um=400".to_string(), "--router.min_trace_width_um=100".to_string()];
+    (json!({ "router.copper_to_edge_clearance_um": 400, "router.min_trace_width_um": 100 }), flags)
 }
 
 #[test]
 fn serve_route_equals_stock_cli_with_edge_clearance_and_min_width() {
-    let flags = ["--router.copper_to_edge_clearance_um=400".to_string(), "--router.min_trace_width_um=100".to_string()];
-    let settings = json!({ "router.copper_to_edge_clearance_um": 400, "router.min_trace_width_um": 100 });
-    assert!(assert_equivalent(settings, &flags) >= 10);
+    let (settings, flags) = edge_and_width();
+    assert!(assert_equivalent(settings, &flags, false) >= 4);
+}
+
+#[test]
+#[ignore = "on-demand (scripts/pcbkit-bench.sh): routes every fr-io test DSN at 1 and 2 threads, ~6 s"]
+fn serve_route_equals_stock_cli_with_edge_clearance_and_min_width_on_all_test_boards() {
+    let (settings, flags) = edge_and_width();
+    assert!(assert_equivalent(settings, &flags, true) >= 10);
 }
 
 #[test]

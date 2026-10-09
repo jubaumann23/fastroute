@@ -177,8 +177,9 @@ fn check_board(dsn: &Path, threads: u32) {
 }
 
 macro_rules! reproducible {
-    ($name:ident, $board:expr, $threads:expr) => {
+    ($(#[$meta:meta])* $name:ident, $board:expr, $threads:expr) => {
         #[test]
+        $(#[$meta])*
         fn $name() {
             check_board(&$board, $threads);
         }
@@ -187,10 +188,10 @@ macro_rules! reproducible {
 
 reproducible!(tiny_threads_1, serve_data("tiny.dsn"), 1);
 reproducible!(tiny_threads_4, serve_data("tiny.dsn"), 4);
-reproducible!(energy_threads_1, corpus_board("energy-12-1"), 1);
-reproducible!(energy_threads_4, corpus_board("energy-12-1"), 4);
-reproducible!(hb200_threads_1, corpus_board("hb200"), 1);
-reproducible!(hb200_threads_4, corpus_board("hb200"), 4);
+reproducible!(#[ignore = "on-demand (scripts/pcbkit-bench.sh): routes a corpus board several times"] energy_threads_1, corpus_board("energy-12-1"), 1);
+reproducible!(#[ignore = "on-demand (scripts/pcbkit-bench.sh): routes a corpus board several times"] energy_threads_4, corpus_board("energy-12-1"), 4);
+reproducible!(#[ignore = "on-demand (scripts/pcbkit-bench.sh): routes a corpus board several times"] hb200_threads_1, corpus_board("hb200"), 1);
+reproducible!(#[ignore = "on-demand (scripts/pcbkit-bench.sh): routes a corpus board several times"] hb200_threads_4, corpus_board("hb200"), 4);
 
 #[test]
 fn restore_semantics_and_errors() {

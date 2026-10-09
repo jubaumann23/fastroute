@@ -236,6 +236,7 @@ fn attribute_board(name: &str) -> (usize, usize, usize) {
 }
 
 #[test]
+#[ignore = "on-demand (scripts/pcbkit-bench.sh): routes the hb200 and energy-12-1 corpus boards"]
 fn corpus_boards_name_their_blockers() {
     let mut total = 0;
     for name in ["hb200", "energy-12-1"] {
@@ -297,7 +298,10 @@ fn kinds(list: &[Value]) -> String {
 }
 
 fn falsify_board(name: &str, seed: i64) -> Tally {
-    let dsn = corpus_dir().join("det").join(name).join("board.dsn");
+    falsify_dsn(name, &corpus_dir().join("det").join(name).join("board.dsn"), seed)
+}
+
+fn falsify_dsn(name: &str, dsn: &Path, seed: i64) -> Tally {
     let mut p = Probe::open(dsn.canonicalize().unwrap().to_str().unwrap(), 1);
     let r = p.call("route", json!({ "seed": seed, "from": "scratch" }));
     let snap = p.call("snapshot", json!({}))["snapshot"].as_str().unwrap().to_string();
@@ -342,6 +346,7 @@ fn falsify_board(name: &str, seed: i64) -> Tally {
 }
 
 #[test]
+#[ignore = "on-demand (scripts/pcbkit-bench.sh): rips up and re-routes the hb200 and energy-12-1 corpus boards"]
 fn named_blockers_are_causal_on_corpus_boards() {
     let (mut congestion, mut fixed) = (0, 0);
     for (name, seed) in [("hb200", 0), ("energy-12-1", 0), ("hb200", 1)] {
@@ -351,4 +356,12 @@ fn named_blockers_are_causal_on_corpus_boards() {
     }
     assert!(congestion >= 1, "the corpus has a congestion-class open");
     assert!(fixed * 5 >= congestion * 4, "ripping the named wires fixed {fixed} of {congestion} congestion opens (need 80%)");
+}
+
+/// Fast stand-in for the corpus falsification: on blocked.dsn the named blockers of the walled-in N4
+/// connection are causal (taking the named wiring off lets it route, or a pin or keepout is named).
+#[test]
+fn named_blockers_are_causal_on_the_blocked_fixture() {
+    let t = falsify_dsn("blocked", &serve_data("blocked.dsn"), 0);
+    assert!(t.blocked >= 1, "blocked.dsn has a blocked-class open: {t:?}");
 }

@@ -10,7 +10,8 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::OnceLock;
+use std::collections::BTreeMap;
+use std::sync::{Mutex, OnceLock};
 
 use fr_serve::serde_json::{json, Value};
 
@@ -211,88 +212,137 @@ fn copper(ses: &str, outline: &[(f64, f64)]) -> Copper {
 
 // ------------------------------------------------------------------------------ runs, shared
 
-fn dsn_text() -> String {
-    std::fs::read_to_string(board()).unwrap()
+/// A small board whose outline sits close to the pads, so an edge clearance of 500 or 800 um binds:
+/// tiny.dsn with the outline shrunk to 16 x 10.5 mm. Written once per process.
+fn fast_board() -> PathBuf {
+    static P: OnceLock<PathBuf> = OnceLock::new();
+    P.get_or_init(|| {
+        let tiny = std::fs::read_to_string(manifest().join("../fr-serve/tests/data/tiny.dsn")).unwrap();
+        let old = "30000 -25000  10000 -25000  10000 -10000  30000 -10000\n            30000 -25000";
+        assert!(tiny.contains(old), "tiny.dsn outline changed");
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("serve-settings-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("edge.dsn");
+        std::fs::write(&out, tiny.replacen(old, "28000 -23000  12000 -23000  12000 -12500  28000 -12500\n            28000 -23000", 1)).unwrap();
+        out
+    })
+    .clone()
 }
 
-fn run(cell: &'static OnceLock<String>, settings: Value) -> &'static str {
-    cell.get_or_init(|| serve_ses(&board(), settings))
-}
-
-fn edge_200() -> &'static str {
-    static C: OnceLock<String> = OnceLock::new();
-    run(&C, json!({ EDGE_KEY: 200 }))
-}
-
-fn edge_500() -> &'static str {
-    static C: OnceLock<String> = OnceLock::new();
-    run(&C, json!({ EDGE_KEY: 500 }))
-}
-
-fn edge_800() -> &'static str {
-    static C: OnceLock<String> = OnceLock::new();
-    run(&C, json!({ EDGE_KEY: 800 }))
+/// Session of `dsn` under `settings`, routed once per process and cached.
+fn run(dsn: &Path, settings: Value) -> String {
+    static CACHE: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
+    let key = format!("{}|{settings}", dsn.display());
+    if let Some(hit) = CACHE.lock().unwrap().get(&key) {
+        return hit.clone();
+    }
+    let ses = serve_ses(dsn, settings);
+    CACHE.lock().unwrap().insert(key, ses.clone());
+    ses
 }
 
 const FLOOR_UM: u32 = 140;
 
-/// Edge clearance 500 um and a floor above the 112 um the router necks down to by default.
-fn edge_500_floor() -> &'static str {
-    static C: OnceLock<String> = OnceLock::new();
-    run(&C, json!({ EDGE_KEY: 500, WIDTH_KEY: FLOOR_UM }))
-}
+// ------------------------------------------------------------------------------ checks, per board
 
-// ------------------------------------------------------------------------------ tests
-
-#[test]
-fn edge_clearance_changes_the_session_and_is_enforced_geometrically() {
-    let outline = dsn_outline_um(&dsn_text());
-    let (loose, tight) = (edge_200(), edge_500());
+fn check_edge_clearance_changes_and_is_enforced(dsn: &Path) {
+    let outline = dsn_outline_um(&std::fs::read_to_string(dsn).unwrap());
+    let loose = run(dsn, json!({ EDGE_KEY: 200 }));
+    let tight = run(dsn, json!({ EDGE_KEY: 500 }));
     assert_ne!(loose, tight, "200 um and 500 um edge clearance gave the same session");
-    let (c200, c500) = (copper(loose, &outline), copper(tight, &outline));
+    let (c200, c500) = (copper(&loose, &outline), copper(&tight, &outline));
     assert!(c200.wires > 0 && c500.wires > 0);
     eprintln!("edge gap: 200 -> {:.1} um, 500 -> {:.1} um", c200.min_edge_gap_um, c500.min_edge_gap_um);
-    assert!(
-        c500.min_edge_gap_um >= 500.0 - GEOMETRY_TOLERANCE_UM,
-        "copper {:.1} um from the outline with 500 um configured",
-        c500.min_edge_gap_um
-    );
+    assert!(c500.min_edge_gap_um >= 500.0 - GEOMETRY_TOLERANCE_UM, "copper {:.1} um from the outline with 500 um configured", c500.min_edge_gap_um);
     assert!(c200.min_edge_gap_um >= 200.0 - GEOMETRY_TOLERANCE_UM, "200 um run violates its own clearance: {:.1}", c200.min_edge_gap_um);
 }
 
-/// The 200 um run keeps ~650 um from the outline on its own, so 500 um does not yet bind there; 800 um
-/// does, and the router must move copper to honour it.
-#[test]
-fn an_edge_clearance_above_the_natural_gap_moves_copper_away_from_the_outline() {
-    let outline = dsn_outline_um(&dsn_text());
-    let natural = copper(edge_200(), &outline);
-    let wide = copper(edge_800(), &outline);
+/// The 200 um run keeps its natural gap on its own; a clearance above that must move copper away.
+fn check_clearance_above_natural_gap_moves_copper(dsn: &Path) {
+    let outline = dsn_outline_um(&std::fs::read_to_string(dsn).unwrap());
+    let natural = copper(&run(dsn, json!({ EDGE_KEY: 200 })), &outline);
+    let wide = copper(&run(dsn, json!({ EDGE_KEY: 800 })), &outline);
     eprintln!("edge gap: 200 -> {:.1} um, 800 -> {:.1} um", natural.min_edge_gap_um, wide.min_edge_gap_um);
     assert!(natural.min_edge_gap_um < 800.0 - GEOMETRY_TOLERANCE_UM, "800 um cannot bind: the 200 um run keeps {:.1}", natural.min_edge_gap_um);
     assert!(wide.min_edge_gap_um >= 800.0 - GEOMETRY_TOLERANCE_UM, "copper {:.1} um from the outline with 800 um configured", wide.min_edge_gap_um);
 }
 
+fn check_serve_equals_stock_with_both_flags(dsn: &Path) {
+    let flags = [format!("--{EDGE_KEY}=500"), format!("--{WIDTH_KEY}={FLOOR_UM}")];
+    assert_eq!(run(dsn, json!({ EDGE_KEY: 500, WIDTH_KEY: FLOOR_UM })), stock_ses(dsn, &flags));
+}
+
+// ------------------------------------------------------------------------------ tests (fast board)
+
 #[test]
-fn min_trace_width_is_a_floor_on_every_exported_wire() {
-    let outline = dsn_outline_um(&dsn_text());
-    let natural = copper(edge_500(), &outline);
-    let floored = copper(edge_500_floor(), &outline);
-    eprintln!("narrowest wire: no floor {:.1} um, floor {FLOOR_UM} -> {:.1} um", natural.min_width_um, floored.min_width_um);
-    // a floor of 100 um (the toolkit profile value) holds for the unfloored run as well on this board
-    assert!(natural.min_width_um >= 100.0 - GEOMETRY_TOLERANCE_UM);
-    // the binding case: without the floor the router necks below FLOOR_UM, with it nothing does
-    assert!(natural.min_width_um < f64::from(FLOOR_UM) - GEOMETRY_TOLERANCE_UM, "floor {FLOOR_UM} cannot bind: no wire is narrower");
-    assert!(floored.min_width_um >= f64::from(FLOOR_UM) - GEOMETRY_TOLERANCE_UM, "wire of {:.1} um under a {FLOOR_UM} um floor", floored.min_width_um);
-    assert_ne!(edge_500(), edge_500_floor());
-    // the floor does not loosen the edge clearance
-    assert!(floored.min_edge_gap_um >= 500.0 - GEOMETRY_TOLERANCE_UM);
+fn edge_clearance_changes_the_session_and_is_enforced_geometrically() {
+    check_edge_clearance_changes_and_is_enforced(&fast_board());
+}
+
+#[test]
+fn an_edge_clearance_above_the_natural_gap_moves_copper_away_from_the_outline() {
+    check_clearance_above_natural_gap_moves_copper(&fast_board());
+}
+
+#[test]
+fn a_width_floor_below_every_wire_keeps_the_session_and_the_edge_clearance() {
+    let dsn = fast_board();
+    let outline = dsn_outline_um(&std::fs::read_to_string(&dsn).unwrap());
+    let plain = run(&dsn, json!({ EDGE_KEY: 500 }));
+    let floored = run(&dsn, json!({ EDGE_KEY: 500, WIDTH_KEY: FLOOR_UM }));
+    // every wire here is the 152.4 um rule width: a 140 um floor binds nowhere (the neck-down clamp
+    // itself is unit-tested in fr-engine control.rs)
+    assert_eq!(plain, floored);
+    let c = copper(&floored, &outline);
+    assert!(c.min_width_um >= f64::from(FLOOR_UM) - GEOMETRY_TOLERANCE_UM, "{:.1}", c.min_width_um);
+    assert!(c.min_edge_gap_um >= 500.0 - GEOMETRY_TOLERANCE_UM);
 }
 
 #[test]
 fn serve_session_equals_stock_cli_with_the_same_two_flags() {
-    let flags = [format!("--{EDGE_KEY}=500"), format!("--{WIDTH_KEY}={FLOOR_UM}")];
-    let stock = stock_ses(&board(), &flags);
-    assert_eq!(edge_500_floor(), stock);
+    check_serve_equals_stock_with_both_flags(&fast_board());
+}
+
+// ------------------------------------------------------------------------------ tests (corpus board)
+
+/// The same checks on the real hb200 corpus board.
+mod hb200 {
+    use super::*;
+
+    #[test]
+    #[ignore = "on-demand (scripts/pcbkit-bench.sh): routes the hb200 corpus board several times"]
+    fn edge_clearance_changes_the_session_and_is_enforced_geometrically() {
+        check_edge_clearance_changes_and_is_enforced(&board());
+    }
+
+    #[test]
+    #[ignore = "on-demand (scripts/pcbkit-bench.sh): routes the hb200 corpus board several times"]
+    fn an_edge_clearance_above_the_natural_gap_moves_copper_away_from_the_outline() {
+        check_clearance_above_natural_gap_moves_copper(&board());
+    }
+
+    #[test]
+    #[ignore = "on-demand (scripts/pcbkit-bench.sh): routes the hb200 corpus board several times"]
+    fn min_trace_width_is_a_floor_on_every_exported_wire() {
+        let dsn = board();
+        let outline = dsn_outline_um(&std::fs::read_to_string(&dsn).unwrap());
+        let natural = copper(&run(&dsn, json!({ EDGE_KEY: 500 })), &outline);
+        let floored_ses = run(&dsn, json!({ EDGE_KEY: 500, WIDTH_KEY: FLOOR_UM }));
+        let floored = copper(&floored_ses, &outline);
+        eprintln!("narrowest wire: no floor {:.1} um, floor {FLOOR_UM} -> {:.1} um", natural.min_width_um, floored.min_width_um);
+        assert!(natural.min_width_um >= 100.0 - GEOMETRY_TOLERANCE_UM);
+        // the binding case: without the floor the router necks below FLOOR_UM, with it nothing does
+        assert!(natural.min_width_um < f64::from(FLOOR_UM) - GEOMETRY_TOLERANCE_UM, "floor {FLOOR_UM} cannot bind: no wire is narrower");
+        assert!(floored.min_width_um >= f64::from(FLOOR_UM) - GEOMETRY_TOLERANCE_UM, "wire of {:.1} um under a {FLOOR_UM} um floor", floored.min_width_um);
+        assert_ne!(run(&dsn, json!({ EDGE_KEY: 500 })), floored_ses);
+        assert!(floored.min_edge_gap_um >= 500.0 - GEOMETRY_TOLERANCE_UM);
+    }
+
+    #[test]
+    #[ignore = "on-demand (scripts/pcbkit-bench.sh): routes the hb200 corpus board with the stock CLI and serve"]
+    fn serve_session_equals_stock_cli_with_the_same_two_flags() {
+        check_serve_equals_stock_with_both_flags(&board());
+    }
 }
 
 #[test]

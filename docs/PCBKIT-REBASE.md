@@ -41,8 +41,9 @@ cd ../fastroute-wt/rebase-$NEW
 git diff v0.1.13 pcbkit | git apply --3way --index   # net patch; conflict markers appear only at hook sites
 git commit -m "feat(pcbkit): patch set on $NEW"
 ln -s /home/jubau/coolProjects/fastroute/reference reference
-# gate (every phase foreground, see docs/PCBKIT.md), then A/B old vs rebased:
-scripts/pcbkit-gate.sh --phase tests-core ... --phase final
+# fast gate, then the on-demand bench (see docs/PCBKIT.md), then A/B old vs rebased:
+scripts/pcbkit-gate.sh
+scripts/pcbkit-bench.sh upstream; scripts/pcbkit-bench.sh parity-route; scripts/pcbkit-bench.sh conformance
 scripts/pcbkit-ab.sh --quick <old fastroute> target/release/fastroute 1 4
 ```
 
@@ -64,8 +65,8 @@ that tag, applies `git diff v0.1.13 pcbkit` with `git apply --3way --index`, and
   the PATCH LEDGER hook rows of that file (parsed from `docs/PCBKIT.md` on `pcbkit`);
 * on a clean apply: a patch commit, a `STOCK_CLI_SHA256` re-pin commit, a plain build (no test-hooks),
   `router_conformance.py` at threads 1 and 2 with `--stock-cli` = the new tag's stock binary, and the gate
-  phases of the mode (`--quick`: none; default: `tests-core`; `--full`: all test phases and `final`, with
-  `PCBKIT_BASE=<tag>`), then a PASS/FAIL table. Exit 0 only if every executed step passed.
+  and bench of the mode (`--quick`: none; default: the fast `pcbkit-gate.sh`; `--full`: the gate plus the bench
+  subcommands `ignored`, `determinism`, `upstream`, `parity-route`, with `PCBKIT_BASE=<tag>`), then a PASS/FAIL table. Exit 0 only if every executed step passed.
 
 It only reads `pcbkit`, writes only its own worktree and branch, and never pushes (`--fetch` is the only
 network access and is opt-in). `--resume` reruns the build/conformance/gate part in an existing worktree
@@ -87,7 +88,8 @@ For a tag newer than v0.1.13, conflicts can only appear in the drift list the sc
 
 ### Gate result on the drill branch (`pcbkit-rebase-drill`, tip == `pcbkit` 135cc5d)
 
-`pcbkit-gate.sh` phases, each in the foreground, on the loaded box:
+`pcbkit-gate.sh` phases (historical: the phase machinery was removed 2026-10-09 when the gate became unit tests only, the
+slow parts now being `scripts/pcbkit-bench.sh`), each in the foreground, on the loaded box:
 
 | phase | result | wall |
 |---|---|---|

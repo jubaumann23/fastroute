@@ -56,6 +56,7 @@ fn route_ses(dsn: PathBuf) -> String {
 }
 
 #[test]
+#[ignore = "on-demand (scripts/pcbkit-bench.sh): 8 oversubscribed concurrent servers route corpus boards, ~100 to 320 s"]
 fn oversubscribed_concurrent_serves_are_byte_identical() {
     let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
     let stop = Arc::new(AtomicBool::new(false));
