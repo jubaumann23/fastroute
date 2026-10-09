@@ -85,12 +85,25 @@ STOCK_CLI_SHA256: 0e1bfbeed55916db2dffd87474e9d4e04ab7e4c824faf09469bb33b335cc92
   `scripts/pcbkit-*.sh`, `docs/PCBKIT.md`, `Cargo.lock`) or appear in the PATCH LEDGER table below.
   Last result: see the commit that last touched this line; conformance runs at t1 and t2 (SKIP only
   if the binary has no `serve`), exit 0.
-* `scripts/pcbkit-ab.sh [--parity] [--quick] <base> <new> [threads...]`: routes the corpus
+* `scripts/pcbkit-ab.sh [--parity] [--quick] [--shard i/n] <base> <new> [threads...]`: routes the corpus
   (`crates/fr-io/testdata/dsn` + `reference/pcbkit-corpus`, sha256-deduplicated) with both binaries
   under `--no-time-limits`, thread flags set to N (default 1 and 4), `cmp`s the SES, prints
   SAME/DIFF and wall times, exit 0 only if everything is SAME. A DSN both binaries reject
   identically (`synth_pcb_keepout.dsn`) is `SAME-ERR`. The full corpus takes about an hour; `--quick`
   skips `runs/` (about 1 min per thread count).
+  `--shard i/n` routes every n-th file of the sorted, deduplicated list and writes its table to
+  `target/pcbkit-ab/<base-sha>-<new-sha>-<mode>-<i>of<n>.txt` (`<mode>` = `parity|default` plus
+  `-t<threads>`; shas from `PCBKIT_AB_BASE_SHA`/`PCBKIT_AB_NEW_SHA`, else sha256 prefix of the
+  binary). `--summarize --shard-count n` (same binaries, mode, threads) routes nothing and exits 0
+  only if all n shard files are complete, hold one row per (file, thread count) of the whole list
+  and every row is SAME or SAME-ERR.
+  Full-corpus recipe: 12 shards, run 6 at a time per foreground call (one call per half; shard
+  wall time is about the sum of its BASE_s column, 6-way contention on 32 cores), one call pair per
+  mode x thread count, then four `--summarize` calls. Slowest shards were 440-490 s, so use 16
+  shards if the box is slower.
+  Full-corpus result (66 deduplicated DSNs, `reference/` is untracked and must be linked into the
+  worktree): base stock v0.1.13 vs pcbkit tip 9940d10 (v0.1.13-32-g9940d10), 2026-10-08:
+  default t1, default t4, parity t1, parity t4 all `AB: ALL SAME` (66/66 rows each, no DIFF).
 
 ### Fixes needed to make upstream's own checks run on Linux
 
