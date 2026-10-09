@@ -21,3 +21,7 @@ dhat = { version = "0.3", optional = true }
 # heap profiling (writes dhat-heap.json; view with https://nnethercote.github.io/dh_view/dh_view.html)
 dhat-heap = ["dep:dhat"]
 
+
+[dev-dependencies]
+# the integration tests drive the built binary; `cargo test` builds it with the panic hook compiled in
+fr-serve = { path = "../fr-serve", features = ["test-hooks"] }
