@@ -53,14 +53,15 @@ holds `sha256  path-in-corpus  original-source` per file.
 
   | `--phase` | runs | measured wall time |
   |---|---|---|
-  | `tests-core` | `cargo test` for every crate except `fastroute`, plus fastroute `--bins` and its non-`serve_*` test targets (`pipeline_parity`) | 12 to 19 s |
-  | `tests-serve-a` | fastroute `serve_*` targets except move, snapshot and blockers (baseline, combined, congestion, lock, route, scratch_fidelity, settings) | 112 to 120 s |
-  | `tests-serve-b` | fastroute `serve_move` | 150 to 211 s |
-  | `tests-serve-c` | fastroute `serve_snapshot` | 204 to 218 s |
+  | `tests-core` | `cargo test` for every crate except `fastroute`, plus fastroute `--bins` and its non-`serve_*` test targets (`pipeline_parity`) | 12 to 45 s |
+  | `tests-serve-a` | fastroute `serve_*` targets except move, snapshot, blockers and scratch_fidelity (baseline, combined, congestion, lock, route, settings) | 112 to 120 s |
+  | `tests-serve-b` | fastroute `serve_move` | 150 to 290 s |
+  | `tests-serve-c` | fastroute `serve_snapshot` | 204 to 261 s |
   | `tests-serve-d` | fastroute `serve_blockers` (blocked.dsn, errors, determinism, hb200 and energy-12-1 opens) | 25 to 45 s |
-  | `final` | records check, ledger, parity-skips, parity-route, stock-pin, conformance t1 and t2 | 30 to 50 s (includes the `--list` coverage pass) |
+  | `tests-serve-e` | fastroute `serve_scratch_fidelity` alone (it is the slowest target) | 200 to 305 s |
+| `final` | records check, coverage, ledger, parity-skips, parity-route, stock-pin, conformance t1 and t2, plain-bin, conformance-plain-t1 | 160 s (includes the `--list` coverage pass and the plain-binary build) |
 
-  Times were measured on the shared box at load average 9 to 17 with a warm build (a cold
+  Times were measured on the shared box at load average 8 to 17 with a warm build (a cold
   release build of the workspace adds about 150 s to whichever phase runs first, so build once with
   `cargo test --release --workspace --no-run` before the phases). Every phase must stay under
   480 s; if a `serve_*` target grows past that, move it to its own phase in `phase_cargo_args`.
@@ -156,8 +157,13 @@ Seed 0 with `nets: all` equals the stock CLI byte for byte; results are determin
 The toolkit finds the server through one environment variable holding the full command line (shlex-split):
 
 ```
-PCBKIT_FASTROUTE_SERVE_CMD="/home/jubau/coolProjects/fastroute/target/release/fastroute serve"
+PCBKIT_FASTROUTE_SERVE_CMD="/home/jubau/coolProjects/fastroute/target/pcbkit-plain/release/fastroute serve"
 ```
+
+Build that binary with `CARGO_TARGET_DIR=<checkout>/target/pcbkit-plain cargo build --release -p fastroute`: it is the
+shipped binary, without the `test-hooks` feature. `target/release/fastroute` is built by `cargo test` WITH test-hooks
+(it contains the `FR_SERVE_TEST_PANIC` fault injection), so do not point the toolkit at it. The gate's `plain-bin` row
+builds it this way and fails if `strings` finds `FR_SERVE_TEST_PANIC`; `conformance-plain-t1` runs the runner on it.
 
 (any absolute path to a built `fastroute` binary followed by the word `serve`). Conformance:
 
