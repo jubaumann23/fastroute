@@ -260,3 +260,79 @@ fn move_then_route_equals_reload_corpus_energy8() {
 fn move_then_route_equals_reload_corpus_heuristic() {
     assert_move_equals_reload("heuristic", &corpus("runs/heuristic-baseline/base/layout/.route/board.dsn"), "R6", 10000, -5000, Some(180), false);
 }
+
+// ---------------------------------------------------------------------------------------------
+// F2 (docs/PCBKIT.md): move, then route from the current board at 2+ threads used to livelock.
+
+/// Kills the server if the test does not finish within `secs`, so a hang fails (the next read sees EOF).
+struct Watchdog {
+    done: std::sync::mpsc::Sender<()>,
+}
+
+impl Watchdog {
+    fn start(pid: u32, secs: u64) -> Watchdog {
+        let (done, rx) = std::sync::mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            if rx.recv_timeout(std::time::Duration::from_secs(secs)) == Err(std::sync::mpsc::RecvTimeoutError::Timeout) {
+                eprintln!("watchdog: server {pid} did not answer within {secs} s, killing it");
+                let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+            }
+        });
+        Watchdog { done }
+    }
+}
+
+impl Drop for Watchdog {
+    fn drop(&mut self) {
+        let _ = self.done.send(());
+    }
+}
+
+const HANG_SECS: u64 = 240;
+
+/// Scratch route, move R2 and C18 by 1000 units in x, route nets:all from:current; the SES afterwards.
+fn move_two_then_route_current(dsn: &Path, threads: u32) -> String {
+    let text = std::fs::read_to_string(dsn).unwrap();
+    let mut s = Server::start();
+    let _wd = Watchdog::start(s.child.id(), HANG_SECS);
+    s.hello(threads, json!({}));
+    s.ok("load", json!({ "dsn": path(dsn) }));
+    s.ok("route", SCRATCH());
+    for name in ["R2", "C18"] {
+        let (x, y, rot, at, end) = place_record(&text, name);
+        let side = if text[at..end].contains(" back ") { "back" } else { "front" };
+        let mv = json!({ "ref": name, "x": x.round() as i64 + 1000, "y": y.round() as i64, "rot": rot.round() as i64 % 360, "side": side });
+        s.ok("move", json!({ "moves": [mv] }));
+    }
+    let r = s.ok("route", json!({ "seed": 0, "nets": "all", "from": "current" }));
+    assert!(r["wall_ms"].is_i64(), "{r}");
+    let ses = s.ses();
+    s.finish();
+    ses
+}
+
+#[test]
+fn move_then_route_from_current_returns_at_threads_2_and_4_and_is_deterministic() {
+    let dsn = corpus("det/energy-12-1/board.dsn");
+    for threads in [2, 4] {
+        let a = move_two_then_route_current(&dsn, threads);
+        let b = move_two_then_route_current(&dsn, threads);
+        assert!(a == b, "two server processes differ at threads {threads} after move + route from current");
+    }
+}
+
+#[test]
+fn a_worker_panic_is_an_internal_error_not_a_hang() {
+    let dsn = serve_data("tiny.dsn");
+    for (threads, skip) in [(1, "4"), (2, "4")] {
+        let mut s = Server::start_with(&[("FR_ENGINE_TEST_PANIC_ROOMS", skip)]);
+        let _wd = Watchdog::start(s.child.id(), HANG_SECS);
+        s.hello(threads, json!({}));
+        s.ok("load", json!({ "dsn": path(&dsn) }));
+        let before = s.ses();
+        let e = s.err("route", SCRATCH(), "internal");
+        assert!(e["message"].as_str().unwrap().contains("route"), "{e}");
+        assert_eq!(s.ses(), before, "a failed route leaves the session board unchanged");
+        s.finish();
+    }
+}

@@ -188,7 +188,8 @@ the board's `ItemId`s. An empty `lock {"nets": []}` is a query.
 ## PATCH LEDGER
 
 Final totals for `git diff --stat v0.1.13..HEAD -- crates/fr-engine crates/fastroute/src` (core and entry point, excluding
-the test files): 15 files, 243 insertions, 10 deletions across H0 (11), H1 (68), H1b (19), H2b (10), H3 (109), H5 (12), H6 (14);
+the test files): 15 files, 301 insertions, 15 deletions across H0 (11), H1 (68), H1b (19), H2b (10), H3 (109), H5 (12), H6 (14), F2 (about 60);
+the `core-files` row of the gate (which also counts `crates/fastroute/Cargo.toml` and `scripts/parity-route.sh`) lists 17 files, 16 before F2 (F2 adds `pipeline/optimizer.rs`);
 the numbers below are per hook. Hook tests: `crates/fr-engine/tests/pcbkit_{blockers,board_hooks,seed_mask}.rs`.
 
 Every change to upstream-owned files. Hooks are default off: with the flag unset the output is
@@ -204,7 +205,32 @@ byte-identical to upstream (`pcbkit-ab.sh` proves it).
 | H3 blockers | `crates/fr-engine/src/autoroute/control.rs:15,75,173` (`collect_blockers`, `AutorouteAttemptResult.blockers`), `crates/fr-engine/src/autoroute/engine.rs` (`blockers` field), `crates/fr-engine/src/autoroute/router.rs` (`autoroute_connection` wrapper), `crates/fr-engine/src/autoroute/maze.rs` (`note_blocker`, `note_wall_blockers` + 5 call sites), `crates/fr-engine/src/pipeline/autorouter.rs:158-197` (`BatchAutorouter::route_connection_alone`, a wrapper of `route_connection_alone_on`, which also returns the routed copy), test data `crates/fr-engine/tests/data/blocked.dsn` | +109 -6: control.rs +8 -3, engine.rs +3, maze.rs +39 -2 (call sites 343, 448, 1018, 1023, 1028; fns 1176-1207), router.rs +17 (59-75), autorouter.rs +42 -1 (the other +6 of its +48 are H6) | `ctrl.collect_blockers` (default false); only an extra push, no change to order, costs or RNG | report which items block a connection. Fixed items (pads, locked wires, keepouts) have no expansion room, so `note_wall_blockers` queries the tree for fixed items touching each expanded free room; rippable-item obstacles are recorded where `check_ripup` is negative. |
 | H5 order seed | `crates/fr-engine/src/board/routing_board.rs:219-220` (`order_seed` field), `:268` (init), `crates/fr-engine/src/pipeline/mod.rs:187-190` (`run_pipeline`), `:276-280` (`multi_start`) | +12 -1 (routing_board 2+1, mod.rs 4+5-1) | seed unset = upstream order | deterministic net order per request seed |
 | H6 net mask | `crates/fr-engine/src/board/routing_board.rs:221-222` (`route_nets` field), `:269` (init), `crates/fr-engine/src/pipeline/autorouter.rs:253-258`, `crates/fr-engine/src/pipeline/fanout.rs:92-96` | +14 (routing_board 2+1, autorouter 6, fanout 5) | mask unset = all nets | route only a subset of nets |
+| F2 stale rooms + bounded retry | `crates/fr-engine/src/board/routing_board.rs` (`clone_for_worker`), `crates/fr-engine/src/pipeline/autorouter.rs:140,170,672` and `crates/fr-engine/src/pipeline/optimizer.rs:424,819` (clone sites switched to it), `crates/fr-engine/src/autoroute/engine.rs` (`MAX_ROOM_FAULTS`, `take_engine_fault`, `room_faults`, test hook), `crates/fr-engine/Cargo.toml` (`test-hooks` feature) | +15 routing_board, 1 line each at the 5 clone sites, +45 engine.rs, +3 Cargo.toml | rooms: none present = identical output; fault counter: only after 8 consecutive panics | a worker board must not carry expansion rooms of an engine it does not have (F2); a repeating completion panic can no longer loop |
 | T1 test-only | `scripts/parity-route.sh` (lines 15-21, 26, 28, 57, 59-60), `crates/fr-jcompat/tests/jdk_vectors.rs:293-320` | 17 and 16 | n/a | Linux support, see above |
+
+## F2: move, then route from the current board at 2+ threads (fixed)
+
+Finding F2 of `docs/PCBKIT-REBASE.md`: after `move`, `route {from: current}` at threads >= 2 never answered.
+
+* Cause: a board clone drops the autoroute engine but keeps the expansion rooms the engine left in the search
+  trees (`autoroute_maintenance.maintain_database`). The parallel autorouter passes (`snapshot`), the parallel
+  optimizer (`evaluate_fresh`, greedy `trial`) and `route_connection_alone_on` route on such clones with a fresh
+  engine that knows none of those rooms, so the neighbour search panicked (`search_tree.rs:773` `rooms[&key]`, or
+  `engine.rs:130` "shape is null") in `complete_expansion_room`, which logs and returns, and the maze search then
+  asked for the same room again, for ever. Threads 1 never clones the board, so it was unaffected.
+* Fix 1: `RoutingBoard::clone_for_worker()` (a clone with the rooms of all search trees removed) at the five
+  clone sites above. Boards without rooms are copied exactly as before, so output at threads 1 and for every board
+  that never hit the bug is unchanged (`pcbkit-ab.sh --quick` ALL SAME).
+* Fix 2 (bound): `AutorouteEngine::complete_expansion_room` counts consecutive panics; after 8 (`MAX_ROOM_FAULTS`)
+  it records an engine fault, requests a stop and unwinds out of the search. `fr-serve` `route` clears the fault
+  before the pipeline and, if it is set afterwards, drops the working copy and answers the SPEC error `internal`
+  (session board unchanged, no contract change).
+* Tests (`crates/fastroute/tests/serve_move.rs`, phase `tests-serve-b`): `move_then_route_from_current_returns_at_threads_2_and_4_and_is_deterministic`
+  (energy-12-1, move R2 and C18, route nets:all from:current, two server processes give identical SES bytes at
+  threads 2 and 4, each under a 240 s watchdog that kills a hung server so the test fails instead of stalling) and
+  `a_worker_panic_is_an_internal_error_not_a_hang` (a forced completion panic, `FR_ENGINE_TEST_PANIC_ROOMS=<n>`,
+  compiled only with the `test-hooks` feature, returns `internal`). Probe: `sweep.py --probe-carry-hang` prints
+  `ok` at threads 1, 2, 4 and 8.
 
 ## Serve `move` semantics (capability `move`, `crates/fr-serve/src/ops/move_.rs`)
 

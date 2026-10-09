@@ -307,6 +307,18 @@ pub enum IncompleteRef {
     Temp(IncompleteFreeSpaceExpansionRoom),
 }
 
+/// pcbkit F2: consecutive `complete_expansion_room` panics after which the search is abandoned.
+const MAX_ROOM_FAULTS: u32 = 8;
+
+/// pcbkit F2: set when a search gave up on a repeatedly failing room completion. The server clears it
+/// before a request and answers `internal` if it is set afterwards (see [`take_engine_fault`]).
+static ENGINE_FAULT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// pcbkit F2: returns whether an engine fault was recorded since the last call, and clears it.
+pub fn take_engine_fault() -> bool {
+    ENGINE_FAULT.swap(false, std::sync::atomic::Ordering::SeqCst)
+}
+
 /// Java `AutorouteEngine`.
 #[derive(Clone, Debug)]
 pub struct AutorouteEngine {
@@ -318,6 +330,8 @@ pub struct AutorouteEngine {
     pub maintain_database: bool,
     pub(crate) drill_page_array: DrillPageArray,
     pub(crate) stop: Option<StopToken>,
+    /// pcbkit F2: consecutive caught panics of `complete_expansion_room` (reset by a success).
+    room_faults: u32,
     net_number: NetNo,
     time_limit: Option<TimeLimit>,
     /// Java `incompleteExpansionRooms != null`.
@@ -348,6 +362,7 @@ impl AutorouteEngine {
             maintain_database,
             drill_page_array,
             stop: None,
+            room_faults: 0,
             net_number: -1,
             time_limit: None,
             incomplete_list_exists: false,
@@ -903,15 +918,39 @@ impl AutorouteEngine {
     pub fn complete_expansion_room(&mut self, board: &mut RoutingBoard, room: IncompleteRef) -> Vec<RoomId> {
         // (a panic stands for a Java exception, which is caught here)
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.complete_expansion_room_impl(board, room))) {
-            Ok(r) => r.unwrap_or_default(),
+            Ok(r) => {
+                self.room_faults = 0;
+                r.unwrap_or_default()
+            }
             Err(_) => {
                 log::error!("AutorouteEngine.complete_expansion_room: exception");
+                // pcbkit F2: the search retries a room that failed to complete; a panic that repeats
+                // would retry forever. After MAX_ROOM_FAULTS in a row, record the fault (the server
+                // answers `internal`) and unwind out of the search, which ends the connection.
+                self.room_faults += 1;
+                if self.room_faults >= MAX_ROOM_FAULTS {
+                    ENGINE_FAULT.store(true, std::sync::atomic::Ordering::SeqCst);
+                    if let Some(stop) = &self.stop {
+                        stop.request_stop();
+                    }
+                    std::panic::resume_unwind(Box::new("AutorouteEngine.complete_expansion_room: repeated exception"));
+                }
                 Vec::new()
             }
         }
     }
 
     fn complete_expansion_room_impl(&mut self, board: &mut RoutingBoard, room: IncompleteRef) -> JResult<Vec<RoomId>> {
+        #[cfg(feature = "test-hooks")]
+        {
+            // FR_ENGINE_TEST_PANIC_ROOMS=<n>: every completion after the first n panics (a persistent engine fault)
+            static CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            if let Some(n) = std::env::var("FR_ENGINE_TEST_PANIC_ROOMS").ok().and_then(|v| v.parse::<u32>().ok()) {
+                if CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= n {
+                    panic!("FR_ENGINE_TEST_PANIC_ROOMS");
+                }
+            }
+        }
         let mut result = Vec::new();
         let mut from_door_shape: Option<TileShape> = None;
         let mut ignore_object: Option<TreeObject> = None;

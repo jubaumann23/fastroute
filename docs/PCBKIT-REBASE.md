@@ -123,7 +123,7 @@ scripts/pcbkit/sweep.py --summarize out1.json out2.json ...      # exit 1 on any
   cache key (which assumes determinism) is violated. A fork fix (disable these two budgets in
   `serve` and when `--no-time-limits` is set) is about 10 lines in two core files; not done here
   (scope, and the core patch budget).
-* **F2 (fork bug, open, severe for the placer): `route` after `move` can livelock at threads >= 2.**
+* **F2 (fork bug, FIXED in pcbkit-fix-move-route-livelock-mt, see docs/PCBKIT.md "F2"; text below is the original finding): `route` after `move` can livelock at threads >= 2.**
   Repro: `sweep.py --server <bin> --stock x --threads 4 --probe-carry-hang
   reference/pcbkit-corpus/det/energy-12-1/board.dsn R2 C18` prints `HANG`; at `--threads 1` it
   prints `ok`. Sequence: scratch route, `move` R2 (+1000 units), `move` C18, `route all from

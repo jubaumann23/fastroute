@@ -16,3 +16,7 @@ rayon = "1"
 num-bigint = "0.4"
 # pcbkit: hook tests load DSN boards through fr-io (cargo allows dev-dependency cycles)
 fr-io = { path = "../fr-io" }
+
+[features]
+# test-only panic trigger in the room completion (FR_ENGINE_TEST_PANIC_ROOMS); never enabled in a shipped build
+test-hooks = []

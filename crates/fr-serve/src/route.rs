@@ -182,10 +182,17 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
             }
         })),
     };
+    fr_engine::autoroute::engine::take_engine_fault(); // clear a fault left by an earlier request
     let t0 = Instant::now();
     let budget = Budget::start(budget_ms as u64, &stop);
     pipeline::run_pipeline(&mut work.board.board, &mut work.board.settings, &ctx);
     let budget_hit = budget.finish();
+    // F2: the engine abandoned a step that kept panicking; the half-routed copy is dropped and the
+    // session keeps the board it had (SPEC error code `internal`).
+    if fr_engine::autoroute::engine::take_engine_fault() {
+        log::error!("route: engine fault (repeated panic in the expansion room completion)");
+        return Err(ProtoError::new("internal", "internal error in 'route': the router engine failed repeatedly; the session board is unchanged"));
+    }
     // Per-request knobs never outlive the request; the fixed states of the other nets return.
     work.board.board.order_seed = None;
     work.board.board.route_nets = None;

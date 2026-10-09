@@ -855,6 +855,21 @@ impl RoutingBoard {
         self.basic.autoroute_maintenance = None;
     }
 
+    /// pcbkit F2: a copy for a parallel worker. A board clone drops the autoroute engine but keeps the
+    /// expansion rooms the engine left in the search trees (a retained database); a worker's fresh
+    /// engine knows none of them and panics on the first neighbour room it finds there. The copy
+    /// therefore holds no rooms (they are only a cache of the engine that owned them).
+    pub fn clone_for_worker(&self) -> RoutingBoard {
+        let mut b = self.clone();
+        let n = b.search_trees().trees().len();
+        for t in 0..n {
+            for key in b.search_trees().trees()[t].room_keys() {
+                b.search_trees_mut().tree_mut(t).remove_room(key);
+            }
+        }
+        b
+    }
+
     /// Java `clearTransientAutorouteState()`.
     pub fn clear_transient_autoroute_state(&mut self) {
         self.finish_autoroute();

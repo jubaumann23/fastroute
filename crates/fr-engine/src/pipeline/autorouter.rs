@@ -137,7 +137,7 @@ impl BatchAutorouter {
     ) -> (AutorouteAttemptResult, usize, [i32; 3]) {
         let mut router = Self::for_job(board, settings);
         router.enhancements = enhancements;
-        let mut b = board.clone();
+        let mut b = board.clone_for_worker();
         let it = b.item(item);
         if it.net_count() != 1 {
             return (AutorouteAttemptResult::with_details(AutorouteAttemptState::Skipped, "item of several nets"), 0, [0; 3]);
@@ -167,7 +167,7 @@ impl BatchAutorouter {
     /// [`Self::route_connection_alone`] that also returns the copy it routed on (carries the added
     /// items' geometry; the unchanged copy when the connection failed).
     pub fn route_connection_alone_on(board: &RoutingBoard, from_pin: ItemKey, to_pin: ItemKey, settings: &RouterSettings) -> (bool, Vec<ItemKey>, Vec<ItemId>, RoutingBoard) {
-        let mut b = board.clone();
+        let mut b = board.clone_for_worker();
         let it = b.item(from_pin);
         if it.net_count() != 1 {
             return (false, Vec::new(), Vec::new(), b);
@@ -669,7 +669,7 @@ impl BatchAutorouter {
                         if let Some(Some(r)) = footprints.get(&id.0) {
                             flight_rects.insert(ticket, *r);
                         }
-                        let base = snapshot.get_or_insert_with(|| Arc::new(board.clone())).clone();
+                        let base = snapshot.get_or_insert_with(|| Arc::new(board.clone_for_worker())).clone();
                         let tx = tx.clone();
                         scope.spawn(move |_| {
                             let mut w = (*base).clone();
