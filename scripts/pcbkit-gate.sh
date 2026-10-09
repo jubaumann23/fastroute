@@ -3,18 +3,21 @@
 # Usage: pcbkit-gate.sh [--phase <name>]
 #   (no flag)        everything in one call, as before (can exceed a 600 s foreground limit)
 #   --phase tests-core     workspace tests except the fastroute serve_* corpus targets
-#   --phase tests-serve-a  fastroute serve_* targets except move and snapshot
+#   --phase tests-serve-a  fastroute serve_* targets except move, snapshot, blockers, scratch_fidelity
 #   --phase tests-serve-b  fastroute serve_move
 #   --phase tests-serve-c  fastroute serve_snapshot
 #   --phase tests-serve-d  fastroute serve_blockers
-#   --phase final          ledger, parity-skips, parity-route, stock-pin, conformance t1/t2, and
-#                          refusal unless fresh records of all test phases cover the workspace
+#   --phase tests-serve-e  fastroute serve_scratch_fidelity (alone: ~200 s)
+#   --phase final          ledger, parity-skips, parity-route, stock-pin, conformance t1/t2, plain-bin
+#                          (shipped binary has no test hooks) and refusal unless fresh records of all test phases cover the workspace
 # Each test phase writes target/pcbkit-gate/<phase>.<HEAD sha>.{log,rc} (rc holds rc, executed
 # count, dirty flag and the sha256 of target/release/fastroute). Run the test phases first.
 #   0. ledger: changed paths vs the PATCH LEDGER in docs/PCBKIT.md
 #   1. cargo test --release --workspace (no parity test may be silently skipped)
 #   2. scripts/parity-route.sh on the pipeline_parity fixtures (needs the Java parity jar)
 #   3. router_conformance.py at --threads 1 and 2 (only if the built binary has `serve`)
+#   4. plain-bin: `cargo build --release -p fastroute` into target/pcbkit-plain (no test-hooks;
+#      FR_SERVE_TEST_PANIC must be absent) and router_conformance.py on it at --threads 1
 # Env (required, no machine-specific defaults; test phases need only CARGO_SLOT):
 #   CARGO_SLOT          cargo wrapper (shared build slots); set CARGO_SLOT=cargo for plain cargo
 #   PCBKIT_CONFORMANCE  path to the toolkit's scripts/router_conformance.py
@@ -26,12 +29,12 @@ PHASE=""
 case "${1:-}" in
   "") ;;
   --phase) PHASE=${2:-}; [ $# -eq 2 ] || { echo "pcbkit-gate: --phase needs exactly one name" >&2; exit 2; } ;;
-  *) echo "pcbkit-gate: usage: $0 [--phase tests-core|tests-serve-a|tests-serve-b|tests-serve-c|tests-serve-d|final]" >&2; exit 2 ;;
+  *) echo "pcbkit-gate: usage: $0 [--phase tests-core|tests-serve-a|tests-serve-b|tests-serve-c|tests-serve-d|tests-serve-e|final]" >&2; exit 2 ;;
 esac
-TEST_PHASES="tests-core tests-serve-a tests-serve-b tests-serve-c tests-serve-d"
+TEST_PHASES="tests-core tests-serve-a tests-serve-b tests-serve-c tests-serve-d tests-serve-e"
 case " $TEST_PHASES final " in
   *" $PHASE "*) ;;
-  *) [ -z "$PHASE" ] || echo "pcbkit-gate: unknown phase '$PHASE' (tests-core tests-serve-a tests-serve-b tests-serve-c tests-serve-d final)" >&2
+  *) [ -z "$PHASE" ] || echo "pcbkit-gate: unknown phase '$PHASE' (tests-core tests-serve-a tests-serve-b tests-serve-c tests-serve-d tests-serve-e final)" >&2
      [ -z "$PHASE" ] || exit 2 ;;
 esac
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -131,12 +134,13 @@ phase_cargo_args() { # phase
     tests-serve-a)
       for f in crates/fastroute/tests/serve_*.rs; do
         t=$(basename "$f" .rs)
-        case "$t" in serve_move|serve_snapshot|serve_blockers) ;; *) others="$others --test $t" ;; esac
+        case "$t" in serve_move|serve_snapshot|serve_blockers|serve_scratch_fidelity) ;; *) others="$others --test $t" ;; esac
       done
       echo "-p fastroute$others" ;;
     tests-serve-b) echo "-p fastroute --test serve_move" ;;
     tests-serve-c) echo "-p fastroute --test serve_snapshot" ;;
     tests-serve-d) echo "-p fastroute --test serve_blockers" ;;
+    tests-serve-e) echo "-p fastroute --test serve_scratch_fidelity" ;;
   esac
 }
 
@@ -218,6 +222,7 @@ step_stock_pin() {
 
 # The conformance runner must come from the pinned toolkit contract commit (CONTRACT_COMMIT
 # in docs/PCBKIT.md), with the runner file unmodified. Prints the commit it ran from.
+PIN_OK=0
 step_contract_pin() {
   local WANT GOT DIR
   WANT=$(awk '/^CONTRACT_COMMIT:/{print $2; exit}' docs/PCBKIT.md)
@@ -232,6 +237,7 @@ step_contract_pin() {
   elif ! git -C "$DIR" diff --quiet HEAD -- "$(basename "$CONF")"; then
     row contract-pin FAIL "runner $CONF has local changes against ${GOT:0:12}"; return 1
   fi
+  PIN_OK=1
   row contract-pin PASS "toolkit contract ${GOT:0:12} ($(git -C "$DIR" log -1 --format=%s HEAD | cut -c1-60))"
   return 0
 }
@@ -257,6 +263,30 @@ step_conformance() {
     fi
   else
     row conformance SKIP "binary has no serve subcommand"
+  fi
+}
+
+# 4. The shipped binary: `cargo test` builds target/release/fastroute with test-hooks, so build
+# the plain one into its own target dir (target/release stays untouched) and check it.
+PLAIN_DIR=$ROOT/target/pcbkit-plain
+step_plain_bin() {
+  local PLAIN=$PLAIN_DIR/release/fastroute EXTRA=() n
+  if ! CARGO_TARGET_DIR=$PLAIN_DIR "$CARGO_SLOT" build --release -p fastroute >"$LOGDIR/plain-build.log" 2>&1; then
+    row plain-bin FAIL "build failed, see $LOGDIR/plain-build.log"; return
+  fi
+  n=$(strings "$PLAIN" | grep -c FR_SERVE_TEST_PANIC || true)
+  if [ "$n" -ne 0 ]; then
+    row plain-bin FAIL "$n FR_SERVE_TEST_PANIC string(s) in the plain release binary"; return
+  fi
+  row plain-bin PASS "0 FR_SERVE_TEST_PANIC strings, sha256 $(sha256sum "$PLAIN" | cut -c1-12)"
+  if [ "$PIN_OK" != 1 ]; then
+    row conformance-plain-t1 FAIL "not run: the runner is not the pinned contract"; return
+  fi
+  python3 "$CONF" --help 2>&1 | grep -q -- '--stock-cli' && EXTRA=(--stock-cli "$STOCK")
+  if python3 "$CONF" --server "$PLAIN serve" --threads 1 "${EXTRA[@]}" >"$LOGDIR/conf-plain-1.log" 2>&1; then
+    row conformance-plain-t1 PASS ""
+  else
+    row conformance-plain-t1 FAIL "see $LOGDIR/conf-plain-1.log"
   fi
 }
 
@@ -341,7 +371,8 @@ case "$PHASE" in
     step_tests all
     step_parity_route
     step_stock_pin
-    step_conformance ;;
+    step_conformance
+    step_plain_bin ;;
   tests-*)
     step_tests "$PHASE" ;;
   final)
@@ -349,7 +380,8 @@ case "$PHASE" in
     step_ledger
     step_parity_route
     step_stock_pin
-    step_conformance ;;
+    step_conformance
+    step_plain_bin ;;
 esac
 
 echo "== pcbkit-gate${PHASE:+ --phase $PHASE} =="
