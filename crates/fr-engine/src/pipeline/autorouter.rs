@@ -160,10 +160,17 @@ impl BatchAutorouter {
     /// search (item keys of `board`; copies keep keys; dedup, insertion order) and the ids of the
     /// items the route added (empty when it failed). `board` is not modified.
     pub fn route_connection_alone(board: &RoutingBoard, from_pin: ItemKey, to_pin: ItemKey, settings: &RouterSettings) -> (bool, Vec<ItemKey>, Vec<ItemId>) {
+        let (routed, blockers, added, _) = Self::route_connection_alone_on(board, from_pin, to_pin, settings);
+        (routed, blockers, added)
+    }
+
+    /// [`Self::route_connection_alone`] that also returns the copy it routed on (carries the added
+    /// items' geometry; the unchanged copy when the connection failed).
+    pub fn route_connection_alone_on(board: &RoutingBoard, from_pin: ItemKey, to_pin: ItemKey, settings: &RouterSettings) -> (bool, Vec<ItemKey>, Vec<ItemId>, RoutingBoard) {
         let mut b = board.clone();
         let it = b.item(from_pin);
         if it.net_count() != 1 {
-            return (false, Vec::new(), Vec::new());
+            return (false, Vec::new(), Vec::new(), b);
         }
         let net = it.net_number(0);
         let contains_plane = b.rules.nets.get(net).map(|n| n.contains_plane()).unwrap_or(false);
@@ -186,7 +193,7 @@ impl BatchAutorouter {
             Vec::new()
         };
         // blockers describe a failure: a routed connection reports none
-        (routed, if routed { Vec::new() } else { result.blockers }, added)
+        (routed, if routed { Vec::new() } else { result.blockers }, added, b)
     }
 
     /// Tells the live viewer (if any) that a connection of pass `pass_no` was committed.

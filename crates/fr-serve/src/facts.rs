@@ -62,7 +62,7 @@ pub fn boundary(board: &BasicBoard) -> [i64; 4] {
 }
 
 /// `REF-PIN` for a pin, else `kind@x,y`.
-fn label(board: &BasicBoard, key: ItemKey, at: (i64, i64)) -> String {
+pub(crate) fn label(board: &BasicBoard, key: ItemKey, at: (i64, i64)) -> String {
     let item = board.item(key);
     if let ItemKind::Pin(p) = &item.kind {
         if item.component_no() > 0 {
@@ -91,6 +91,9 @@ pub struct Unrouted {
     pub to: String,
     pub from_xy: [i64; 2],
     pub to_xy: [i64; 2],
+    /// The board items at the ends (`from`/`to` may be swapped relative to the airline: they follow the names).
+    pub from_item: ItemKey,
+    pub to_item: ItemKey,
 }
 
 impl Unrouted {
@@ -112,9 +115,12 @@ pub fn connections(board: &BasicBoard) -> (i64, Vec<Unrouted>) {
             let (f, t) = (label(board, a.from_item, fxy), label(board, a.to_item, txy));
             let net = board.rules.nets.get(a.net_number).map(|n| n.name.clone()).unwrap_or_default();
             let swap = f > t;
-            let (from, to, from_xy, to_xy) =
-                if swap { (t, f, [txy.0, txy.1], [fxy.0, fxy.1]) } else { (f, t, [fxy.0, fxy.1], [txy.0, txy.1]) };
-            Unrouted { net_no: a.net_number, net, from, to, from_xy, to_xy }
+            let (from, to, from_xy, to_xy, from_item, to_item) = if swap {
+                (t, f, [txy.0, txy.1], [fxy.0, fxy.1], a.to_item, a.from_item)
+            } else {
+                (f, t, [fxy.0, fxy.1], [txy.0, txy.1], a.from_item, a.to_item)
+            };
+            Unrouted { net_no: a.net_number, net, from, to, from_xy, to_xy, from_item, to_item }
         })
         .collect();
     out.sort_by(|a, b| (a.net_no, &a.from, &a.to).cmp(&(b.net_no, &b.from, &b.to)));
