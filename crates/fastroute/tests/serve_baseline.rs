@@ -126,7 +126,7 @@ fn error_codes() {
     assert_eq!(h["threads"], 2);
     assert_eq!(h["settings"]["unknown"], json!(["router.nope"]));
     assert_eq!(h["settings"]["applied"]["router.autorouter.max_threads"], "2");
-    assert_eq!(h["capabilities"], json!(["budget", "congestion", "incremental", "locking", "move", "seed", "snapshot"]));
+    assert_eq!(h["capabilities"], json!(["blockers", "budget", "congestion", "incremental", "locking", "move", "seed", "snapshot"]));
     s.err("hello", json!({ "protocol": "1.0.0", "client": "c", "threads": 2 }), "bad_state");
     // not loaded
     s.err("route", json!({ "seed": 0 }), "not_loaded");
@@ -154,10 +154,8 @@ fn error_codes() {
     s.err("export", json!({ "format": "dxf" }), "bad_request");
     s.err("export", json!({ "format": "ses", "path": "relative.ses" }), "bad_request");
     s.err("export", json!({ "format": "ses", "path": "/no/such/dir/out.ses" }), "io_error");
-    // ops of capabilities this build does not claim
-    for op in ["blockers"] {
-        s.err(op, json!({}), "unsupported");
-    }
+    // every optional op is claimed; a bare call is a bad request (no unclaimed op is left to refuse)
+    s.err("blockers", json!({}), "bad_request");
     // shutdown takes no arguments
     s.err("shutdown", json!({ "x": 1 }), "bad_request");
     s.finish();

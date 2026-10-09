@@ -54,9 +54,10 @@ holds `sha256  path-in-corpus  original-source` per file.
   | `--phase` | runs | measured wall time |
   |---|---|---|
   | `tests-core` | `cargo test` for every crate except `fastroute`, plus fastroute `--bins` and its non-`serve_*` test targets (`pipeline_parity`) | 12 to 19 s |
-  | `tests-serve-a` | fastroute `serve_*` targets except move and snapshot (baseline, congestion, lock, route, settings) | 112 to 120 s |
+  | `tests-serve-a` | fastroute `serve_*` targets except move, snapshot and blockers (baseline, congestion, lock, route, settings) | 112 to 120 s |
   | `tests-serve-b` | fastroute `serve_move` | 150 to 211 s |
   | `tests-serve-c` | fastroute `serve_snapshot` | 204 to 218 s |
+  | `tests-serve-d` | fastroute `serve_blockers` (blocked.dsn, errors, determinism, hb200 and energy-12-1 opens) | 25 to 45 s |
   | `final` | records check, ledger, parity-skips, parity-route, stock-pin, conformance t1 and t2 | 30 to 50 s (includes the `--list` coverage pass) |
 
   Times were measured on the shared box at load average 9 to 17 with a warm build (a cold
