@@ -59,6 +59,7 @@ holds `sha256  path-in-corpus  original-source` per file.
   | `tests-serve-c` | fastroute `serve_snapshot` | 204 to 261 s |
   | `tests-serve-d` | fastroute `serve_blockers` (blocked.dsn, errors, determinism, hb200 and energy-12-1 opens, the causality falsification) | 140 to 150 s |
   | `tests-serve-e` | fastroute `serve_scratch_fidelity` alone (it is the slowest target) | 200 to 305 s |
+  | `tests-serve-f` | fastroute `serve_determinism_load` (F1: 8 concurrent servers at 2 threads on det/hb200 under `4 x cores` busy threads, two repetitions, SES bytes identical; each wait has a 900 s hard timeout) | 100 to 320 s |
 | `final` | records check, coverage, ledger, parity-skips, parity-route, stock-pin, conformance t1 and t2, plain-bin, conformance-plain-t1 | 160 s (includes the `--list` coverage pass and the plain-binary build) |
 
   Times were measured on the shared box at load average 8 to 17 with a warm build (a cold
@@ -206,6 +207,7 @@ byte-identical to upstream (`pcbkit-ab.sh` proves it).
 | H5 order seed | `crates/fr-engine/src/board/routing_board.rs:219-220` (`order_seed` field), `:268` (init), `crates/fr-engine/src/pipeline/mod.rs:187-190` (`run_pipeline`), `:276-280` (`multi_start`) | +12 -1 (routing_board 2+1, mod.rs 4+5-1) | seed unset = upstream order | deterministic net order per request seed |
 | H6 net mask | `crates/fr-engine/src/board/routing_board.rs:221-222` (`route_nets` field), `:269` (init), `crates/fr-engine/src/pipeline/autorouter.rs:253-258`, `crates/fr-engine/src/pipeline/fanout.rs:92-96` | +14 (routing_board 2+1, autorouter 6, fanout 5) | mask unset = all nets | route only a subset of nets |
 | F2 stale rooms + bounded retry | `crates/fr-engine/src/board/routing_board.rs` (`clone_for_worker`), `crates/fr-engine/src/pipeline/autorouter.rs:140,170,672` and `crates/fr-engine/src/pipeline/optimizer.rs:424,819` (clone sites switched to it), `crates/fr-engine/src/autoroute/engine.rs` (`MAX_ROOM_FAULTS`, `take_engine_fault`, `room_faults`, test hook), `crates/fr-engine/Cargo.toml` (`test-hooks` feature) | +15 routing_board, 1 line each at the 5 clone sites, +45 engine.rs, +3 Cargo.toml | rooms: none present = identical output; fault counter: only after 8 consecutive panics | a worker board must not carry expansion rooms of an engine it does not have (F2); a repeating completion panic can no longer loop |
+| H7 deterministic | `crates/fr-engine/src/pipeline/mod.rs` (`PipelineContext.deterministic` field + default, `multi_start` variant ctx, multi-start skip guard, default optimizer budget guard), `crates/fr-engine/src/pipeline/optimizer.rs` (greedy-phase wall budget guard), `crates/fr-engine/src/pipeline/autorouter.rs` (slow-pass stagnation guard), `crates/fastroute/src/main.rs` (`deterministic: false` in the CLI's ctx literal) | +10 -4 in fr-engine core (mod.rs +8 -2 incl. 4 doc lines, optimizer.rs +1 -1, autorouter.rs +1 -1), +1 -1 main.rs | `ctx.deterministic` (default false; only `fr-serve` sets it) | serve results independent of CPU load (F1): no wall-clock decision changes the output |
 | T1 test-only | `scripts/parity-route.sh` (lines 15-21, 26, 28, 57, 59-60), `crates/fr-jcompat/tests/jdk_vectors.rs:293-320` | 17 and 16 | n/a | Linux support, see above |
 
 ## F2: move, then route from the current board at 2+ threads (fixed)
@@ -231,6 +233,27 @@ Finding F2 of `docs/PCBKIT-REBASE.md`: after `move`, `route {from: current}` at 
   `a_worker_panic_is_an_internal_error_not_a_hang` (a forced completion panic, `FR_ENGINE_TEST_PANIC_ROOMS=<n>`,
   compiled only with the `test-hooks` feature, returns `internal`). Probe: `sweep.py --probe-carry-hang` prints
   `ok` at threads 1, 2, 4 and 8.
+
+## Load-independent serve routing (F1)
+
+`fastroute serve` sets `PipelineContext.deterministic` (hook H7). With it, none of the wall-clock decisions below
+can change the result, so output depends only on seed and thread count, never on CPU load:
+
+* greedy-phase budget (`optimizer.rs` `apply_greedy`: stop when `start.elapsed() >= budget`, budget derived from the
+  pass's wall time clamped to 2..60 s): the phase now ends only after 10 rejected candidates in a row or when all
+  candidates were tried. This was the live one: under CPU oversubscription it fires after 2 s.
+* default optimizer budget (`pipeline/mod.rs`, `routing_start.elapsed().max(60 s)`): was already inert under
+  `wall_clock_limits: false` (the deadline is only built in `if ctx.wall_clock_limits`); also guarded for clarity.
+* slow-pass stagnation stop (`autorouter.rs`, pass longer than 20 s) and the multi-start skip (first run longer than
+  600 s): both are wall-clock thresholds, both skipped in serve.
+
+An explicit client `budget` still means wall time and is the only nondeterministic path (SPEC). The stock CLI is
+unchanged (`deterministic: false`), so on a board where the stock run itself hits one of these stops under load, serve
+(which never stops there) differs from it. Measured without load, seed 0, `sweep.py --equiv-only --threads 1,2`,
+core corpus (9 boards, 36 rows): all rows SAME or SAME-ERR, 0 bad; `pcbkit-ab.sh --quick` before vs after: ALL SAME.
+No stock-equivalence row had to be excluded. Test: `serve_determinism_load` (phase `tests-serve-f`); on the shared
+development host it was already green before the fix (the greedy stop needs a trial that takes over 2 s, which a
+loaded host did not produce for hb200 or energy-12-1), so it is a regression guard, not a proven red-to-green test.
 
 ## Serve `move` semantics (capability `move`, `crates/fr-serve/src/ops/move_.rs`)
 

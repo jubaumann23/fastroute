@@ -1123,7 +1123,7 @@ impl BatchAutorouter {
                 // fastroute: on boards where a pass takes long, stop once the passes no longer
                 // pay off (Java's stagnation rules only start after 8 passes).
                 let n = incomplete_history.len();
-                if pass_start.elapsed().as_secs_f64() >= SLOW_PASS_SECS && n > SLOW_STAGNATION_WINDOW && current_pass >= min_passes {
+                if !ctx.deterministic && pass_start.elapsed().as_secs_f64() >= SLOW_PASS_SECS && n > SLOW_STAGNATION_WINDOW && current_pass >= min_passes {
                     let before = *incomplete_history[..n - SLOW_STAGNATION_WINDOW].iter().min().unwrap();
                     let recent = *incomplete_history[n - SLOW_STAGNATION_WINDOW..].iter().min().unwrap();
                     if recent - ignored > 0 && before - recent < ((before - ignored) / 50).max(1) {

@@ -172,6 +172,8 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     let ctx = PipelineContext {
         stop: stop.clone(),
         wall_clock_limits: false,
+        // no wall-clock stop changes the result; only an explicit client `budget` does (SPEC)
+        deterministic: true,
         optimizer_mode: if threads <= 1 { OptimizerMode::JavaCompat } else { OptimizerMode::Parallel { threads } },
         enhancements: true,
         multi_start: MULTI_START,

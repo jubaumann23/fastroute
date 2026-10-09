@@ -54,6 +54,10 @@ pub struct PipelineContext {
     /// True to honour the wall clock stage limits (`fanout.timeout_string`,
     /// `optimizer.timeout_string`); false for deterministic runs.
     pub wall_clock_limits: bool,
+    /// pcbkit (`fastroute serve`): no wall-clock decision (greedy-phase budget, slow-pass
+    /// stagnation, multi-start skip, default optimizer budget) changes the result, so output
+    /// depends only on seed and thread count, not on CPU load. Off for the stock CLI.
+    pub deterministic: bool,
     /// How the optimizer evaluates its candidates.
     pub optimizer_mode: OptimizerMode,
     /// fastroute improvements that change results compared with Freerouting
@@ -147,6 +151,7 @@ impl Default for PipelineContext {
         PipelineContext {
             stop: StopToken::new(),
             wall_clock_limits: true,
+            deterministic: false,
             optimizer_mode: OptimizerMode::JavaCompat,
             enhancements: false,
             multi_start: 1,
@@ -202,7 +207,7 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
             // several times as long
             let took = routing_start.elapsed();
             let variant_estimate = if autorouter.pass_threads > 1 { took * 3 } else { took };
-            if variant_estimate > MULTI_START_MAX_FIRST_RUN {
+            if !ctx.deterministic && variant_estimate > MULTI_START_MAX_FIRST_RUN {
                 log::info!(
                     "Multi-start skipped: the first routing run took {:.0} s (variants run only if they are expected to take less than {} s).",
                     took.as_secs_f64(),
@@ -232,7 +237,7 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
     if run_optimizer && !ctx.stop.is_stop_requested() {
         ctx.observe(board, &LiveEvent::Stage("optimizer"));
         let mut optimizer = BatchOptimizer::new(ctx.optimizer_mode);
-        if ctx.enhancements {
+        if ctx.enhancements && !ctx.deterministic {
             // without an explicit optimizer.timeout the optimizer gets as long as routing took
             // (at least a minute): on large boards a pass can take a quarter of an hour
             optimizer.default_budget = Some(routing_start.elapsed().max(std::time::Duration::from_secs(60)));
@@ -265,6 +270,7 @@ fn multi_start(board: &mut RoutingBoard, start: &RoutingBoard, settings: &Router
                 // own autorouter stop (stagnation), shared job stop (time limit, Ctrl+C)
                 stop: ctx.stop.child(),
                 wall_clock_limits: ctx.wall_clock_limits,
+                deterministic: ctx.deterministic,
                 optimizer_mode: ctx.optimizer_mode,
                 enhancements: true,
                 multi_start: 1,
