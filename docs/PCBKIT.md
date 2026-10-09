@@ -54,9 +54,10 @@ holds `sha256  path-in-corpus  original-source` per file.
   | `--phase` | runs | measured wall time |
   |---|---|---|
   | `tests-core` | `cargo test` for every crate except `fastroute`, plus fastroute `--bins` and its non-`serve_*` test targets (`pipeline_parity`) | 12 to 19 s |
-  | `tests-serve-a` | fastroute `serve_*` targets except move and snapshot (baseline, combined, congestion, lock, route, scratch_fidelity, settings) | 112 to 120 s |
+  | `tests-serve-a` | fastroute `serve_*` targets except move, snapshot and blockers (baseline, combined, congestion, lock, route, scratch_fidelity, settings) | 112 to 120 s |
   | `tests-serve-b` | fastroute `serve_move` | 150 to 211 s |
   | `tests-serve-c` | fastroute `serve_snapshot` | 204 to 218 s |
+  | `tests-serve-d` | fastroute `serve_blockers` (blocked.dsn, errors, determinism, hb200 and energy-12-1 opens) | 25 to 45 s |
   | `final` | records check, ledger, parity-skips, parity-route, stock-pin, conformance t1 and t2 | 30 to 50 s (includes the `--list` coverage pass) |
 
   Times were measured on the shared box at load average 9 to 17 with a warm build (a cold
@@ -173,7 +174,7 @@ the board's `ItemId`s. An empty `lock {"nets": []}` is a query.
 ## PATCH LEDGER
 
 Final totals for `git diff --stat v0.1.13..HEAD -- crates/fr-engine crates/fastroute/src` (core and entry point, excluding
-the test files): 15 files, 232 insertions, 10 deletions across H0 (7), H1 (68), H1b (19), H2b (10), H3 (102), H5 (12), H6 (14);
+the test files): 15 files, 243 insertions, 10 deletions across H0 (11), H1 (68), H1b (19), H2b (10), H3 (109), H5 (12), H6 (14);
 the numbers below are per hook. Hook tests: `crates/fr-engine/tests/pcbkit_{blockers,board_hooks,seed_mask}.rs`.
 
 Every change to upstream-owned files. Hooks are default off: with the flag unset the output is
@@ -181,12 +182,12 @@ byte-identical to upstream (`pcbkit-ab.sh` proves it).
 
 | Hook | File:line | Lines changed | Default-off flag | Why |
 |---|---|---|---|---|
-| H0 serve dispatch | `crates/fastroute/src/main.rs:790-793`, `crates/fastroute/Cargo.toml:14` | +4 + 1 (main.rs, Cargo.toml) | `serve` subcommand only | route `fastroute serve` to the server crate |
+| H0 serve dispatch | `crates/fastroute/src/main.rs:790-793`, `crates/fastroute/Cargo.toml:14` | +4 + 5 (main.rs; Cargo.toml: the `fr-serve` dependency and its `test-hooks` dev-dependency) | `serve` subcommand only (the `FR_SERVE_TEST_PANIC` hook is compiled only under `cargo test`) | route `fastroute serve` to the server crate |
 | H0 dep | `crates/fr-engine/Cargo.toml:17-18` | +2 | dev-dependency only | `fr-io` dev-dep for the pcbkit hook tests |
 | H1 move | `crates/fr-engine/src/board/basic_board.rs:1068-1121` (`place_component`), `crates/fr-engine/src/structure/component.rs:95-101` (`Component::set_pose`), `:286-291` (`Components::set_pose`) | +55 + 7 + 6 = +68 | via protocol `move` only | apply part moves to the loaded board |
 | H1b rigid wiring move | `crates/fr-engine/src/board/basic_board.rs:1049-1066` (`turn_translate_wiring`) | +19 (1049-1067, incl. one blank) | via protocol `move` (`carry: fixed`) only | turn a fixed trace/via by k*90 degrees about the old part origin and translate it, in place (same id), so plane fan-out follows its part |
 | H2b keep-fixed-on-split | `crates/fr-engine/src/board/basic_board.rs:74-75` (field `keep_fixed_on_split`), `:177` (init), `crates/fr-engine/src/board/shape_trace_entries.rs:92-96`, `crates/fr-engine/src/board/trace_ops.rs:548-558` | +2 +1 (basic_board), +3 -1 (shape_trace_entries), +4 -2 (trace_ops) = +10 -3 | via protocol locks only | locked wires survive trace splitting. CAVEAT: upstream `remove_item` refuses UserFixed items, so a cut-out on a UserFixed parent leaves the parent and adds UserFixed duplicate pieces; locking must not cut out locked traces. |
-| H3 blockers | `crates/fr-engine/src/autoroute/control.rs:15,75,173` (`collect_blockers`, `AutorouteAttemptResult.blockers`), `crates/fr-engine/src/autoroute/engine.rs` (`blockers` field), `crates/fr-engine/src/autoroute/router.rs` (`autoroute_connection` wrapper), `crates/fr-engine/src/autoroute/maze.rs` (`note_blocker`, `note_wall_blockers` + 5 call sites), `crates/fr-engine/src/pipeline/autorouter.rs:158-191` (`BatchAutorouter::route_connection_alone`), test data `crates/fr-engine/tests/data/blocked.dsn` | +102 -6: control.rs +8 -3, engine.rs +3, maze.rs +39 -2 (call sites 343, 448, 1018, 1023, 1028; fns 1176-1207), router.rs +17 (59-75), autorouter.rs +35 -1 (`route_connection_alone` 158-191) | `ctrl.collect_blockers` (default false); only an extra push, no change to order, costs or RNG | report which items block a connection. Fixed items (pads, locked wires, keepouts) have no expansion room, so `note_wall_blockers` queries the tree for fixed items touching each expanded free room; rippable-item obstacles are recorded where `check_ripup` is negative. |
+| H3 blockers | `crates/fr-engine/src/autoroute/control.rs:15,75,173` (`collect_blockers`, `AutorouteAttemptResult.blockers`), `crates/fr-engine/src/autoroute/engine.rs` (`blockers` field), `crates/fr-engine/src/autoroute/router.rs` (`autoroute_connection` wrapper), `crates/fr-engine/src/autoroute/maze.rs` (`note_blocker`, `note_wall_blockers` + 5 call sites), `crates/fr-engine/src/pipeline/autorouter.rs:158-197` (`BatchAutorouter::route_connection_alone`, a wrapper of `route_connection_alone_on`, which also returns the routed copy), test data `crates/fr-engine/tests/data/blocked.dsn` | +109 -6: control.rs +8 -3, engine.rs +3, maze.rs +39 -2 (call sites 343, 448, 1018, 1023, 1028; fns 1176-1207), router.rs +17 (59-75), autorouter.rs +42 -1 (the other +6 of its +48 are H6) | `ctrl.collect_blockers` (default false); only an extra push, no change to order, costs or RNG | report which items block a connection. Fixed items (pads, locked wires, keepouts) have no expansion room, so `note_wall_blockers` queries the tree for fixed items touching each expanded free room; rippable-item obstacles are recorded where `check_ripup` is negative. |
 | H5 order seed | `crates/fr-engine/src/board/routing_board.rs:219-220` (`order_seed` field), `:268` (init), `crates/fr-engine/src/pipeline/mod.rs:187-190` (`run_pipeline`), `:276-280` (`multi_start`) | +12 -1 (routing_board 2+1, mod.rs 4+5-1) | seed unset = upstream order | deterministic net order per request seed |
 | H6 net mask | `crates/fr-engine/src/board/routing_board.rs:221-222` (`route_nets` field), `:269` (init), `crates/fr-engine/src/pipeline/autorouter.rs:253-258`, `crates/fr-engine/src/pipeline/fanout.rs:92-96` | +14 (routing_board 2+1, autorouter 6, fanout 5) | mask unset = all nets | route only a subset of nets |
 | T1 test-only | `scripts/parity-route.sh` (lines 15-21, 26, 28, 57, 59-60), `crates/fr-jcompat/tests/jdk_vectors.rs:293-320` | 17 and 16 | n/a | Linux support, see above |
