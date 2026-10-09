@@ -421,7 +421,7 @@ fn evaluate_fresh(baseline: &RoutingBoard, item_id: i32, p: &CandidateParams<'_>
     if p.stop.is_stop_requested() || deadline_passed(p.deadline) {
         return Some(CandidateResult { result: ItemRouteResult::unimproved(item_id), board: None });
     }
-    let mut w = baseline.clone();
+    let mut w = baseline.clone_for_worker();
     let Some(key) = w.get_item(ItemId(item_id)) else {
         return Some(CandidateResult { result: ItemRouteResult::unimproved(item_id), board: None });
     };
@@ -816,7 +816,7 @@ impl BatchOptimizer {
             }
             tried += 1;
             rejected_in_row += 1;
-            let mut trial = board.clone();
+            let mut trial = board.clone_for_worker();
             let Some(key) = trial.get_item(ItemId(c.item_id)) else { continue };
             let deadline = if ignore_deadline { None } else { params.deadline };
             let p = CandidateParams { baseline_trace_length: light_statistics(&trial).1 as f64, deadline, ..*params };
