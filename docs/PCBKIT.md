@@ -132,6 +132,9 @@ CONTRACT_COMMIT: 3fc599c34fb1bea792e6e3a9dc4f43ba9ba73918
 
 ## Rebasing on a new upstream tag
 
+`scripts/pcbkit-rebase.sh <tag> [--quick|--full]` automates the net-patch variant of this procedure (see
+`docs/PCBKIT-REBASE.md`, "The script"); the manual steps below remain the reference.
+
 1. `git fetch upstream --tags`; `git rebase <new-tag>` (or merge) the `pcbkit` branch; resolve
    conflicts at the ledger sites below.
 2. Build the old and new upstream binaries (`cargo build --release` at each tag) and run

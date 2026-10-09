@@ -51,6 +51,40 @@ Set `PCBKIT_BASE=$NEW` for the ledger step when the base tag changes, and re-pin
 `pcbkit`; the new branch carries one squashed patch commit (rebase of the 45-commit history is
 not needed and is what conflicts).
 
+### The script: `scripts/pcbkit-rebase.sh <target-tag>`
+
+The procedure above is scripted (fork tooling, ledger-exempt via `scripts/pcbkit-*.sh`; helper
+`scripts/pcbkit/rebase_report.py`, `scripts/pcbkit-rebase.sh --self-check`). It creates
+`fastroute-wt/rebase-script-<tag>` (branch `pcbkit-rebase-script-<tag>`) at the tag, builds the stock binary of
+that tag, applies `git diff v0.1.13 pcbkit` with `git apply --3way --index`, and reports:
+
+* upstream drift: files that differ between v0.1.13 and the target AND carry a ledger hook (the only
+  places a conflict can occur);
+* apply status per file (clean / conflicts / failed), and for each conflicted file its hunk line spans and
+  the PATCH LEDGER hook rows of that file (parsed from `docs/PCBKIT.md` on `pcbkit`);
+* on a clean apply: a patch commit, a `STOCK_CLI_SHA256` re-pin commit, a plain build (no test-hooks),
+  `router_conformance.py` at threads 1 and 2 with `--stock-cli` = the new tag's stock binary, and the gate
+  phases of the mode (`--quick`: none; default: `tests-core`; `--full`: all test phases and `final`, with
+  `PCBKIT_BASE=<tag>`), then a PASS/FAIL table. Exit 0 only if every executed step passed.
+
+It only reads `pcbkit`, writes only its own worktree and branch, and never pushes (`--fetch` is the only
+network access and is opt-in). `--resume` reruns the build/conformance/gate part in an existing worktree
+(use it to split `--full` into several foreground calls); `--force` recreates a script-made worktree.
+Needs `PCBKIT_CONFORMANCE`; `CARGO_SLOT` defaults to `cargo`.
+
+Dry runs on `pcbkit` 0e27db7 (F1/F2/H7 merged), 2026-10-09:
+
+| target | result | time |
+|---|---|---|
+| v0.1.12 `--quick` | 61 files, **0 conflicts** (the upstream drift touches hook files `main.rs`, `autorouter.rs`, `fanout.rs`, `pipeline/mod.rs`, but never the same hunks); build OK; conformance t1 and t2 PASS; exit 0 | 1 m 49 s |
+| v0.1.12 default (resume) | build, conformance t1/t2 PASS, `tests-core` PASS; exit 0 | 3 m 39 s |
+| v0.1.11 default | **1 conflict**: `crates/fr-engine/src/pipeline/autorouter.rs` lines 1115-1119, hook site **H7** (deterministic guard on the slow-pass stagnation stop; v0.1.13 added `&& current_pass >= min_passes` to that same line, which v0.1.11 lacks); exit 1, worktree left for a human merge | 44 s |
+
+So v0.1.12 matches the drill above (clean). v0.1.11 no longer applies cleanly, which differs from the drill
+earlier in this section: the drill ran before F1/H7 existed, and H7 edits a line that upstream changed
+between v0.1.11 and v0.1.13. The rest of the drill text stays valid for the patch set it measured.
+For a tag newer than v0.1.13, conflicts can only appear in the drift list the script prints.
+
 ### Gate result on the drill branch (`pcbkit-rebase-drill`, tip == `pcbkit` 135cc5d)
 
 `pcbkit-gate.sh` phases, each in the foreground, on the loaded box:
