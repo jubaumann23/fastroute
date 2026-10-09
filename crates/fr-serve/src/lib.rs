@@ -146,7 +146,9 @@ fn hello(session: &mut Session, args: &Map<String, Value>, build: &str) -> R<Val
 
 /// Answers one parsed request; `Ok(None)` result means shutdown was handled.
 fn dispatch(session: &mut Session, req: &Request, build: &str) -> R<Value> {
-    // test hook: `FR_SERVE_TEST_PANIC=<op>` makes that op panic, to reach the `internal` error
+    // test hook, compiled only with the `test-hooks` feature (SPEC 7: the shipped server reads no
+    // environment): `FR_SERVE_TEST_PANIC=<op>` makes that op panic, to reach the `internal` error
+    #[cfg(feature = "test-hooks")]
     if std::env::var("FR_SERVE_TEST_PANIC").is_ok_and(|op| op == req.op) {
         panic!("FR_SERVE_TEST_PANIC");
     }

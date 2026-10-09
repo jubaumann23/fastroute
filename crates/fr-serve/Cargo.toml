@@ -13,3 +13,7 @@ fr-geom = { path = "../fr-geom" }
 fr-settings = { path = "../fr-settings" }
 log = "0.4"
 serde_json = "1"
+
+[features]
+# test-only panic trigger (FR_SERVE_TEST_PANIC); never enabled in a shipped build
+test-hooks = []
