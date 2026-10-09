@@ -151,10 +151,10 @@ CONTRACT_COMMIT: 3fc599c34fb1bea792e6e3a9dc4f43ba9ba73918
 fastroute serve            # JSON lines on stdin, one response line per request on stdout, logs on stderr
 ```
 
-Protocol 1.0.0 (spec: toolkit `docs/router-protocol/SPEC.md`). First line must be `hello` (protocol, client, threads,
+Protocol 1.1.0 (spec: toolkit `docs/router-protocol/SPEC.md`). First line must be `hello` (protocol, client, threads,
 settings); the reply lists the capabilities this build claims (`budget congestion incremental locking move seed
-snapshot`; `blockers` is added when `ops/blockers.rs` `CLAIMED` is true) and the router build hash. Then `load`
-(DSN path or text), `route`, `lock`/`unlock`, `move`, `snapshot`/`restore`, `congestion`, `export` (`ses`), `shutdown`.
+snapshot starts`; `blockers` is added when `ops/blockers.rs` `CLAIMED` is true) and the router build hash. Then `load`
+(DSN path or text), `route`, `lock`/`unlock`, `move`, `snapshot`/`restore`, `congestion`, `export` (`ses`), `shutdown`. `route.starts` (1..16, default 4 = the CLI) sets the multi-start count and the result echoes it.
 Seed 0 with `nets: all` equals the stock CLI byte for byte; results are deterministic at a fixed thread count.
 
 The toolkit finds the server through one environment variable holding the full command line (shlex-split):

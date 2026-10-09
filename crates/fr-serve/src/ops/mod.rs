@@ -24,6 +24,7 @@ pub fn capabilities() -> Vec<&'static str> {
         ("blockers", blockers::CLAIMED),
         ("congestion", congestion::CLAIMED),
         ("snapshot", snapshot::CLAIMED),
+        ("starts", route::STARTS_CLAIMED),
     ]
     .into_iter()
     .filter_map(|(name, claimed)| claimed.then_some(name))

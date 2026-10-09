@@ -19,8 +19,11 @@ pub const SEED_CLAIMED: bool = true;
 /// `route.nets` as a list: hook H6 (`route_nets` mask) plus the request-scoped fixing of the other nets.
 pub const INCREMENTAL_CLAIMED: bool = true;
 
-/// fastroute multi-start of the stock CLI (`--multi-start`, main.rs:70); protocol 1.0 has no setting.
+/// `route.starts` (protocol 1.1): multi-start count per request.
+pub const STARTS_CLAIMED: bool = true;
+/// Default multi-start of the stock CLI (`--multi-start`, main.rs:70), used when `starts` is absent.
 const MULTI_START: usize = 4;
+const MAX_STARTS: i64 = 16;
 
 /// The budget timer: stops the pipeline when `budget_ms` of wall time pass before it is done.
 struct Budget {
@@ -69,7 +72,7 @@ impl Budget {
 }
 
 pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
-    check_keys(args, &["seed", "nets", "from", "budget_ms"], "route")?;
+    check_keys(args, &["seed", "nets", "from", "budget_ms", "starts"], "route")?;
     // `seed` is required; with the `seed` capability absent any value is accepted and ignored.
     let seed = as_int(req(args, "seed", "route")?, 0, 2_147_483_647, "route.seed")?;
     let mut listed: Option<Vec<String>> = None;
@@ -99,6 +102,12 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
         Some(other) => return Err(ProtoError::bad_request(format!("route.from: '{other}' is neither current nor scratch"))),
     };
     let budget_ms = args.get("budget_ms").map(|v| as_int(v, 0, i64::MAX, "route.budget_ms")).transpose()?.unwrap_or(0);
+
+    let starts = args
+        .get("starts")
+        .map(|v| as_int(v, 1, MAX_STARTS, "route.starts"))
+        .transpose()?
+        .map_or(MULTI_START, |n| n as usize);
 
     let mut work = session.begin()?;
     if scratch && listed.is_none() {
@@ -176,7 +185,7 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
         deterministic: true,
         optimizer_mode: if threads <= 1 { OptimizerMode::JavaCompat } else { OptimizerMode::Parallel { threads } },
         enhancements: true,
-        multi_start: MULTI_START,
+        multi_start: starts,
         checkpoint: None,
         observer: Some(Arc::new(move |_board, ev| {
             if let LiveEvent::RouterPass { pass_no, .. } = ev {
@@ -208,7 +217,7 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     work.locks.reconcile(&work.board.board);
     let wall_ms = t0.elapsed().as_millis() as i64;
 
-    let result = summarize(&work.board.board, &work.locks, seed, passes.load(Ordering::SeqCst), budget_hit, wall_ms);
+    let result = summarize(&work.board.board, &work.locks, seed, starts, passes.load(Ordering::SeqCst), budget_hit, wall_ms);
     session.commit(work);
     Ok(result)
 }
@@ -228,6 +237,7 @@ fn summarize(
     board: &BasicBoard,
     locks: &crate::ops::lock::LockRegistry,
     seed: i64,
+    starts: usize,
     passes: i32,
     budget_hit: bool,
     wall_ms: i64,
@@ -237,6 +247,7 @@ fn summarize(
     json!({
         "seed": seed,
         "seed_used": SEED_CLAIMED,
+        "starts": starts,
         "complete": unrouted.is_empty(),
         "connections": connections,
         "unrouted": unrouted.len(),
