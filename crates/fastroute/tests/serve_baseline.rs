@@ -126,7 +126,7 @@ fn error_codes() {
     assert_eq!(h["threads"], 2);
     assert_eq!(h["settings"]["unknown"], json!(["router.nope"]));
     assert_eq!(h["settings"]["applied"]["router.autorouter.max_threads"], "2");
-    assert_eq!(h["capabilities"], json!(["blockers", "budget", "congestion", "incremental", "locking", "move", "seed", "snapshot", "starts"]));
+    assert_eq!(h["capabilities"], json!(["blockers", "budget", "check", "congestion", "incremental", "locking", "move", "seed", "snapshot", "starts", "widen"]));
     s.err("hello", json!({ "protocol": "1.0.0", "client": "c", "threads": 2 }), "bad_state");
     // not loaded
     s.err("route", json!({ "seed": 0 }), "not_loaded");

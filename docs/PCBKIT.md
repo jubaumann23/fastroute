@@ -151,9 +151,9 @@ CONTRACT_COMMIT: 3fc599c34fb1bea792e6e3a9dc4f43ba9ba73918
 fastroute serve            # JSON lines on stdin, one response line per request on stdout, logs on stderr
 ```
 
-Protocol 1.1.0 (spec: toolkit `docs/router-protocol/SPEC.md`). First line must be `hello` (protocol, client, threads,
-settings); the reply lists the capabilities this build claims (`budget congestion incremental locking move seed
-snapshot starts`; `blockers` is added when `ops/blockers.rs` `CLAIMED` is true) and the router build hash. Then `load`
+Protocol 1.2.0 (spec: toolkit `docs/router-protocol/SPEC.md`). First line must be `hello` (protocol, client, threads,
+settings); the reply lists the capabilities this build claims (`budget check congestion incremental locking move seed
+snapshot starts widen`; `blockers` is added when `ops/blockers.rs` `CLAIMED` is true) and the router build hash. Then `load`
 (DSN path or text), `route`, `lock`/`unlock`, `move`, `snapshot`/`restore`, `congestion`, `export` (`ses`), `shutdown`. `route.starts` (1..16, default 4 = the CLI) sets the multi-start count and the result echoes it.
 Seed 0 with `nets: all` equals the stock CLI byte for byte; results are deterministic at a fixed thread count.
 
@@ -177,6 +177,31 @@ python3 <toolkit>/scripts/router_conformance.py --server "$BIN serve" --stock-cl
 passes with every claimed capability at N = 1, 2, 4, 8 (checked on `pcbkit-serve-integration`). Combined-capability
 test: `crates/fastroute/tests/serve_combined.rs` (lock, move off locked nets, targeted route, snapshot, move, route,
 restore, export; locked nets byte-identical throughout, only affected nets change).
+
+## Serve `widen` and `check` (protocol 1.2, `crates/fr-serve/src/ops/{widen,check}.rs`, tests `serve_necks.rs`)
+
+No core hook and no ledger row: both ops use the existing clearance engine (`fr_engine::drc`) and board API from `fr-serve`.
+
+* `widen` (capability `widen`) does what the toolkit's `route_necks.widen` does after a route, without KiCad: every
+  `Unfixed`/`ShoveFixed` trace narrower than its net class width (or `widths[net]`) is replaced by the same trace at the
+  target width; a candidate is kept only if `clearance_violations` of the new item names no item the old one did not
+  (strict: `clearance_tolerance_um` is 0 for the run, restored after). A trace that cannot take the target is split into one
+  trace per segment, and a segment that cannot is bisected down to 1 um. Widened and split traces are new items (new ids).
+  DSN `fix` wiring (`SystemFixed`) and locked wiring (`UserFixed`) are never touched. It is a state-changing op (history).
+* `check` (capability `check`) is read-only: clearance (`all_clearance_violations` on a copy with no tolerance), track width
+  below class / minimum, via annular ring and drill (drill from the padstack name `Via[a-b]_<pad>:<drill>_um`), unconnected.
+  Not checked: zone fill, thermal reliefs, silk, courtyards, solder mask, hole clearance, custom rules; KiCad DRC stays the
+  authority. It is not part of the determinism claim for `wall_ms` only.
+* The router counts a clearance shortfall up to `router.clearance_tolerance_um` (1 um) as clear; `check` and `widen` use 0.
+* `check` counts one clearance finding per place two copper items of different nets are too close (violations of an item
+  pair are merged when their overlap centres lie within one clearance), same-net copper is never a finding (the router's own
+  `attach off` rule keeps same-net vias apart; KiCad does not report it), and a pair of multilayer items is one finding.
+  Measured against KiCad DRC (toolkit `route_local.sh --fast --router-widen`, rp2040env and stm32io, placer seeds 1-3,
+  2026-10-10): on the boards as `widen` leaves them, clearance 0 against 0 on all 6, via annular ring (75/75/76), drill and
+  unconnected counts equal. With every wire fattened by 20 / 50 um (real violations): `check` found 91 % / 94 % of KiCad's
+  clearance findings (313 of 343, 482 of 513, matched by net pair) and reported 36 % / 39 % more (466 / 715 against 343 / 513),
+  because its convex pad and via shapes are polygons that enclose KiCad's arcs and it counts per trace item pair location.
+  It is a conservative screen, not a count that equals KiCad's.
 
 ## Locking (serve, capability `locking`)
 

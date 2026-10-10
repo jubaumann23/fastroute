@@ -2,10 +2,12 @@
 //! passes the matching conformance check; `hello` lists exactly the claimed capabilities.
 
 pub mod blockers;
+pub mod check;
 pub mod congestion;
 pub mod lock;
 pub mod move_;
 pub mod snapshot;
+pub mod widen;
 
 use serde_json::{Map, Value};
 
@@ -25,6 +27,8 @@ pub fn capabilities() -> Vec<&'static str> {
         ("congestion", congestion::CLAIMED),
         ("snapshot", snapshot::CLAIMED),
         ("starts", route::STARTS_CLAIMED),
+        ("widen", widen::CLAIMED),
+        ("check", check::CLAIMED),
     ]
     .into_iter()
     .filter_map(|(name, claimed)| claimed.then_some(name))
@@ -42,6 +46,8 @@ pub fn dispatch(session: &mut Session, op: &str, args: &Map<String, Value>) -> R
         "blockers" => blockers::handle(session, args),
         "congestion" => congestion::handle(session, args),
         "snapshot" | "restore" => snapshot::handle(session, args, op),
+        "widen" => widen::handle(session, args),
+        "check" => check::handle(session, args),
         _ => Err(ProtoError::new("unknown_op", format!("no such op '{op}'"))),
     }
 }

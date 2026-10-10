@@ -36,7 +36,7 @@ use proto::{err_line, ok_line, ProtoError, Request, MAX_LINE, OPS, R};
 use session::Session;
 
 /// The protocol version this server implements.
-pub const PROTOCOL: &str = "1.1.0";
+pub const PROTOCOL: &str = "1.2.0";
 
 /// `build` (SPEC 7): sha256 of the running executable, computed once.
 fn build_hash() -> Result<String, String> {

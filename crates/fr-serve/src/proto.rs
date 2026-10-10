@@ -7,8 +7,10 @@ use serde_json::{json, Map, Value};
 pub const MAX_LINE: usize = 256 * 1024 * 1024;
 
 /// The operations of protocol 1.x, in the order of the request schema.
-pub const OPS: [&str; 12] =
-    ["hello", "load", "move", "lock", "unlock", "route", "blockers", "congestion", "snapshot", "restore", "export", "shutdown"];
+pub const OPS: [&str; 14] = [
+    "hello", "load", "move", "lock", "unlock", "route", "blockers", "congestion", "snapshot", "restore", "widen", "check", "export",
+    "shutdown",
+];
 
 /// A protocol error: the `error` member of a failed response.
 #[derive(Debug, Clone)]
