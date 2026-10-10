@@ -191,6 +191,12 @@ pub struct RouterSettings {
     /// fastroute extension (not in Freerouting): narrowest trace width the
     /// router may create by neck-down; 0/unset = no limit (Java behaviour).
     pub min_trace_width_um: Option<f64>,
+    /// pcbkit R1 (not in Freerouting): the most queue elements one connection search may expand;
+    /// a work count, not a clock. 0/unset = unlimited (Java behaviour).
+    pub max_connection_expansions: Option<f64>,
+    /// pcbkit R2 (not in Freerouting): the most rounds one pull-tight pass may run; a work count.
+    /// 0/unset = unlimited (Java behaviour).
+    pub max_tighten_rounds: Option<f64>,
     pub strict_drc: Option<bool>,
     /// Java `jobTimeoutString` (JSON `job_timeout`), e.g. "12:00:00".
     pub job_timeout_string: Option<String>,
@@ -428,6 +434,8 @@ impl RouterSettings {
         copy(&mut self.plane_as_obstacle, &s.plane_as_obstacle, &mut n);
         copy(&mut self.neck_width_um, &s.neck_width_um, &mut n);
         copy(&mut self.min_trace_width_um, &s.min_trace_width_um, &mut n);
+        copy(&mut self.max_connection_expansions, &s.max_connection_expansions, &mut n);
+        copy(&mut self.max_tighten_rounds, &s.max_tighten_rounds, &mut n);
         copy(&mut self.strict_drc, &s.strict_drc, &mut n);
         copy(&mut self.job_timeout_string, &s.job_timeout_string, &mut n);
         if let Some(src) = &s.layers {
@@ -516,6 +524,22 @@ impl RouterSettings {
         match self.min_trace_width_um {
             Some(v) if v > 0.0 && v.is_finite() => v,
             _ => 0.0,
+        }
+    }
+
+    /// pcbkit R1, see [`RouterSettings::max_connection_expansions`]; 0 = unlimited.
+    pub fn get_max_connection_expansions(&self) -> u64 {
+        match self.max_connection_expansions {
+            Some(v) if v >= 1.0 && v.is_finite() => v as u64,
+            _ => 0,
+        }
+    }
+
+    /// pcbkit R2, see [`RouterSettings::max_tighten_rounds`]; 0 = unlimited.
+    pub fn get_max_tighten_rounds(&self) -> u32 {
+        match self.max_tighten_rounds {
+            Some(v) if v >= 1.0 && v.is_finite() => v.min(u32::MAX as f64) as u32,
+            _ => 0,
         }
     }
 

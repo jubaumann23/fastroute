@@ -218,6 +218,8 @@ pub struct RoutingBoard {
     pub time_limits: TimeLimitPolicy,
     // pcbkit hook H5: order seed for the pipeline's autorouter (None = upstream behaviour).
     pub order_seed: Option<i64>,
+    // pcbkit R2: the most rounds one pull-tight pass may run (0 = unlimited, upstream behaviour).
+    pub tighten_round_cap: u32,
     // pcbkit hook H6: when Some, only nets with `mask[net_no] == true` are routed or fanned out.
     pub route_nets: Option<Vec<bool>>,
     /// Java `autorouteEngine` (transient: not copied by `clone`, see
@@ -266,6 +268,7 @@ impl RoutingBoard {
             shove_failing_layer: -1,
             time_limits: TimeLimitPolicy::default(),
             order_seed: None,
+            tighten_round_cap: 0,
             route_nets: None,
             autoroute_engine: Default::default(),
         }

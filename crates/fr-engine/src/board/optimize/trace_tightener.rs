@@ -105,7 +105,13 @@ impl TraceTightener {
             return;
         }
         let mut something_changed = true;
+        let mut rounds: u32 = 0;
         while something_changed {
+            rounds += 1;
+            if round_cap_reached(board.tighten_round_cap, rounds) {
+                log::info!("TraceTightener: stopped at the round cap ({}).", board.tighten_round_cap);
+                return;
+            }
             something_changed = false;
             for i in 0..board.layer_count() {
                 let Some(changed_area) = board.changed_area.as_mut() else { return };
@@ -623,5 +629,28 @@ impl RoutingBoard {
         let nets: Vec<NetNo> = if own_net_only { self.item(trace).net_numbers().to_vec() } else { Vec::new() };
         let mut algo = TraceTightener::get_instance(self, &nets, None, pull_tight_accuracy, stop.cloned(), -1, None, -1);
         algo.smoothen_end_corners_at_trace(self, trace)
+    }
+}
+
+/// pcbkit R2: true once a pull-tight pass has started more than `cap` rounds (`cap` 0 = unlimited).
+/// A round that keeps changing the traces without converging (each round splitting one more piece
+/// off) is a work count, not a clock, so the bound is deterministic.
+pub(crate) fn round_cap_reached(cap: u32, rounds: u32) -> bool {
+    cap > 0 && rounds > cap
+}
+
+#[cfg(test)]
+mod pcbkit_round_cap_tests {
+    use super::round_cap_reached;
+
+    #[test]
+    fn zero_cap_is_unlimited() {
+        assert!(!round_cap_reached(0, u32::MAX));
+    }
+
+    #[test]
+    fn cap_allows_exactly_cap_rounds() {
+        assert!(!round_cap_reached(3, 3));
+        assert!(round_cap_reached(3, 4));
     }
 }

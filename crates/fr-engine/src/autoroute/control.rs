@@ -74,6 +74,8 @@ pub struct AutorouteControl {
     pub ripup_allowed: bool,
     /// pcbkit H3: record the items that block the search (default false).
     pub collect_blockers: bool,
+    /// pcbkit R1: the most queue elements one connection search may expand (0 = unlimited).
+    pub max_expansions: u64,
     pub ripup_costs: i32,
     pub ripup_pass_no: i32,
     /// If true, the autoroute algorithm completes after the first drill.
@@ -167,6 +169,7 @@ impl AutorouteControl {
             min_normal_via_cost: 0.0,
             ripup_allowed: false,
             collect_blockers: false,
+            max_expansions: settings.get_max_connection_expansions(),
             ripup_costs: 1000,
             ripup_pass_no: 1,
             is_fanout: false,
@@ -344,6 +347,11 @@ pub(crate) fn jmin(a: f64, b: f64) -> f64 {
     }
 }
 
+/// pcbkit R1: true once a search has expanded more than `cap` elements (`cap` 0 = unlimited).
+pub fn expansion_cap_reached(cap: u64, expanded: u64) -> bool {
+    cap > 0 && expanded > cap
+}
+
 /// A neck-down half width raised to `min_half_width`; a zero minimum or a zero (no neck-down) width
 /// is left alone.
 fn clamp_half_width_to_min(min_half_width: i32, half_width: i32) -> i32 {
@@ -369,6 +377,22 @@ fn min_trace_half_width(board: &RoutingBoard, settings: &RouterSettings) -> i32 
     )) as i32;
     // Round the half width up so that 2 * half >= the requested width.
     (width + 1) / 2
+}
+
+#[cfg(test)]
+mod pcbkit_expansion_cap_tests {
+    use super::expansion_cap_reached;
+
+    #[test]
+    fn zero_cap_never_triggers() {
+        assert!(!expansion_cap_reached(0, u64::MAX));
+    }
+
+    #[test]
+    fn cap_triggers_only_beyond_the_limit() {
+        assert!(!expansion_cap_reached(100, 100));
+        assert!(expansion_cap_reached(100, 101));
+    }
 }
 
 #[cfg(test)]
