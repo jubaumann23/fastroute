@@ -76,15 +76,20 @@ impl AutorouteEngine {
         ripup_costs: Option<&mut HashMap<ItemKey, i32>>,
     ) -> AutorouteAttemptResult {
         self.process_board_changes(board);
+        let mut capped = false;
         // (panics stand for Java exceptions, which are caught like in Java)
         let search_result = {
             // outer None: the maze search could not be created; inner: the found connection
             let r: Result<Option<Option<MazeSearchResult>>, _> = catch_unwind(AssertUnwindSafe(|| {
                 let mut maze = MazeSearchEngine::get_instance(start_set, dest_set, &mut *self, &mut *board, ctrl)?;
-                Some(catch_unwind(AssertUnwindSafe(|| maze.find_connection())).unwrap_or_else(|_| {
+                let found = catch_unwind(AssertUnwindSafe(|| maze.find_connection())).unwrap_or_else(|_| {
                     log::error!("AutorouteEngine.autoroute_connection: Exception in mazeSearchAlgo.find_connection");
                     None
-                }))
+                });
+                if maze.capped {
+                    capped = true; // pcbkit R1
+                }
+                Some(found)
             }));
             let Ok(Some(found)) = r else {
                 // (Java returns without clearing the database)
@@ -111,6 +116,13 @@ impl AutorouteEngine {
             self.clear(board);
         } else {
             self.reset_all_doors(board);
+        }
+        if search_result.is_none() && capped {
+            log::info!("Connection search stopped at the expansion cap ({}).", ctrl.max_expansions);
+            return AutorouteAttemptResult::with_details(
+                AutorouteAttemptState::Failed,
+                "Failed to route connection, because the search reached the expansion cap (router.max_connection_expansions).",
+            );
         }
         if search_result.is_none() {
             return AutorouteAttemptResult::with_details(

@@ -115,6 +115,7 @@ fn build(session: &Session, data: &[u8], dsn: &Dsn, ses: Option<&[u8]>, name: St
         mode: TimeLimitMode::Count { factor: fr_engine::datastructures::time_limit::DEFAULT_COUNT_FACTOR },
         fired: Some(Arc::new(AtomicBool::new(false))),
     };
+    board.tighten_round_cap = settings.get_max_tighten_rounds();
     let locks = LockRegistry::after_load(&mut board, &own, lock_initial);
     let origin = Arc::new(Origin { dsn: data.to_vec(), ses: ses.map(<[u8]>::to_vec), lock_initial });
     Ok((Board { origin, moves: Vec::new(), name, board, settings }, locks))

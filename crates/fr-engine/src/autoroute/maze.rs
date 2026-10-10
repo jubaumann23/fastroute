@@ -139,6 +139,10 @@ pub struct MazeSearchEngine<'a> {
     random_generator: JavaRandom,
     destination_door: Option<Expandable>,
     section_no_of_destination_door: i32,
+    /// pcbkit R1: elements expanded so far by this search.
+    pub expanded: u64,
+    /// pcbkit R1: the search stopped because `ctrl.max_expansions` was reached.
+    pub capped: bool,
 }
 
 impl<'a> MazeSearchEngine<'a> {
@@ -159,6 +163,8 @@ impl<'a> MazeSearchEngine<'a> {
             random_generator,
             destination_door: None,
             section_no_of_destination_door: 0,
+            expanded: 0,
+            capped: false,
         }
     }
 
@@ -271,6 +277,12 @@ impl<'a> MazeSearchEngine<'a> {
         let Some(list_element) = list_element else {
             return false;
         };
+        // pcbkit R1: deterministic work cap (an expansion count, never a clock).
+        self.expanded += 1;
+        if crate::autoroute::control::expansion_cap_reached(self.ctrl.max_expansions, self.expanded) {
+            self.capped = true;
+            return false;
+        }
         {
             let section = self.eng.element_mut(list_element.door, list_element.section_no_of_door);
             section.backtrack_door = list_element.backtrack_door;
