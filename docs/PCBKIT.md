@@ -193,6 +193,15 @@ No core hook and no ledger row: both ops use the existing clearance engine (`fr_
   Not checked: zone fill, thermal reliefs, silk, courtyards, solder mask, hole clearance, custom rules; KiCad DRC stays the
   authority. It is not part of the determinism claim for `wall_ms` only.
 * The router counts a clearance shortfall up to `router.clearance_tolerance_um` (1 um) as clear; `check` and `widen` use 0.
+* `check` counts one clearance finding per place two copper items of different nets are too close (violations of an item
+  pair are merged when their overlap centres lie within one clearance), same-net copper is never a finding (the router's own
+  `attach off` rule keeps same-net vias apart; KiCad does not report it), and a pair of multilayer items is one finding.
+  Measured against KiCad DRC (toolkit `route_local.sh --fast --router-widen`, rp2040env and stm32io, placer seeds 1-3,
+  2026-10-10): on the boards as `widen` leaves them, clearance 0 against 0 on all 6, via annular ring (75/75/76), drill and
+  unconnected counts equal. With every wire fattened by 20 / 50 um (real violations): `check` found 91 % / 94 % of KiCad's
+  clearance findings (313 of 343, 482 of 513, matched by net pair) and reported 36 % / 39 % more (466 / 715 against 343 / 513),
+  because its convex pad and via shapes are polygons that enclose KiCad's arcs and it counts per trace item pair location.
+  It is a conservative screen, not a count that equals KiCad's.
 
 ## Locking (serve, capability `locking`)
 

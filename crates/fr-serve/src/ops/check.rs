@@ -2,10 +2,12 @@
 //! rules, from the clearance engine and the connectivity the router already holds.
 //!
 //! Checked:
-//! * clearance between copper items (the router's own `all_clearance_violations` with no tolerance: one
-//!   entry per pair of items and layer), by pair kind: `track_track`, `track_pad`, `track_via`, `via_via`, `via_pad`,
-//!   `pad_pad`, `edge` (the board outline, which carries the copper-to-edge clearance), `keepout`,
-//!   `plane`, `other`;
+//! * clearance between copper items of different nets (the router's own `clearance_violations` with no
+//!   tolerance; one finding per place two items are too close, as KiCad counts, and per layer where one of
+//!   the two is a trace), by pair kind:
+//!   `track_track`, `track_pad`, `track_via`, `via_via`, `via_pad`, `pad_pad`, `edge` (the board outline,
+//!   which carries the copper-to-edge clearance), `keepout`, `plane`, `other`. Same-net copper is never a
+//!   finding, as in KiCad;
 //! * track width: `width_class` (a segment below its net class width on its layer, locked and router
 //!   wiring; DSN `fix` wiring is the input and not judged) and `width_min` (below the minimum width: the
 //!   request's `min_width`, else the session's `router.min_trace_width_um`);
@@ -23,7 +25,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use fr_engine::board::{BasicBoard, Item};
-use fr_engine::drc::all_clearance_violations;
+use fr_engine::drc::clearance_violations;
 use fr_engine::ids::FixedState;
 use serde_json::{json, Map, Value};
 
@@ -153,24 +155,43 @@ fn mid(board: &BasicBoard, a: fr_geom::Point, b: fr_geom::Point) -> [i64; 2] {
 }
 
 fn clearance_findings(board: &BasicBoard, out: &mut Vec<Finding>, unfixable: &mut i64) {
-    for v in all_clearance_violations(board) {
-        let (a, b) = (board.item(v.first_item), board.item(v.second_item));
-        if v.is_unfixable(board) {
-            *unfixable += 1;
+    // One finding per place two items are too close, as KiCad counts them (per segment pair, not per trace pair):
+    // the violations of a pair of items (reported from both sides, and once per layer for multilayer items) are
+    // merged when their overlap centres lie within one clearance of each other. A pair with a trace stays per layer.
+    let mut places: BTreeMap<(i32, i32, Option<i32>), Vec<(f64, f64)>> = BTreeMap::new();
+    for key in board.get_items() {
+        for v in clearance_violations(board, key) {
+            let (a, b) = (board.item(v.first_item), board.item(v.second_item));
+            // Same-net copper is never a clearance finding (KiCad does not report it either), even where the
+            // router's own `attach off` padstack rule keeps same-net vias apart.
+            if !a.net_numbers().is_empty() && a.shares_net(b) {
+                continue;
+            }
+            let (id1, id2) = (a.id().0, b.id().0);
+            let layer_key = (a.is_trace() || b.is_trace()).then_some(v.layer);
+            let c = v.shape.centre_of_gravity();
+            let merge = v.expected_clearance.max(1.0);
+            let seen = places.entry((id1.min(id2), id1.max(id2), layer_key)).or_default();
+            if seen.iter().any(|p| (p.0 - c.x).hypot(p.1 - c.y) <= merge) {
+                continue;
+            }
+            seen.push((c.x, c.y));
+            if v.is_unfixable(board) {
+                *unfixable += 1;
+            }
+            let net = first_net(board, a);
+            let net2 = first_net(board, b);
+            out.push(Finding {
+                kind: clearance_type(kind(a), kind(b)),
+                // the net of the routed item first (a pad or the outline may have none)
+                net: if net.is_empty() { net2.clone() } else { net.clone() },
+                net2: (!net.is_empty() && !net2.is_empty() && net != net2).then_some(net2),
+                layer: layer_name(board, v.layer),
+                at: [c.x.round() as i64, c.y.round() as i64],
+                required: Some(v.expected_clearance.round() as i64),
+                actual: Some(v.actual_clearance.round() as i64),
+            });
         }
-        let c = v.shape.centre_of_gravity();
-        let net = first_net(board, a);
-        let net2 = first_net(board, b);
-        out.push(Finding {
-            kind: clearance_type(kind(a), kind(b)),
-            // the net of the routed item first (a pad or the outline may have none)
-            net: if net.is_empty() { net2.clone() } else { net.clone() },
-            net2: (!net.is_empty() && !net2.is_empty() && net != net2).then_some(net2),
-            layer: layer_name(board, v.layer),
-            at: [c.x.round() as i64, c.y.round() as i64],
-            required: Some(v.expected_clearance.round() as i64),
-            actual: Some(v.actual_clearance.round() as i64),
-        });
     }
 }
 
