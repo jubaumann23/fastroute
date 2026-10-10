@@ -177,3 +177,19 @@ pub fn net_rows(board: &BasicBoard, unrouted: &[Unrouted], locks: &LockRegistry)
     }
     rows
 }
+
+/// Micrometres in one board unit (the protocol's length unit): `1 / resolution` of the DSN unit.
+pub fn um_per_unit(board: &BasicBoard) -> f64 {
+    let comm = &board.communication;
+    fr_engine::structure::Unit::scale(1.0, comm.unit, fr_engine::structure::Unit::Um) / comm.resolution.max(1) as f64
+}
+
+/// Name of the net with this number, or "" (no net).
+pub fn net_name(board: &BasicBoard, n: i32) -> String {
+    board.rules.nets.get(n).map(|x| x.name.clone()).unwrap_or_default()
+}
+
+/// Net number of the net called `name`.
+pub fn net_number(board: &BasicBoard, name: &str) -> Option<i32> {
+    (1..=board.rules.nets.max_net_number()).find(|&n| board.rules.nets.get(n).is_some_and(|x| x.name == name))
+}
