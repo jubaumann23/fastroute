@@ -193,6 +193,13 @@ impl FoundConnectionInserter {
         if from_point == target_point {
             return false;
         }
+        // pcbkit W1: strict width allows a neck only at a declared width and near a pad of the net.
+        if ctrl.strict_width
+            && (ctrl.min_trace_half_width <= 0
+                || !within_neck_reach(board, ctrl, &[start_pin, end_pin], layer, &[from_point, target_point]))
+        {
+            return false;
+        }
         let base_half_width = ctrl.trace_half_width[layer as usize];
         // LinkedHashSet<Integer>: insertion order without duplicates
         let mut candidate_half_widths: Vec<i32> = Vec::new();
@@ -282,6 +289,10 @@ impl FoundConnectionInserter {
         let current_clearance = board.rules.clearance_matrix.get_value(ctrl.trace_clearance_class, board.item(pin).clearance_class(), layer, true) as f64;
         let pin_neck_down_distance = 2.0 * (0.5 * board.pin_max_width(pin, layer) + current_clearance);
         if pin_center.distance(&to_corner.to_float()) >= pin_neck_down_distance {
+            return NeckDownResult::Null;
+        }
+        // pcbkit W1: strict width keeps the neck within the declared reach of the pad.
+        if !ctrl.neck_reach_ok(pin_center.distance(&to_corner.to_float()), board.pin_max_width(pin, layer)) {
             return NeckDownResult::Null;
         }
         // fastroute extension: never below the board minimum track width
@@ -433,4 +444,16 @@ impl FoundConnectionInserter {
         }
         true
     }
+}
+
+/// pcbkit W1: true if every point lies within the neck reach (`router.neck_radius_um`) of one same pin of `pins`
+/// that has copper on `layer`. Disc-shaped reach is convex, so a segment between two such points is inside it too.
+fn within_neck_reach(board: &RoutingBoard, ctrl: &AutorouteControl, pins: &[Option<ItemKey>], layer: LayerNo, points: &[&Point]) -> bool {
+    pins.iter().flatten().any(|&pin| {
+        board.item(pin).is_on_layer(board, layer) && {
+            let centre = board.item(pin).center(board).to_float();
+            let max_width = board.pin_max_width(pin, layer);
+            points.iter().all(|p| ctrl.neck_reach_ok(centre.distance(&p.to_float()), max_width))
+        }
+    })
 }

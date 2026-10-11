@@ -38,6 +38,8 @@ fn expected_defaults() -> RouterSettings {
         max_connection_expansions: None,
         max_tighten_rounds: None,
         tighten_min_move_um: None,
+        strict_width: None,
+        neck_radius_um: None,
         strict_drc: Some(false),
         job_timeout_string: Some("12:00:00".into()),
         layers: None,
