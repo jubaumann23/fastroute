@@ -24,6 +24,7 @@
 //! result; a second signal exits at once) or killed leaves its best result behind.
 
 mod live;
+mod malloc_arenas;
 mod report;
 
 use std::io::Write as _;
@@ -797,6 +798,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 static GLOBAL: dhat::Alloc = dhat::Alloc;
 
 fn main() -> ExitCode {
+    malloc_arenas::cap(); // pcbkit M1: before any thread exists
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
     // `fastroute serve`: the stdio router protocol server (crates/fr-serve)

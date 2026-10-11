@@ -465,7 +465,14 @@ pub struct BatchOptimizer {
 impl BatchOptimizer {
     pub fn new(mode: OptimizerMode) -> Self {
         let pool = match mode {
-            OptimizerMode::Parallel { threads } => rayon::ThreadPoolBuilder::new().num_threads(threads.max(1)).build().ok(),
+            OptimizerMode::Parallel { threads } => match rayon::ThreadPoolBuilder::new().num_threads(threads.max(1)).build() {
+                Ok(pool) => Some(pool),
+                Err(e) => {
+                    // pcbkit D1: the parallel algorithm then runs on the calling thread (same result)
+                    log::warn!("Optimizer: no thread pool ({e}); evaluating the candidates on one thread.");
+                    None
+                }
+            },
             OptimizerMode::JavaCompat => None,
         };
         BatchOptimizer {
@@ -484,6 +491,13 @@ impl BatchOptimizer {
             unroutable: HashSet::new(),
             default_budget: None,
         }
+    }
+
+    /// pcbkit D1 test seam: this optimizer as if its thread pool could not be built.
+    #[doc(hidden)]
+    pub fn without_pool(mut self) -> Self {
+        self.pool = None;
+        self
     }
 
     /// Java `evaluatePreFlightGuards(stats)`: the reason to skip the optimizer, if any.
@@ -936,14 +950,17 @@ impl BatchOptimizer {
         };
         let mut stopped_or_timed_out = false;
         match (&self.mode, &self.pool) {
-            (OptimizerMode::Parallel { threads }, Some(pool)) => {
+            // pcbkit D1: without its pool (thread creation failed) the parallel mode keeps its
+            // algorithm on the calling thread; falling back to the Java-compatible evaluation gave
+            // another result whenever the host could not start the threads
+            (OptimizerMode::Parallel { threads }, pool) => {
                 // Candidates are claimed in order by the worker threads and their results are
                 // consumed strictly in candidate order (as soon as all earlier results are
                 // available), so the consumed prefix and thus the result are the same as with
                 // chunked evaluation, for any thread count. Candidates after the stop point
                 // are not evaluated.
                 let deadline = self.deadline;
-                let (flag, timed_out) = stream_parallel(pool, *threads, board, &candidates, &params, &mut consumer, || {
+                let (flag, timed_out) = stream_parallel(pool.as_ref(), *threads, board, &candidates, &params, &mut consumer, || {
                     if deadline_passed(deadline) {
                         Some(true)
                     } else if stop.is_stop_requested() {
@@ -1109,9 +1126,10 @@ impl PassConsumer {
 /// Parallel mode: `threads` workers claim the candidates in order (shared counter) and evaluate
 /// each on a fresh clone of the baseline; results are handed to `consumer` strictly in candidate
 /// order. `interrupt` is polled before each claimed candidate: `Some(timed_out)` stops the pass.
-/// Returns (stopped by `interrupt`, timed out).
+/// Returns (stopped by `interrupt`, timed out). Without a `pool` the one worker runs on the
+/// calling thread: the consumed results, and so the outcome, are the same (pcbkit D1).
 fn stream_parallel(
-    pool: &rayon::ThreadPool,
+    pool: Option<&rayon::ThreadPool>,
     threads: usize,
     baseline: &RoutingBoard,
     candidates: &[i32],
@@ -1132,63 +1150,67 @@ fn stream_parallel(
     // no candidate at or after this index is consumed (or needs to be evaluated)
     let limit = AtomicUsize::new(n);
     let shared = Mutex::new(Shared { slots: (0..n).map(|_| None).collect(), pos: 0, consumer, interrupted: None });
-    pool.scope(|s| {
-        for _ in 0..threads.max(1) {
-            s.spawn(|_| loop {
-                let i = next.fetch_add(1, AtOrd::SeqCst);
-                if i >= limit.load(AtOrd::SeqCst) {
-                    break;
+    let worker = || loop {
+        let i = next.fetch_add(1, AtOrd::SeqCst);
+        if i >= limit.load(AtOrd::SeqCst) {
+            break;
+        }
+        if let Some(t) = interrupt() {
+            let mut sh = shared.lock().unwrap();
+            if sh.interrupted.is_none() {
+                sh.interrupted = Some(t);
+            }
+            limit.store(0, AtOrd::SeqCst);
+            break;
+        }
+        let mut r = evaluate_fresh(baseline, candidates[i], params);
+        let mut sh = shared.lock().unwrap();
+        // fastroute: results wait for their turn in `slots`, improved ones with their
+        // whole board (behind one slow candidate, hundreds of boards piled up: 1.7 GB live
+        // on a 265-part board). Only a candidate better than the current winner can
+        // become the winner (the winner only gets better and `improved_over` is a strict
+        // total order), so the others need no board.
+        if let (Some(c), Some(w)) = (r.as_mut(), sh.consumer.winning.as_ref()) {
+            if c.board.is_some() && !c.result.improved_over(&w.result) {
+                c.board = None;
+            }
+        }
+        sh.slots[i] = Some(r);
+        let mut new_winner = false;
+        while sh.interrupted.is_none() && sh.pos < n && !sh.consumer.done && sh.slots[sh.pos].is_some() {
+            let pos = sh.pos;
+            let r = sh.slots[pos].take().unwrap();
+            sh.pos += 1;
+            let before = sh.consumer.winning.as_ref().map(|w| w.result.item_id);
+            let stop = sh.consumer.consume(r);
+            new_winner |= sh.consumer.winning.as_ref().map(|w| w.result.item_id) != before;
+            if stop {
+                limit.store(sh.pos, AtOrd::SeqCst);
+                // drop the results evaluated beyond the stop point
+                for slot in sh.slots.iter_mut().skip(pos + 1) {
+                    *slot = None;
                 }
-                if let Some(t) = interrupt() {
-                    let mut sh = shared.lock().unwrap();
-                    if sh.interrupted.is_none() {
-                        sh.interrupted = Some(t);
-                    }
-                    limit.store(0, AtOrd::SeqCst);
-                    break;
-                }
-                let mut r = evaluate_fresh(baseline, candidates[i], params);
-                let mut sh = shared.lock().unwrap();
-                // fastroute: results wait for their turn in `slots`, improved ones with their
-                // whole board (behind one slow candidate, hundreds of boards piled up: 1.7 GB live
-                // on a 265-part board). Only a candidate better than the current winner can
-                // become the winner (the winner only gets better and `improved_over` is a strict
-                // total order), so the others need no board.
-                if let (Some(c), Some(w)) = (r.as_mut(), sh.consumer.winning.as_ref()) {
+            }
+        }
+        if new_winner {
+            let sh = &mut *sh;
+            if let Some(w) = sh.consumer.winning.as_ref() {
+                for c in sh.slots[sh.pos..].iter_mut().flatten().flatten() {
                     if c.board.is_some() && !c.result.improved_over(&w.result) {
                         c.board = None;
                     }
                 }
-                sh.slots[i] = Some(r);
-                let mut new_winner = false;
-                while sh.interrupted.is_none() && sh.pos < n && !sh.consumer.done && sh.slots[sh.pos].is_some() {
-                    let pos = sh.pos;
-                    let r = sh.slots[pos].take().unwrap();
-                    sh.pos += 1;
-                    let before = sh.consumer.winning.as_ref().map(|w| w.result.item_id);
-                    let stop = sh.consumer.consume(r);
-                    new_winner |= sh.consumer.winning.as_ref().map(|w| w.result.item_id) != before;
-                    if stop {
-                        limit.store(sh.pos, AtOrd::SeqCst);
-                        // drop the results evaluated beyond the stop point
-                        for slot in sh.slots.iter_mut().skip(pos + 1) {
-                            *slot = None;
-                        }
-                    }
-                }
-                if new_winner {
-                    let sh = &mut *sh;
-                    if let Some(w) = sh.consumer.winning.as_ref() {
-                        for c in sh.slots[sh.pos..].iter_mut().flatten().flatten() {
-                            if c.board.is_some() && !c.result.improved_over(&w.result) {
-                                c.board = None;
-                            }
-                        }
-                    }
-                }
-            });
+            }
         }
-    });
+    };
+    match pool {
+        Some(pool) => pool.scope(|s| {
+            for _ in 0..threads.max(1) {
+                s.spawn(|_| worker());
+            }
+        }),
+        None => worker(),
+    }
     let sh = shared.into_inner().unwrap();
     match sh.interrupted {
         Some(t) => (true, t),
