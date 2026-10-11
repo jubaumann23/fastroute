@@ -280,6 +280,7 @@ common --router.* settings (numbers, true/false, comma-separated lists):
                                             by less than U um and removes no corner (0 = off)
   --router.strict_width=true|false          never route below the net-class width, except in a neck-down
   --router.neck_radius_um=R                 with strict_width: neck-downs only within R um of a same-net pad
+  --router.strict_last_resort=true|false    with strict_width + recover_attempts: a last recovery attempt may neck
   --router.neck_width_um=W                  retry failed connections with W um traces
   --router.copper_to_edge_clearance_um=C    copper to board edge clearance
   --router.job_timeout=HH:MM:SS             overall job timeout (default 12:00:00)";

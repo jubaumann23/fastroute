@@ -31,6 +31,8 @@ use super::{incomplete_count, BatchAutorouter, ConnectionRouterParams, PipelineC
 const SETTLE_SWEEPS: usize = 3;
 /// Rip-up pass number of the re-routing sweeps (the cost of an ordinary mid-run pass).
 const SETTLE_PASS_NO: i32 = 3;
+/// Attempts per connection of the strict-width last resort (it only breaks strict width where strict recovery failed).
+const LAST_RESORT_ATTEMPTS: u32 = 2;
 /// A hard bound on the rounds over the open connections (each accepted attempt already lowers the open count).
 const MAX_ROUNDS: usize = 6;
 
@@ -68,7 +70,37 @@ impl BatchAutorouter {
         // `retry_connection_necked` a set `router.neck_width_um` turns on for the whole run, here only for the
         // attempts of this stage); `router.min_trace_width_um` unset leaves the settings as they are
         let necked = Self::necked_settings(settings);
-        let settings = &necked;
+        self.recover_rounds(board, &necked, attempts, ignored, &params, ctx, &mut report);
+        // pcbkit W2: a connection strict width left open gets a last attempt that may break it (the whole
+        // attempt, rip-ups included, runs without strict width: a neighbour ripped for it must be able to neck too)
+        if settings.is_strict_width() && settings.is_strict_last_resort() && report.open_after - ignored > 0 {
+            let mut loose = settings.clone();
+            loose.strict_width = None;
+            let loose = Self::necked_settings(&loose);
+            self.recover_rounds(board, &loose, attempts.min(LAST_RESORT_ATTEMPTS), ignored, &params, ctx, &mut report);
+        }
+        log::info!(
+            "Recovery: {} -> {} unrouted connections ({} attempts, {} kept).",
+            report.open_before,
+            report.open_after,
+            report.attempts_run,
+            report.attempts_kept
+        );
+        report
+    }
+
+    /// The rounds of [`Self::recover`] over the connections still open.
+    #[allow(clippy::too_many_arguments)]
+    fn recover_rounds(
+        &mut self,
+        board: &mut RoutingBoard,
+        settings: &RouterSettings,
+        attempts: u32,
+        ignored: i32,
+        params: &ConnectionRouterParams,
+        ctx: &PipelineContext,
+        report: &mut RecoverReport,
+    ) {
         for _round in 0..MAX_ROUNDS {
             let mut progress = false;
             let open = Self::get_autoroute_items(board);
@@ -88,7 +120,7 @@ impl BatchAutorouter {
                     }
                     report.attempts_run += 1;
                     let mut trial = board.clone_for_worker();
-                    let worth_another = self.recover_attempt(&mut trial, settings, &params, id, attempt, ctx);
+                    let worth_another = self.recover_attempt(&mut trial, settings, params, id, attempt, ctx);
                     let before = StatsCache::new().score(board, settings);
                     let after = StatsCache::new().score(&trial, settings);
                     if after.incomplete_count < before.incomplete_count && after.clearance_violation_count <= before.clearance_violation_count {
@@ -113,14 +145,6 @@ impl BatchAutorouter {
                 break;
             }
         }
-        log::info!(
-            "Recovery: {} -> {} unrouted connections ({} attempts, {} kept).",
-            report.open_before,
-            report.open_after,
-            report.attempts_run,
-            report.attempts_kept
-        );
-        report
     }
 
     /// `settings`, with the neck-down retry width set to the minimum trace width unless one is set.

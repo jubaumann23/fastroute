@@ -157,3 +157,16 @@ fn a_class_layer_rule_width_is_what_the_router_draws_on_that_layer() {
     assert!(!widths.is_empty());
     assert!(widths.iter().all(|(layer, w)| layer == "B.Cu" && (w - 220.0).abs() < SLACK_UM), "{widths:?}");
 }
+
+#[test]
+fn the_strict_last_resort_routes_in_recovery_what_strict_width_left_open() {
+    let dsn = write_dsn("neck.dsn", &fine_pitch_dsn());
+    let strict = json!({ "router.min_trace_width_um": 250, "router.neck_width_um": 100, "router.strict_width": true, "router.neck_radius_um": 1000, "router.recover_attempts": 2 });
+    let (_, open_strict) = route(&dsn, strict.clone());
+    assert!(open_strict > 0);
+    let mut last = strict;
+    last.as_object_mut().unwrap().insert("router.strict_last_resort".into(), json!(true));
+    let (ses, open_last) = route(&dsn, last);
+    assert!(open_last < open_strict, "the last resort should connect something strict left open ({open_last} vs {open_strict})");
+    assert!(narrowest(&ses) < 250.0 - SLACK_UM, "and it does so below the floor, which is what it is for");
+}
