@@ -197,6 +197,10 @@ pub struct RouterSettings {
     /// pcbkit R2 (not in Freerouting): the most rounds one pull-tight pass may run; a work count.
     /// 0/unset = unlimited (Java behaviour).
     pub max_tighten_rounds: Option<f64>,
+    /// pcbkit R3 (not in Freerouting): a pull-tight or end-corner smoothing change that moves the
+    /// trace by less than this many micrometres (and removes no corner) is not applied, so a
+    /// pull-tight pass converges instead of creeping. 0/unset = every change applied (Java behaviour).
+    pub tighten_min_move_um: Option<f64>,
     pub strict_drc: Option<bool>,
     /// Java `jobTimeoutString` (JSON `job_timeout`), e.g. "12:00:00".
     pub job_timeout_string: Option<String>,
@@ -436,6 +440,7 @@ impl RouterSettings {
         copy(&mut self.min_trace_width_um, &s.min_trace_width_um, &mut n);
         copy(&mut self.max_connection_expansions, &s.max_connection_expansions, &mut n);
         copy(&mut self.max_tighten_rounds, &s.max_tighten_rounds, &mut n);
+        copy(&mut self.tighten_min_move_um, &s.tighten_min_move_um, &mut n);
         copy(&mut self.strict_drc, &s.strict_drc, &mut n);
         copy(&mut self.job_timeout_string, &s.job_timeout_string, &mut n);
         if let Some(src) = &s.layers {
@@ -540,6 +545,14 @@ impl RouterSettings {
         match self.max_tighten_rounds {
             Some(v) if v >= 1.0 && v.is_finite() => v.min(u32::MAX as f64) as u32,
             _ => 0,
+        }
+    }
+
+    /// pcbkit R3, see [`RouterSettings::tighten_min_move_um`]; 0 = off.
+    pub fn get_tighten_min_move_um(&self) -> f64 {
+        match self.tighten_min_move_um {
+            Some(v) if v > 0.0 && v.is_finite() => v,
+            _ => 0.0,
         }
     }
 

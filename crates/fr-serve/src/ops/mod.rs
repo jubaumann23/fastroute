@@ -29,6 +29,7 @@ pub fn capabilities() -> Vec<&'static str> {
         ("starts", route::STARTS_CLAIMED),
         ("widen", widen::CLAIMED),
         ("check", check::CLAIMED),
+        ("work", route::WORK_CLAIMED),
     ]
     .into_iter()
     .filter_map(|(name, claimed)| claimed.then_some(name))

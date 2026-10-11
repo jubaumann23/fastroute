@@ -274,6 +274,8 @@ common --router.* settings (numbers, true/false, comma-separated lists):
   --router.min_trace_width_um=W             never neck traces below W um
   --router.max_connection_expansions=N      stop one connection search after N expanded elements (0 = no cap)
   --router.max_tighten_rounds=N             stop one pull-tight pass after N rounds (0 = no cap)
+  --router.tighten_min_move_um=U            pull-tight: do not apply a change that moves the trace
+                                            by less than U um and removes no corner (0 = off)
   --router.neck_width_um=W                  retry failed connections with W um traces
   --router.copper_to_edge_clearance_um=C    copper to board edge clearance
   --router.job_timeout=HH:MM:SS             overall job timeout (default 12:00:00)";
@@ -496,6 +498,8 @@ fn run() -> Result<(), String> {
         None => TimeLimitMode::Count { factor: args.time_limit_factor },
     };
     board.time_limits = TimeLimitPolicy { mode, fired: Some(fired.clone()) };
+    // pcbkit R2/R3 (the CLI listed --router.max_tighten_rounds but never applied it)
+    board.apply_tighten_settings(&settings);
     let optimizer_threads = settings.optimizer.max_threads.unwrap_or(1).max(1) as usize;
     let optimizer_mode = match args.optimizer_mode.as_deref() {
         Some("java-compat") => OptimizerMode::JavaCompat,
@@ -651,6 +655,8 @@ fn run() -> Result<(), String> {
     }
     let route_s = t.elapsed().as_secs_f64();
     log::info!(target: "fastroute", "routing finished in {route_s:.2} s");
+    let work: Vec<String> = board.work_stats.snapshot().iter().map(|(k, v)| format!("{k}={v}")).collect();
+    log::info!(target: "fastroute", "work: {}", work.join(" "));
     if fired.load(Ordering::SeqCst) {
         log::info!(target: "fastroute", "note: a board time limit fired ({mode:?})");
     }
