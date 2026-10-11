@@ -21,6 +21,8 @@ pub const INCREMENTAL_CLAIMED: bool = true;
 
 /// `route.starts` (protocol 1.1): multi-start count per request.
 pub const STARTS_CLAIMED: bool = true;
+/// The route result carries `work` (search expansions, pull-tight rounds, cap hits).
+pub const WORK_CLAIMED: bool = true;
 /// Default multi-start of the stock CLI (`--multi-start`, main.rs:70), used when `starts` is absent.
 const MULTI_START: usize = 4;
 const MAX_STARTS: i64 = 16;
@@ -196,6 +198,8 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     fr_engine::autoroute::engine::take_engine_fault(); // clear a fault left by an earlier request
     let t0 = Instant::now();
     let budget = Budget::start(budget_ms as u64, &stop);
+    // fresh work counters for this request (the session's clones share the old ones)
+    work.board.board.work_stats = Arc::default();
     pipeline::run_pipeline(&mut work.board.board, &mut work.board.settings, &ctx);
     let budget_hit = budget.finish();
     // F2: the engine abandoned a step that kept panicking; the half-routed copy is dropped and the
@@ -217,9 +221,19 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     work.locks.reconcile(&work.board.board);
     let wall_ms = t0.elapsed().as_millis() as i64;
 
-    let result = summarize(&work.board.board, &work.locks, seed, starts, passes.load(Ordering::SeqCst), budget_hit, wall_ms);
+    let mut result = summarize(&work.board.board, &work.locks, seed, starts, passes.load(Ordering::SeqCst), budget_hit, wall_ms);
+    if WORK_CLAIMED {
+        result["work"] = work_json(&work.board.board.work_stats);
+    }
     session.commit(work);
     Ok(result)
+}
+
+/// The `work` result field (capability `work`): what the searches and pull-tight passes of this
+/// request did, and how often the work caps (`router.max_connection_expansions`,
+/// `router.max_tighten_rounds`) stopped one. Counters only; they never change a result.
+pub fn work_json(stats: &fr_engine::board::routing_board::WorkStats) -> Value {
+    Value::Object(stats.snapshot().iter().map(|&(k, v)| (k.to_string(), json!(v))).collect())
 }
 
 /// `(name, net number)` of every net, in net-number (DSN network) order.

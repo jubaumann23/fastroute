@@ -21,7 +21,7 @@
 
 use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use fr_geom::{
@@ -220,11 +220,73 @@ pub struct RoutingBoard {
     pub order_seed: Option<i64>,
     // pcbkit R2: the most rounds one pull-tight pass may run (0 = unlimited, upstream behaviour).
     pub tighten_round_cap: u32,
+    // pcbkit R3: a pull-tight or smoothing change moving the trace less than this (board units) and
+    // removing no corner is not applied (0 = off, upstream behaviour).
+    pub tighten_min_move: f64,
+    // pcbkit R4: work counters, shared with the clones of this board (parallel passes).
+    pub work_stats: Arc<WorkStats>,
     // pcbkit hook H6: when Some, only nets with `mask[net_no] == true` are routed or fanned out.
     pub route_nets: Option<Vec<bool>>,
     /// Java `autorouteEngine` (transient: not copied by `clone`, see
     /// [`crate::autoroute::router`]).
     pub autoroute_engine: crate::autoroute::router::EngineSlot,
+}
+
+/// pcbkit R4: how much work the searches and pull-tight passes of a job did. Shared through an
+/// `Arc` by the board clones of parallel passes, so the numbers cover the whole job; counters only,
+/// they never change a result.
+#[derive(Debug, Default)]
+pub struct WorkStats {
+    /// Connection (maze) searches run.
+    pub searches: AtomicU64,
+    /// The most elements one search expanded.
+    pub max_expansions: AtomicU64,
+    /// Searches stopped by `router.max_connection_expansions`.
+    pub expansion_caps: AtomicU64,
+    /// Pull-tight passes (`opt_changed_area`) run.
+    pub tighten_passes: AtomicU64,
+    /// The most rounds one pull-tight pass ran.
+    pub max_tighten_rounds: AtomicU64,
+    /// Pull-tight passes stopped by `router.max_tighten_rounds`.
+    pub tighten_caps: AtomicU64,
+    /// Changes not applied because they moved less than `router.tighten_min_move_um`.
+    pub negligible_moves: AtomicU64,
+}
+
+impl WorkStats {
+    pub fn record_search(&self, expanded: u64, capped: bool) {
+        self.searches.fetch_add(1, Ordering::Relaxed);
+        self.max_expansions.fetch_max(expanded, Ordering::Relaxed);
+        if capped {
+            self.expansion_caps.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub fn record_tighten(&self, rounds: u32, capped: bool) {
+        self.tighten_passes.fetch_add(1, Ordering::Relaxed);
+        self.max_tighten_rounds.fetch_max(u64::from(rounds), Ordering::Relaxed);
+        if capped {
+            self.tighten_caps.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub fn record_negligible_move(&self) {
+        self.negligible_moves.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// `(name, value)` pairs in a fixed order, for reports.
+    pub fn snapshot(&self) -> [(&'static str, u64); 7] {
+        let g = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        [
+            ("searches", g(&self.searches)),
+            ("max_expansions", g(&self.max_expansions)),
+            ("expansion_caps", g(&self.expansion_caps)),
+            ("tighten_passes", g(&self.tighten_passes)),
+            ("max_tighten_rounds", g(&self.max_tighten_rounds)),
+            ("tighten_caps", g(&self.tighten_caps)),
+            ("negligible_moves", g(&self.negligible_moves)),
+        ]
+    }
 }
 
 impl Deref for RoutingBoard {
@@ -269,6 +331,8 @@ impl RoutingBoard {
             time_limits: TimeLimitPolicy::default(),
             order_seed: None,
             tighten_round_cap: 0,
+            tighten_min_move: 0.0,
+            work_stats: Arc::default(),
             route_nets: None,
             autoroute_engine: Default::default(),
         }

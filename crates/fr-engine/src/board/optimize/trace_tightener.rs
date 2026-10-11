@@ -104,17 +104,25 @@ impl TraceTightener {
         if board.changed_area.is_none() {
             return;
         }
+        // pcbkit R4: count the rounds of every pass
+        let (rounds, capped) = self.opt_changed_area_rounds(board, trace_costs);
+        board.work_stats.record_tighten(rounds, capped);
+    }
+
+    /// The loop of Java `optChangedArea`; returns the rounds started and whether the round cap
+    /// stopped it (pcbkit R2/R4).
+    fn opt_changed_area_rounds(&mut self, board: &mut RoutingBoard, trace_costs: Option<&[ExpansionCostFactor]>) -> (u32, bool) {
         let mut something_changed = true;
         let mut rounds: u32 = 0;
         while something_changed {
             rounds += 1;
             if round_cap_reached(board.tighten_round_cap, rounds) {
                 log::info!("TraceTightener: stopped at the round cap ({}).", board.tighten_round_cap);
-                return;
+                return (rounds - 1, true);
             }
             something_changed = false;
             for i in 0..board.layer_count() {
-                let Some(changed_area) = board.changed_area.as_mut() else { return };
+                let Some(changed_area) = board.changed_area.as_mut() else { return (rounds, false) };
                 let changed_region = changed_area.get_area(i);
                 if changed_region.is_empty() {
                     continue;
@@ -127,7 +135,7 @@ impl TraceTightener {
                 let items = board.overlapping_objects(&ConvexShape::Tile(TileShape::IntOctagon(changed_region)), i);
                 for object in items {
                     if self.is_stop_requested() {
-                        return;
+                        return (rounds, false);
                     }
                     let TreeObject::Item { key, .. } = object else { continue };
                     let item = board.item(key);
@@ -151,6 +159,7 @@ impl TraceTightener {
                 }
             }
         }
+        (rounds, false)
     }
 
     /// Java `pullTight(polyline, layer, halfWidth, netNumbers, clearanceClassIndex,
@@ -206,7 +215,10 @@ impl TraceTightener {
         let old = t.tpolyline();
         let contact_pins = board.touching_pins_at_end_corners(trace);
         let new_lines = self.pull_tight_polyline(board, &old, layer, half_width, &nets, cl, Some(contact_pins));
-        if !new_lines.same(&old) {
+        if !new_lines.same(&old) && is_negligible_change(&old.polyline, &new_lines.polyline, board.tighten_min_move) {
+            // pcbkit R3: a sub-threshold move is not progress; keep the trace (no change)
+            board.work_stats.record_negligible_move();
+        } else if !new_lines.same(&old) {
             board.change_trace_tracked(trace, new_lines);
             return true;
         }
@@ -490,7 +502,16 @@ impl TraceTightener {
         let mut current_trace = trace;
         while connection_to_trace_improved {
             connection_to_trace_improved = false;
-            let adjusted = self.smoothen_end_corners_at_trace2(board, current_trace);
+            let mut adjusted = self.smoothen_end_corners_at_trace2(board, current_trace);
+            if let Some(a) = &adjusted {
+                // pcbkit R3: a sub-threshold move is not progress. At the tip of a hairpin whose
+                // legs differ in width (no normalize can join them) each round moved the tip by
+                // under 1 um and split one more stub off: hundreds of rounds, each slower.
+                if is_negligible_change(&board.item(current_trace).trace().polyline, &a.polyline, board.tighten_min_move) {
+                    board.work_stats.record_negligible_move();
+                    adjusted = None;
+                }
+            }
             if let Some(adjusted_polyline) = adjusted {
                 let (trace_layer, current_cl_class, current_fixed_state, nets) = {
                     let it = board.item(current_trace);
@@ -615,6 +636,19 @@ impl TraceTightener {
 }
 
 impl RoutingBoard {
+    /// pcbkit R2/R3: applies `router.max_tighten_rounds` and `router.tighten_min_move_um` (converted
+    /// to board units like `router.min_trace_width_um`) to this board. Unset keeps upstream behaviour.
+    pub fn apply_tighten_settings(&mut self, settings: &fr_settings::RouterSettings) {
+        self.tighten_round_cap = settings.get_max_tighten_rounds();
+        let um = settings.get_tighten_min_move_um();
+        self.tighten_min_move = if um > 0.0 {
+            let resolution = self.communication.resolution.max(1);
+            crate::structure::Unit::scale(um * resolution as f64, crate::structure::Unit::Um, self.communication.unit)
+        } else {
+            0.0
+        };
+    }
+
     /// Java `PolylineTrace.pullTight(ownNetOnly, pullTightAccuracy, stoppableThread)`: pulls the
     /// trace tight without creating clearance violations. Returns true if it was changed.
     pub fn pull_tight_trace(&mut self, trace: ItemKey, own_net_only: bool, pull_tight_accuracy: i32, stop: Option<&StopToken>) -> bool {
@@ -632,11 +666,86 @@ impl RoutingBoard {
     }
 }
 
+/// pcbkit R3: true if `min_move > 0` and replacing `old` by `new` removes no corner and moves no
+/// corner of either polyline farther than `min_move` (board units) from the other polyline.
+pub(crate) fn is_negligible_change(old: &Polyline, new: &Polyline, min_move: f64) -> bool {
+    min_move > 0.0
+        && new.corner_count() >= old.corner_count()
+        && corner_distance(old, new) < min_move
+        && corner_distance(new, old) < min_move
+}
+
+/// The largest distance of a corner of `from` to the polyline `to`.
+fn corner_distance(from: &Polyline, to: &Polyline) -> f64 {
+    let to_corners = to.corner_approx_arr();
+    from.corner_approx_arr().iter().map(|p| point_to_corners_distance(p, &to_corners)).fold(0.0, f64::max)
+}
+
+/// The distance of `p` to the open polyline through `corners` (infinite for no corner).
+fn point_to_corners_distance(p: &FloatPoint, corners: &[FloatPoint]) -> f64 {
+    match corners {
+        [] => f64::INFINITY,
+        [c] => p.distance(c),
+        _ => corners.windows(2).map(|w| point_to_segment_distance(p, &w[0], &w[1])).fold(f64::INFINITY, f64::min),
+    }
+}
+
+fn point_to_segment_distance(p: &FloatPoint, a: &FloatPoint, b: &FloatPoint) -> f64 {
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let len_sq = dx * dx + dy * dy;
+    if len_sq == 0.0 {
+        return p.distance(a);
+    }
+    let t = (((p.x - a.x) * dx + (p.y - a.y) * dy) / len_sq).clamp(0.0, 1.0);
+    p.distance(&FloatPoint::new(a.x + t * dx, a.y + t * dy))
+}
+
 /// pcbkit R2: true once a pull-tight pass has started more than `cap` rounds (`cap` 0 = unlimited).
 /// A round that keeps changing the traces without converging (each round splitting one more piece
 /// off) is a work count, not a clock, so the bound is deterministic.
 pub(crate) fn round_cap_reached(cap: u32, rounds: u32) -> bool {
     cap > 0 && rounds > cap
+}
+
+#[cfg(test)]
+mod pcbkit_min_move_tests {
+    use super::is_negligible_change;
+    use fr_geom::{IntPoint, Polyline};
+
+    fn pl(points: &[(i32, i32)]) -> Polyline {
+        Polyline::from_int_points(&points.iter().map(|&(x, y)| IntPoint::new(x, y)).collect::<Vec<_>>())
+    }
+
+    // the recorded creep step: the tip moved by (+6, -6) units and gained a corner
+    fn creep() -> (Polyline, Polyline) {
+        (pl(&[(210_554, -306_000), (208_583, -304_029)]), pl(&[(210_554, -306_000), (208_589, -304_035), (208_583, -304_035)]))
+    }
+
+    #[test]
+    fn off_never_skips() {
+        let (old, new) = creep();
+        assert!(!is_negligible_change(&old, &new, 0.0));
+    }
+
+    #[test]
+    fn a_sub_threshold_move_is_negligible() {
+        let (old, new) = creep();
+        assert!(is_negligible_change(&old, &new, 10.0));
+        assert!(!is_negligible_change(&old, &new, 5.0)); // the new corner is 6 units off the old line
+    }
+
+    #[test]
+    fn removing_a_corner_is_always_progress() {
+        let (old, new) = creep();
+        assert!(!is_negligible_change(&new, &old, 1000.0));
+    }
+
+    #[test]
+    fn a_large_move_is_progress() {
+        let old = pl(&[(0, 0), (1000, 0), (1000, 1000)]);
+        let new = pl(&[(0, 0), (1000, 500), (1000, 1000)]);
+        assert!(!is_negligible_change(&old, &new, 10.0));
+    }
 }
 
 #[cfg(test)]

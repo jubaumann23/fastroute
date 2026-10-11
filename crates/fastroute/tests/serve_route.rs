@@ -279,3 +279,29 @@ fn request_knobs_and_fixing_do_not_outlive_the_request() {
         }
     }
 }
+
+#[test]
+fn route_reports_work_and_cap_hits() {
+    // capability `work`: counters of the searches and pull-tight passes of the request
+    let route = |settings: Value| {
+        let mut s = Server::start();
+        let h = s.hello(1, settings);
+        assert!(h["capabilities"].as_array().unwrap().contains(&json!("work")), "{h}");
+        s.ok("load", json!({ "dsn": path(&serve_data("tiny.dsn")) }));
+        let r = s.ok("route", json!({ "seed": 0, "from": "scratch" }));
+        s.finish();
+        r["work"].clone()
+    };
+    let free = route(json!({}));
+    let keys = ["searches", "max_expansions", "expansion_caps", "tighten_passes", "max_tighten_rounds", "tighten_caps", "negligible_moves"];
+    let mut got: Vec<&str> = free.as_object().unwrap().keys().map(String::as_str).collect();
+    got.sort_unstable();
+    let mut want = keys.to_vec();
+    want.sort_unstable();
+    assert_eq!(got, want, "{free}");
+    assert!(free["searches"].as_u64().unwrap() > 0, "{free}");
+    assert_eq!((free["expansion_caps"].as_u64(), free["tighten_caps"].as_u64()), (Some(0), Some(0)), "{free}");
+    // a cap below the work the board needs is counted
+    let capped = route(json!({ "router.max_connection_expansions": 1 }));
+    assert!(capped["expansion_caps"].as_u64().unwrap() > 0, "{capped}");
+}

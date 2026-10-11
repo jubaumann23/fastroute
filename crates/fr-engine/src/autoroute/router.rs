@@ -89,6 +89,7 @@ impl AutorouteEngine {
                 if maze.capped {
                     capped = true; // pcbkit R1
                 }
+                maze.board.work_stats.record_search(maze.expanded, maze.capped); // pcbkit R4
                 Some(found)
             }));
             let Ok(Some(found)) = r else {
