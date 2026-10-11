@@ -450,10 +450,47 @@ pub fn route_connection(
     ripup_pass_no: i32,
     stop: Option<&StopToken>,
 ) -> ConnectionRouteOutcome {
+    route_connection_noisy(board, settings, params, item, route_net_no, ripped_item_list, ripup_costs, ripup_pass_no, None, stop)
+}
+
+/// How a recovery attempt differs from an ordinary connection (pcbkit recovery, `pipeline/autorouter/recovery.rs`).
+#[derive(Clone, Copy, Debug)]
+pub struct RecoverTuning {
+    /// Randomises the rip-up costs, deterministically, as `AutorouteControl::ripup_pass_no` asks for (the port never
+    /// sets it, so upstream never randomises): active for values >= 4 that are not a multiple of 3 and seeded by the
+    /// rip-up cost, so `ripup_pass_no` (the cost scale) and this number (the noise) vary independently.
+    pub noise_pass_no: i32,
+    /// A via that touches a conduction area (a zone of its own net) may be ripped like any other via
+    /// (`AutorouteControl::rip_zone_vias`).
+    pub rip_zone_vias: bool,
+}
+
+impl RecoverTuning {
+    fn apply(&self, ctrl: &mut AutorouteControl) {
+        ctrl.ripup_pass_no = self.noise_pass_no;
+        ctrl.rip_zone_vias = self.rip_zone_vias;
+    }
+}
+
+/// pcbkit recovery: [`route_connection`] with the [`RecoverTuning`] of a recovery attempt. `None` =
+/// [`route_connection`].
+#[allow(clippy::too_many_arguments)]
+pub fn route_connection_noisy(
+    board: &mut RoutingBoard,
+    settings: &RouterSettings,
+    params: &ConnectionRouterParams,
+    item: ItemKey,
+    route_net_no: NetNo,
+    ripped_item_list: &mut ItemSet,
+    ripup_costs: Option<&mut HashMap<ItemKey, i32>>,
+    ripup_pass_no: i32,
+    tuning: Option<&RecoverTuning>,
+    stop: Option<&StopToken>,
+) -> ConnectionRouteOutcome {
     // Java catches every exception of the routing (`catch (Exception e)` -> FAILED); a panic
     // stands for such an exception.
     let r = catch_unwind(AssertUnwindSafe(|| {
-        route_connection_impl(board, settings, params, item, route_net_no, ripped_item_list, ripup_costs, ripup_pass_no, stop)
+        route_connection_impl(board, settings, params, item, route_net_no, ripped_item_list, ripup_costs, ripup_pass_no, tuning, stop)
     }));
     match r {
         Ok(o) => o,
@@ -474,6 +511,7 @@ fn route_connection_impl(
     ripped_item_list: &mut ItemSet,
     mut ripup_costs: Option<&mut HashMap<ItemKey, i32>>,
     ripup_pass_no: i32,
+    tuning: Option<&RecoverTuning>,
     stop: Option<&StopToken>,
 ) -> ConnectionRouteOutcome {
     let contains_plane = board.rules.nets.get(route_net_no).map(|n| n.contains_plane()).unwrap_or(false);
@@ -481,6 +519,9 @@ fn route_connection_impl(
     let mut ctrl = AutorouteControl::new(board, route_net_no, settings, current_via_costs, params.trace_costs.clone());
     ctrl.ripup_allowed = true;
     ctrl.ripup_costs = params.start_ripup_costs.wrapping_mul(ripup_pass_no);
+    if let Some(t) = tuning {
+        t.apply(&mut ctrl); // pcbkit recovery
+    }
     ctrl.remove_unconnected_vias = params.remove_unconnected_vias;
     ctrl.connect_to_planes = params.connect_to_planes;
     let unconnected_set = board.unconnected_set(item, route_net_no);
@@ -523,6 +564,7 @@ fn route_connection_impl(
             ripped_item_list,
             ripup_costs,
             ripup_pass_no,
+            tuning,
             time_limit,
             stop,
         ) {
@@ -546,6 +588,7 @@ fn retry_connection_necked(
     ripped_item_list: &mut ItemSet,
     ripup_costs: Option<&mut HashMap<ItemKey, i32>>,
     ripup_pass_no: i32,
+    tuning: Option<&RecoverTuning>,
     time_limit: TimeLimit,
     stop: Option<&StopToken>,
 ) -> Option<AutorouteAttemptResult> {
@@ -570,6 +613,9 @@ fn retry_connection_necked(
     let mut neck_control = AutorouteControl::new(board, route_net_no, settings, via_costs, params.trace_costs.clone());
     neck_control.ripup_allowed = true;
     neck_control.ripup_costs = params.start_ripup_costs.wrapping_mul(ripup_pass_no);
+    if let Some(t) = tuning {
+        t.apply(&mut neck_control);
+    }
     neck_control.remove_unconnected_vias = params.remove_unconnected_vias;
     for i in 0..neck_control.layer_count as usize {
         let compensation = neck_control.compensated_trace_half_width[i] - neck_control.trace_half_width[i];

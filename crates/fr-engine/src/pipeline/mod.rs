@@ -225,6 +225,11 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
         settings.autorouter.max_passes = original;
     }
     outcome.fanout_timed_out = autorouter.fanout_timed_out;
+    // pcbkit recovery (router.recover_attempts, default off): targeted rip-up-and-reroute of what is still open
+    if ctx.enhancements && router_enabled && !ctx.stop.is_stop_requested() && settings.get_recover_attempts() > 0 {
+        ctx.observe(board, &LiveEvent::Stage("recovery"));
+        autorouter.recover(board, settings, ctx);
+    }
     board.finish_autoroute();
     if ctx.enhancements {
         // The autorouter's own stop rules (stagnation, max passes) request a stop of the

@@ -220,6 +220,8 @@ pub struct RoutingBoard {
     pub order_seed: Option<i64>,
     // pcbkit R2: the most rounds one pull-tight pass may run (0 = unlimited, upstream behaviour).
     pub tighten_round_cap: u32,
+    /// pcbkit negotiated rip-up: passes that ended with the net incomplete (`router.ripup_history`); None = off.
+    pub rip_history: Option<std::sync::Arc<std::collections::HashMap<NetNo, u32>>>,
     // pcbkit hook H6: when Some, only nets with `mask[net_no] == true` are routed or fanned out.
     pub route_nets: Option<Vec<bool>>,
     /// Java `autorouteEngine` (transient: not copied by `clone`, see
@@ -269,6 +271,7 @@ impl RoutingBoard {
             time_limits: TimeLimitPolicy::default(),
             order_seed: None,
             tighten_round_cap: 0,
+            rip_history: None,
             route_nets: None,
             autoroute_engine: Default::default(),
         }

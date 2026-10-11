@@ -1254,6 +1254,9 @@ impl<'a> MazeSearchEngine<'a> {
             let mut contact_count = 0;
             for contact in contact_list.iter() {
                 let c = self.board.item(contact);
+                if ctrl.rip_zone_vias && c.is_conduction_area() {
+                    continue; // pcbkit recovery: the zone stays, only the via and its stubs go
+                }
                 if !c.is_trace() || c.is_user_fixed() {
                     return -1;
                 }
@@ -1272,6 +1275,11 @@ impl<'a> MazeSearchEngine<'a> {
             }
         }
         let mut ripup_cost = ctrl.ripup_costs as f64 * cost_factor;
+        if ctrl.rip_history_pct > 0 {
+            // pcbkit negotiated rip-up: a net that keeps ending a pass incomplete costs more to rip
+            let hist = ctrl.rip_history.as_ref().map(|h| item.net_numbers().iter().map(|n| h.get(n).copied().unwrap_or(0)).max().unwrap_or(0)).unwrap_or(0);
+            ripup_cost *= 1.0 + ctrl.rip_history_pct as f64 / 100.0 * hist as f64;
+        }
         let mut detour = 1.0;
         if fanout_via_cost_factor <= 1.0 && !ctrl.is_fanout {
             if let Some(c) = Connection::get(self.eng, self.board, obstacle_item) {
