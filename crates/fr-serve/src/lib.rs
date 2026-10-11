@@ -15,6 +15,7 @@ mod session;
 mod settings;
 mod sha256;
 
+mod hs;
 pub mod ops;
 
 /// In-process probe for the blockers falsification test (test-only).

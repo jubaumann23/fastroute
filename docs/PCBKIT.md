@@ -153,7 +153,7 @@ fastroute serve            # JSON lines on stdin, one response line per request 
 
 Protocol 1.2.0 (spec: toolkit `docs/router-protocol/SPEC.md`). First line must be `hello` (protocol, client, threads,
 settings); the reply lists the capabilities this build claims (`budget check congestion incremental locking move seed
-snapshot starts widen`; `blockers` is added when `ops/blockers.rs` `CLAIMED` is true) and the router build hash. Then `load`
+snapshot starts widen pairs tune`; `blockers` is added when `ops/blockers.rs` `CLAIMED` is true) and the router build hash. Then `load`
 (DSN path or text), `route`, `lock`/`unlock`, `move`, `snapshot`/`restore`, `congestion`, `export` (`ses`), `shutdown`. `route.starts` (1..16, default 4 = the CLI) sets the multi-start count and the result echoes it.
 Seed 0 with `nets: all` equals the stock CLI byte for byte; results are deterministic at a fixed thread count.
 
@@ -177,6 +177,16 @@ python3 <toolkit>/scripts/router_conformance.py --server "$BIN serve" --stock-cl
 passes with every claimed capability at N = 1, 2, 4, 8 (checked on `pcbkit-serve-integration`). Combined-capability
 test: `crates/fastroute/tests/serve_combined.rs` (lock, move off locked nets, targeted route, snapshot, move, route,
 restore, export; locked nets byte-identical throughout, only affected nets change).
+
+## Serve `pairs` and `tune` (`crates/fr-serve/src/hs.rs`, tests `serve_pairs.rs`)
+
+No core hook and no ledger row: the stages are the existing public `fr_engine::{diffpair, tuning}` functions, in the order
+the stock CLI runs them (main.rs): `preroute_pairs` (held `UserFixed`), pipeline, `release_pairs` (pipeline again when a
+routable net is left incomplete), `couple_pairs`, `match_pair_lengths`, `tune_lengths`. Arguments of `route`: `pairs`
+(`p`, `n`, `gap_mm`, `layer_gaps_mm`, `skew_mm`), `pair_skew_mm` (default 0.1), `tune` (`name`, `nets` with `*`,
+`tolerance_mm` default 0.5, `target_mm`), `layer_heights_mm` (via length, process-global in the engine: set for the request,
+cleared after). Locked nets and nets outside `route.nets` are never changed (pair `skipped`; tune group `skipped` list,
+and they still count for the longest-net target). Result gains a `pairs` and/or `tune` array, only for what was requested (SPEC 5.5). Capabilities: `pairs`, `tune`.
 
 ## Serve `widen` and `check` (protocol 1.2, `crates/fr-serve/src/ops/{widen,check}.rs`, tests `serve_necks.rs`)
 

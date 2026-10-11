@@ -30,6 +30,8 @@ pub fn capabilities() -> Vec<&'static str> {
         ("widen", widen::CLAIMED),
         ("check", check::CLAIMED),
         ("work", route::WORK_CLAIMED),
+        ("pairs", crate::hs::PAIRS_CLAIMED),
+        ("tune", crate::hs::TUNE_CLAIMED),
     ]
     .into_iter()
     .filter_map(|(name, claimed)| claimed.then_some(name))
