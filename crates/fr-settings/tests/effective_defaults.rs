@@ -40,6 +40,7 @@ fn expected_defaults() -> RouterSettings {
         tighten_min_move_um: None,
         strict_width: None,
         neck_radius_um: None,
+        strict_last_resort: None,
         recover_attempts: None,
         ripup_history: None,
         strict_drc: Some(false),

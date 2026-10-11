@@ -207,6 +207,10 @@ pub struct RouterSettings {
     pub strict_width: Option<bool>,
     /// pcbkit W1: with `strict_width`, how far from a same-net pad's copper a neck-down may reach (um).
     pub neck_radius_um: Option<f64>,
+    /// pcbkit W2: with `strict_width` and `recover_attempts`, a connection the strict recovery attempts left open gets
+    /// a last attempt that may break strict width (neck-downs anywhere, the necked retry): a routed connection
+    /// with a narrow stretch beats an open one. Unset/false = strict width is never broken.
+    pub strict_last_resort: Option<bool>,
     /// pcbkit recovery (not in Freerouting): after the routing stage, how many targeted rip-up-and-reroute
     /// attempts each connection that is still open gets (each attempt is kept only if it leaves fewer
     /// connections open and no new clearance violation); a work count. 0/unset = off (Java behaviour).
@@ -457,6 +461,7 @@ impl RouterSettings {
         copy(&mut self.tighten_min_move_um, &s.tighten_min_move_um, &mut n);
         copy(&mut self.strict_width, &s.strict_width, &mut n);
         copy(&mut self.neck_radius_um, &s.neck_radius_um, &mut n);
+        copy(&mut self.strict_last_resort, &s.strict_last_resort, &mut n);
         copy(&mut self.recover_attempts, &s.recover_attempts, &mut n);
         copy(&mut self.ripup_history, &s.ripup_history, &mut n);
         copy(&mut self.strict_drc, &s.strict_drc, &mut n);
@@ -593,6 +598,11 @@ impl RouterSettings {
     /// pcbkit W1, see [`RouterSettings::strict_width`].
     pub fn is_strict_width(&self) -> bool {
         self.strict_width == Some(true)
+    }
+
+    /// pcbkit W2, see [`RouterSettings::strict_last_resort`].
+    pub fn is_strict_last_resort(&self) -> bool {
+        self.strict_last_resort == Some(true)
     }
 
     /// pcbkit W1, see [`RouterSettings::neck_radius_um`]; 0 = no neck-down away from the pad itself.

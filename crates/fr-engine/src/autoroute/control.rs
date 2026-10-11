@@ -54,6 +54,8 @@ pub struct AutorouteControl {
     pub min_trace_half_width: i32,
     /// pcbkit W1 (`router.strict_width`): no track below its class width except in a declared neck-down.
     pub strict_width: bool,
+    /// pcbkit W2: slack under which a track "only fits dead-centre" (toolkit `FIT_MARGIN_MM`, 10 um), board units.
+    pub pitch_margin: f64,
     /// pcbkit W1: reach of a neck-down from a same-net pad's copper, in board units (`router.neck_radius_um`).
     pub neck_radius: f64,
     /// Defines for each layer, if it may be used for routing.
@@ -175,6 +177,7 @@ impl AutorouteControl {
             min_trace_half_width: min_trace_half_width(board, settings),
             strict_width: settings.is_strict_width(),
             neck_radius: um_to_units(board, settings.get_neck_radius_um()) as f64,
+            pitch_margin: um_to_units(board, 10.0) as f64,
             layer_active,
             layer_count,
             trace_half_width: vec![0; n],
@@ -404,6 +407,14 @@ fn um_to_units(board: &RoutingBoard, um: f64) -> i32 {
     )) as i32
 }
 
+/// pcbkit W2: a pad is pitch-limited for a track when a track of `full_width` centred on it would come closer than
+/// the clearance to another-net copper of its own part: `2 * (gap - clearance) < full_width + margin`, `gap` being the
+/// distance from the pad centre to the nearest other-net pad copper. Mirrors the toolkit's `_neckdown.fit_width`, so a
+/// neck the router makes is a neck the toolkit judge accepts.
+pub(crate) fn pad_pitch_limited(gap: f64, clearance: f64, full_width: f64, margin: f64) -> bool {
+    2.0 * (gap - clearance) < full_width + margin
+}
+
 /// pcbkit W1: a point lies within the neck reach of a pad when its distance from the pad centre is at most half
 /// the pad's largest dimension plus `radius`. Without `strict` every point qualifies.
 fn neck_within_radius(strict: bool, radius: f64, distance_to_pad_centre: f64, pad_max_width: f64) -> bool {
@@ -428,7 +439,16 @@ mod pcbkit_expansion_cap_tests {
 
 #[cfg(test)]
 mod pcbkit_min_width_tests {
-    use super::{clamp_half_width_to_min, neck_within_radius};
+    use super::{clamp_half_width_to_min, neck_within_radius, pad_pitch_limited};
+
+    #[test]
+    fn a_pad_is_pitch_limited_when_the_track_would_break_the_clearance() {
+        // 0.4 mm pitch, 0.2 mm pads: gap 300 um, clearance 150 um -> a 300 um track has no slack
+        assert!(pad_pitch_limited(300.0, 150.0, 300.0, 10.0));
+        assert!(!pad_pitch_limited(300.0, 150.0, 150.0, 10.0));
+        assert!(!pad_pitch_limited(300.0, 150.0, 289.0, 10.0));
+        assert!(pad_pitch_limited(300.0, 150.0, 291.0, 10.0));
+    }
 
     #[test]
     fn a_neckdown_below_the_minimum_is_raised_to_it() {

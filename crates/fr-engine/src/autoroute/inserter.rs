@@ -295,6 +295,10 @@ impl FoundConnectionInserter {
         if !ctrl.neck_reach_ok(pin_center.distance(&to_corner.to_float()), board.pin_max_width(pin, layer)) {
             return NeckDownResult::Null;
         }
+        // pcbkit W2: and only at a pad the class width cannot enter (the toolkit's declared-neck rule).
+        if ctrl.strict_width && !pin_is_pitch_limited(board, ctrl, pin, layer) {
+            return NeckDownResult::Null;
+        }
         // fastroute extension: never below the board minimum track width
         let neck_down_halfwidth = ctrl.clamp_neckdown_half_width(board.pin_trace_neckdown_half_width(pin, layer));
         if neck_down_halfwidth >= ctrl.trace_half_width[lu] {
@@ -450,10 +454,33 @@ impl FoundConnectionInserter {
 /// that has copper on `layer`. Disc-shaped reach is convex, so a segment between two such points is inside it too.
 fn within_neck_reach(board: &RoutingBoard, ctrl: &AutorouteControl, pins: &[Option<ItemKey>], layer: LayerNo, points: &[&Point]) -> bool {
     pins.iter().flatten().any(|&pin| {
-        board.item(pin).is_on_layer(board, layer) && {
+        board.item(pin).is_on_layer(board, layer) && pin_is_pitch_limited(board, ctrl, pin, layer) && {
             let centre = board.item(pin).center(board).to_float();
             let max_width = board.pin_max_width(pin, layer);
             points.iter().all(|p| ctrl.neck_reach_ok(centre.distance(&p.to_float()), max_width))
         }
     })
+}
+
+/// pcbkit W2: true if a track of the class width centred on `pin` would come closer than the clearance to another-net
+/// pad of the same part on `layer` (the toolkit's `fit_width`); true for a pin outside any part (nothing to compare).
+fn pin_is_pitch_limited(board: &RoutingBoard, ctrl: &AutorouteControl, pin: ItemKey, layer: LayerNo) -> bool {
+    let component = board.item(pin).component_no();
+    if component <= 0 {
+        return true;
+    }
+    let centre = board.item(pin).center(board).to_float();
+    let net_numbers = [ctrl.net_number];
+    let mut limited = false;
+    for other in board.get_component_pins(component) {
+        let item = board.item(other);
+        if other == pin || item.shares_net_no(&net_numbers) || !item.is_on_layer(board, layer) {
+            continue;
+        }
+        let Some(shape) = board.tile_shape_on_layer(other, layer) else { continue };
+        let clearance = board.rules.clearance_matrix.get_value(ctrl.trace_clearance_class, item.clearance_class(), layer, true) as f64;
+        let full_width = 2.0 * ctrl.trace_half_width[layer as usize] as f64;
+        limited |= super::control::pad_pitch_limited(shape.distance(&centre), clearance, full_width, ctrl.pitch_margin);
+    }
+    limited
 }
