@@ -25,9 +25,12 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT" || exit 2
 
 # The main checkout's reference/ (git-ignored; parity baselines the upstream tests read) is shared
-# by every worktree. The main worktree is the first `git worktree list` entry: dirname of the common
-# dir is wrong when this repo is a submodule (its common dir lives under the superproject's .git/modules).
-SHARED_REF=$(git -C "$ROOT" worktree list --porcelain | sed -n '1s/^worktree //p')/reference
+# by every worktree. In a submodule the common dir lives under the superproject's .git/modules, so the
+# main worktree comes from its core.worktree; otherwise it is the common dir's parent.
+COMMON=$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)
+MAIN_WT=$(git --git-dir="$COMMON" config core.worktree || true)
+if [ -n "$MAIN_WT" ]; then MAIN_WT=$(cd "$COMMON" && cd "$MAIN_WT" && pwd); else MAIN_WT=$(dirname "$COMMON"); fi
+SHARED_REF=$MAIN_WT/reference
 if [ ! -e reference ] && [ -d "$SHARED_REF" ]; then
   ln -s "$SHARED_REF" reference
 fi
