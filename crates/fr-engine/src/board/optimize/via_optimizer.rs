@@ -113,7 +113,7 @@ pub fn opt_via_location(
     let Some(new_location) = new_location else {
         return false;
     };
-    if new_location == via_center {
+    if new_location == via_center || is_negligible_via_move(&via_center, &new_location, board.tighten_min_move) {
         return false;
     }
     let delta = new_location.difference_by(&via_center);
@@ -134,6 +134,14 @@ pub fn opt_via_location(
         opt_via_location(board, v, trace_costs, trace_pull_tight_accuracy, max_recursion_depth - 1);
     }
     true
+}
+
+/// pcbkit R3: a via move shorter than `min_move` (board units, `router.tighten_min_move_um`; 0 =
+/// off) is not progress. The cost-based repositioning can alternate a via between two points one
+/// unit apart: each call moved it there and back through its recursion and reported a change, so
+/// the pull-tight pass never converged and ran into `router.max_tighten_rounds` (gpio4l energy-2).
+fn is_negligible_via_move(from: &Point, to: &Point, min_move: f64) -> bool {
+    min_move > 0.0 && from.to_float().distance(&to.to_float()) < min_move
 }
 
 /// The data of a trace connected to the via used by the cost based repositioning.
@@ -230,6 +238,9 @@ fn opt_plane_or_fanout_via(board: &mut RoutingBoard, via: ItemKey, trace_pull_ti
         if !picked.iter().any(|k| k == plane) {
             return false;
         }
+    }
+    if is_negligible_via_move(&via_center, &new_via_location, board.tighten_min_move) {
+        return false;
     }
     let diff_vector = new_via_location.difference_by(&via_center);
     if !drill_item_mover::insert(board, via, &diff_vector, 9, 9) {
@@ -441,4 +452,31 @@ fn reposition_via_by_costs(board: &mut RoutingBoard, via: ItemKey, first: &Trace
         }
     }
     None
+}
+
+#[cfg(test)]
+mod pcbkit_min_move_tests {
+    use super::is_negligible_via_move;
+    use fr_geom::{IntPoint, Point};
+
+    fn p(x: i32, y: i32) -> Point {
+        Point::Int(IntPoint::new(x, y))
+    }
+
+    #[test]
+    fn off_never_skips_a_move() {
+        assert!(!is_negligible_via_move(&p(136_392, -284_793), &p(136_392, -284_792), 0.0));
+    }
+
+    #[test]
+    fn the_recorded_one_unit_oscillation_is_negligible() {
+        // gpio4l energy-2: via 5978 alternated between these two points every round
+        assert!(is_negligible_via_move(&p(136_392, -284_793), &p(136_392, -284_792), 10.0));
+    }
+
+    #[test]
+    fn a_move_of_the_threshold_or_more_is_progress() {
+        assert!(!is_negligible_via_move(&p(0, 0), &p(10, 0), 10.0));
+        assert!(!is_negligible_via_move(&p(0, 0), &p(300, 400), 10.0));
+    }
 }
