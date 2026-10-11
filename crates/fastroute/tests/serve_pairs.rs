@@ -152,6 +152,7 @@ fn pairs_and_groups_are_reported() {
     let skew = p["skew_mm"].as_f64().unwrap();
     assert_eq!(p["skew_ok"], json!(skew.abs() <= 0.1 + 1e-6), "{p}");
 
+    assert!(r.get("pairs").is_some() && r["tune"].is_array());
     let g = row(&r["tune"], "name", "t");
     assert_eq!(g["status"], json!("tuned"));
     let nets = g["nets"].as_array().unwrap();
@@ -190,7 +191,7 @@ fn tune_without_pairs_and_unmatched_groups() {
         "seed": 0, "starts": 1,
         "tune": [{ "name": "none", "nets": ["NOPE*"] }, { "name": "fixed", "nets": ["T1"], "target_mm": 12.0, "tolerance_mm": 0.3 }]
     }));
-    assert_eq!(r["pairs"], json!([]));
+    assert!(r.get("pairs").is_none(), "{r}");
     assert_eq!(row(&r["tune"], "name", "none")["status"], json!("no_match"));
     let g = row(&r["tune"], "name", "fixed");
     assert_eq!(g["target_mm"], json!(12.0));

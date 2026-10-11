@@ -186,7 +186,7 @@ routable net is left incomplete), `couple_pairs`, `match_pair_lengths`, `tune_le
 (`p`, `n`, `gap_mm`, `layer_gaps_mm`, `skew_mm`), `pair_skew_mm` (default 0.1), `tune` (`name`, `nets` with `*`,
 `tolerance_mm` default 0.5, `target_mm`), `layer_heights_mm` (via length, process-global in the engine: set for the request,
 cleared after). Locked nets and nets outside `route.nets` are never changed (pair `skipped`; tune group `skipped` list,
-and they still count for the longest-net target). Result gains `pairs` and `tune` arrays (SPEC 5.5). Capabilities: `pairs`, `tune`.
+and they still count for the longest-net target). Result gains a `pairs` and/or `tune` array, only for what was requested (SPEC 5.5). Capabilities: `pairs`, `tune`.
 
 ## Serve `widen` and `check` (protocol 1.2, `crates/fr-serve/src/ops/{widen,check}.rs`, tests `serve_necks.rs`)
 

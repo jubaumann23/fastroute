@@ -238,8 +238,13 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
 
     let mut result = summarize(&work.board.board, &work.locks, seed, starts, passes.load(Ordering::SeqCst), budget_hit, wall_ms);
     if let Some((pairs, groups)) = hs_report {
-        result["pairs"] = pairs;
-        result["tune"] = groups;
+        // present only for what the request asked for (SPEC 5.5)
+        if !hs_req.pairs.is_empty() {
+            result["pairs"] = pairs;
+        }
+        if !hs_req.tune.is_empty() {
+            result["tune"] = groups;
+        }
     }
     session.commit(work);
     Ok(result)

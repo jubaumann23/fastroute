@@ -280,7 +280,7 @@ fn pair_row(board: &RoutingBoard, req: &Request, pair: &DiffPair, state: &State,
 }
 
 fn unrun_group(g: &TuneGroup, why: &str) -> Value {
-    json!({ "name": g.name, "status": why, "target_mm": g.target_mm, "tolerance_mm": g.tolerance_mm, "nets": [], "skipped": [], "short": 0 })
+    json!({ "name": g.name, "status": why, "target_mm": g.target_mm.unwrap_or(0.0), "tolerance_mm": g.tolerance_mm, "nets": [], "skipped": [], "short": 0 })
 }
 
 /// Net names (exact) of the board matching any pattern of the group (`*` = any text).
