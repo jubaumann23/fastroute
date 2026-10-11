@@ -72,7 +72,8 @@ impl Budget {
 }
 
 pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
-    check_keys(args, &["seed", "nets", "from", "budget_ms", "starts"], "route")?;
+    check_keys(args, &["seed", "nets", "from", "budget_ms", "starts", "pairs", "pair_skew_mm", "tune", "layer_heights_mm"], "route")?;
+    let hs_req = crate::hs::Request::parse(args)?;
     // `seed` is required; with the `seed` capability absent any value is accepted and ignored.
     let seed = as_int(req(args, "seed", "route")?, 0, 2_147_483_647, "route.seed")?;
     let mut listed: Option<Vec<String>> = None;
@@ -110,6 +111,7 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
         .map_or(MULTI_START, |n| n as usize);
 
     let mut work = session.begin()?;
+    crate::hs::check_nets(&work.board.board, &hs_req)?;
     if scratch && listed.is_none() {
         // placement-pure: the same board a fresh load of this placement gives (docs/PCBKIT.md, "route from scratch")
         crate::load::rebuild_for_scratch(session, &mut work)?;
@@ -169,10 +171,6 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
             .collect();
         b.remove_items(keys);
     }
-    work.board.board.order_seed = (seed > 0).then_some(seed);
-    // locked nets get no new wiring: they are left out of the route mask (SPEC 5.4)
-    work.board.board.route_nets = work.locks.route_mask(&work.board.board, mask);
-
     let threads = session.settings().threads;
     let stop = StopToken::new();
     let passes = Arc::new(AtomicI32::new(0));
@@ -196,7 +194,30 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     fr_engine::autoroute::engine::take_engine_fault(); // clear a fault left by an earlier request
     let t0 = Instant::now();
     let budget = Budget::start(budget_ms as u64, &stop);
-    pipeline::run_pipeline(&mut work.board.board, &mut work.board.settings, &ctx);
+    // differential pairs (capability `pairs`): routed and coupled first, held fixed while the rest is routed
+    let mut hs_state = (!hs_req.is_empty()).then(|| {
+        let b = &mut work.board;
+        crate::hs::begin(&mut b.board, &b.settings, &hs_req, &work.locks, listed.as_deref(), &stop)
+    });
+    // locked nets get no new wiring: they are left out of the route mask (SPEC 5.4)
+    let run_mask = work.locks.route_mask(&work.board.board, mask.clone());
+    let run = |work: &mut crate::session::Work| {
+        work.board.board.order_seed = (seed > 0).then_some(seed);
+        work.board.board.route_nets = run_mask.clone();
+        pipeline::run_pipeline(&mut work.board.board, &mut work.board.settings, &ctx);
+        work.board.board.order_seed = None;
+        work.board.board.route_nets = None;
+    };
+    run(&mut work);
+    let mut hs_report = None;
+    if let Some(mut state) = hs_state.take() {
+        // the held pairs may have blocked connections: route once more with the pairs free
+        if crate::hs::release(&mut work.board.board, &mut state, &allowed) && !stop.is_stop_requested() {
+            run(&mut work);
+        }
+        let b = &mut work.board;
+        hs_report = Some(crate::hs::finish(&mut b.board, &b.settings, &hs_req, state, &work.locks, listed.as_deref(), &stop).into_json());
+    }
     let budget_hit = budget.finish();
     // F2: the engine abandoned a step that kept panicking; the half-routed copy is dropped and the
     // session keeps the board it had (SPEC error code `internal`).
@@ -205,8 +226,6 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
         return Err(ProtoError::new("internal", "internal error in 'route': the router engine failed repeatedly; the session board is unchanged"));
     }
     // Per-request knobs never outlive the request; the fixed states of the other nets return.
-    work.board.board.order_seed = None;
-    work.board.board.route_nets = None;
     for (id, state) in saved {
         if let Some(k) = work.board.board.get_item(id) {
             work.board.board.item_mut(k).set_fixed_state(state);
@@ -217,7 +236,11 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     work.locks.reconcile(&work.board.board);
     let wall_ms = t0.elapsed().as_millis() as i64;
 
-    let result = summarize(&work.board.board, &work.locks, seed, starts, passes.load(Ordering::SeqCst), budget_hit, wall_ms);
+    let mut result = summarize(&work.board.board, &work.locks, seed, starts, passes.load(Ordering::SeqCst), budget_hit, wall_ms);
+    if let Some((pairs, groups)) = hs_report {
+        result["pairs"] = pairs;
+        result["tune"] = groups;
+    }
     session.commit(work);
     Ok(result)
 }
