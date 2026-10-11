@@ -549,6 +549,10 @@ fn retry_connection_necked(
     time_limit: TimeLimit,
     stop: Option<&StopToken>,
 ) -> Option<AutorouteAttemptResult> {
+    if settings.is_strict_width() {
+        // pcbkit W1: a whole connection at the neck width is exactly what strict width forbids
+        return None;
+    }
     if let Some(net) = board.rules.nets.get(route_net_no) {
         if board.rules.net_classes[net.get_net_class()].no_neckdown {
             return None;

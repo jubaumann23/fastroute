@@ -52,6 +52,10 @@ pub struct AutorouteControl {
     /// fastroute extension: neck-down never goes below this half width
     /// (`router.min_trace_width_um`; 0 = Java behaviour).
     pub min_trace_half_width: i32,
+    /// pcbkit W1 (`router.strict_width`): no track below its class width except in a declared neck-down.
+    pub strict_width: bool,
+    /// pcbkit W1: reach of a neck-down from a same-net pad's copper, in board units (`router.neck_radius_um`).
+    pub neck_radius: f64,
     /// Defines for each layer, if it may be used for routing.
     pub layer_active: Vec<bool>,
     pub layer_count: i32,
@@ -120,6 +124,12 @@ impl AutorouteControl {
         clamp_half_width_to_min(self.min_trace_half_width, half_width)
     }
 
+    /// pcbkit W1: may a neck-down narrow the track at `point`, which is `distance_to_pad_centre` from the centre of a
+    /// same-net pad whose largest dimension is `pad_max_width`? Always true without `strict_width`.
+    pub fn neck_reach_ok(&self, distance_to_pad_centre: f64, pad_max_width: f64) -> bool {
+        neck_within_radius(self.strict_width, self.neck_radius, distance_to_pad_centre, pad_max_width)
+    }
+
     /// Java `new AutorouteControl(board, netNumber, settings)`.
     pub fn new_default(board: &RoutingBoard, net_number: NetNo, settings: &RouterSettings) -> Self {
         let mut c = Self::base(board, settings, settings.get_trace_costs());
@@ -157,6 +167,8 @@ impl AutorouteControl {
             with_neckdown: settings.get_automatic_neckdown(),
             no_neckdown: false,
             min_trace_half_width: min_trace_half_width(board, settings),
+            strict_width: settings.is_strict_width(),
+            neck_radius: um_to_units(board, settings.get_neck_radius_um()) as f64,
             layer_active,
             layer_count,
             trace_half_width: vec![0; n],
@@ -365,18 +377,28 @@ fn clamp_half_width_to_min(min_half_width: i32, half_width: i32) -> i32 {
 /// Board-unit half width for `router.min_trace_width_um` (0 if unset); converted
 /// like the necked-retry width in `router.rs`.
 fn min_trace_half_width(board: &RoutingBoard, settings: &RouterSettings) -> i32 {
-    let um = settings.get_min_trace_width_um();
+    let width = um_to_units(board, settings.get_min_trace_width_um());
+    // Round the half width up so that 2 * half >= the requested width.
+    (width + 1) / 2
+}
+
+/// Board units of `um` micrometres (0 for a non-positive value).
+fn um_to_units(board: &RoutingBoard, um: f64) -> i32 {
     if um <= 0.0 {
         return 0;
     }
     let resolution = board.communication.resolution.max(1);
-    let width = fr_jcompat::math_round(crate::structure::Unit::scale(
+    fr_jcompat::math_round(crate::structure::Unit::scale(
         um * resolution as f64,
         crate::structure::Unit::Um,
         board.communication.unit,
-    )) as i32;
-    // Round the half width up so that 2 * half >= the requested width.
-    (width + 1) / 2
+    )) as i32
+}
+
+/// pcbkit W1: a point lies within the neck reach of a pad when its distance from the pad centre is at most half
+/// the pad's largest dimension plus `radius`. Without `strict` every point qualifies.
+fn neck_within_radius(strict: bool, radius: f64, distance_to_pad_centre: f64, pad_max_width: f64) -> bool {
+    !strict || distance_to_pad_centre <= 0.5 * pad_max_width + radius
 }
 
 #[cfg(test)]
@@ -397,7 +419,7 @@ mod pcbkit_expansion_cap_tests {
 
 #[cfg(test)]
 mod pcbkit_min_width_tests {
-    use super::clamp_half_width_to_min;
+    use super::{clamp_half_width_to_min, neck_within_radius};
 
     #[test]
     fn a_neckdown_below_the_minimum_is_raised_to_it() {
@@ -414,5 +436,19 @@ mod pcbkit_min_width_tests {
     fn no_minimum_or_no_neckdown_leaves_the_width_alone() {
         assert_eq!(clamp_half_width_to_min(0, 50), 50);
         assert_eq!(clamp_half_width_to_min(70, 0), 0);
+    }
+
+    #[test]
+    fn without_strict_width_every_point_may_neck() {
+        assert!(neck_within_radius(false, 0.0, 1.0e9, 100.0));
+    }
+
+    #[test]
+    fn strict_width_limits_a_neck_to_the_pad_plus_radius() {
+        // pad 200 wide: copper reaches 100 from the centre; radius 1000 -> 1100
+        assert!(neck_within_radius(true, 1000.0, 1100.0, 200.0));
+        assert!(!neck_within_radius(true, 1000.0, 1100.5, 200.0));
+        assert!(neck_within_radius(true, 0.0, 100.0, 200.0));
+        assert!(!neck_within_radius(true, 0.0, 101.0, 200.0));
     }
 }

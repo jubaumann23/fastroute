@@ -197,6 +197,12 @@ pub struct RouterSettings {
     /// pcbkit R2 (not in Freerouting): the most rounds one pull-tight pass may run; a work count.
     /// 0/unset = unlimited (Java behaviour).
     pub max_tighten_rounds: Option<f64>,
+    /// pcbkit W1 (not in Freerouting): strict width. A track is never routed below its net-class width except
+    /// inside a neck-down: within `neck_radius_um` of the copper of a pad of its own net, at no less than
+    /// `min_trace_width_um`. The whole-connection necked retry (`neck_width_um`) is off. Unset/false = Java behaviour.
+    pub strict_width: Option<bool>,
+    /// pcbkit W1: with `strict_width`, how far from a same-net pad's copper a neck-down may reach (um).
+    pub neck_radius_um: Option<f64>,
     pub strict_drc: Option<bool>,
     /// Java `jobTimeoutString` (JSON `job_timeout`), e.g. "12:00:00".
     pub job_timeout_string: Option<String>,
@@ -436,6 +442,8 @@ impl RouterSettings {
         copy(&mut self.min_trace_width_um, &s.min_trace_width_um, &mut n);
         copy(&mut self.max_connection_expansions, &s.max_connection_expansions, &mut n);
         copy(&mut self.max_tighten_rounds, &s.max_tighten_rounds, &mut n);
+        copy(&mut self.strict_width, &s.strict_width, &mut n);
+        copy(&mut self.neck_radius_um, &s.neck_radius_um, &mut n);
         copy(&mut self.strict_drc, &s.strict_drc, &mut n);
         copy(&mut self.job_timeout_string, &s.job_timeout_string, &mut n);
         if let Some(src) = &s.layers {
@@ -540,6 +548,19 @@ impl RouterSettings {
         match self.max_tighten_rounds {
             Some(v) if v >= 1.0 && v.is_finite() => v.min(u32::MAX as f64) as u32,
             _ => 0,
+        }
+    }
+
+    /// pcbkit W1, see [`RouterSettings::strict_width`].
+    pub fn is_strict_width(&self) -> bool {
+        self.strict_width == Some(true)
+    }
+
+    /// pcbkit W1, see [`RouterSettings::neck_radius_um`]; 0 = no neck-down away from the pad itself.
+    pub fn get_neck_radius_um(&self) -> f64 {
+        match self.neck_radius_um {
+            Some(v) if v > 0.0 && v.is_finite() => v,
+            _ => 0.0,
         }
     }
 
