@@ -82,6 +82,12 @@ pub struct AutorouteControl {
     pub max_expansions: u64,
     pub ripup_costs: i32,
     pub ripup_pass_no: i32,
+    /// pcbkit recovery: a via touching a conduction area may be ripped (see `router::RecoverTuning`).
+    pub rip_zone_vias: bool,
+    /// pcbkit negotiated rip-up: percent per history count (`router.ripup_history`) and the counts (see
+    /// `RoutingBoard::rip_history`).
+    pub rip_history_pct: u32,
+    pub rip_history: Option<std::sync::Arc<std::collections::HashMap<NetNo, u32>>>,
     /// If true, the autoroute algorithm completes after the first drill.
     pub is_fanout: bool,
     pub fanout_start_pin_name: Option<String>,
@@ -184,6 +190,9 @@ impl AutorouteControl {
             max_expansions: settings.get_max_connection_expansions(),
             ripup_costs: 1000,
             ripup_pass_no: 1,
+            rip_zone_vias: false,
+            rip_history_pct: settings.get_ripup_history_pct(),
+            rip_history: board.rip_history.clone(),
             is_fanout: false,
             fanout_start_pin_name: None,
             fanout_start_pin_center: None,

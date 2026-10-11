@@ -21,6 +21,8 @@ use super::history::{board_hash, BoardHistory, MAX_HISTORY_SIZE};
 use super::stats::{format_score_with_unfixable, incomplete_count, StatsCache};
 use super::{CheckpointKey, PipelineContext};
 
+mod recovery;
+
 /// Java `BOARD_RANK_LIMIT`.
 const BOARD_RANK_LIMIT: i32 = MAX_HISTORY_SIZE as i32;
 /// Java `MAXIMUM_TRIES_ON_THE_SAME_BOARD`.
@@ -99,6 +101,8 @@ pub struct BatchAutorouter {
     observer: Option<super::Observer>,
     // AutoroutePassRunner state
     previous_incomplete_nets: BTreeSet<NetNo>,
+    /// pcbkit negotiated rip-up (`router.ripup_history`): passes that ended with each net incomplete.
+    rip_history: HashMap<NetNo, u32>,
     previous_incomplete_count: i32,
     stagnation_count: i32,
 }
@@ -246,8 +250,29 @@ impl BatchAutorouter {
             pass_abort_above: None,
             observer: None,
             previous_incomplete_nets: BTreeSet::new(),
+            rip_history: HashMap::new(),
             previous_incomplete_count: -1,
             stagnation_count: 0,
+        }
+    }
+
+    /// pcbkit negotiated rip-up (`router.ripup_history`): counts one more pass that ended with each of `nets`
+    /// incomplete and hands the counts to the board as an `Arc` snapshot that the connections of the next pass read, so
+    /// the result does not depend on the order or the threads of the pass.
+    fn bump_rip_history(&mut self, board: &mut RoutingBoard, settings: &RouterSettings, nets: &BTreeSet<NetNo>) {
+        if settings.get_ripup_history_pct() == 0 || self.is_optimizer_autorouter {
+            return;
+        }
+        for &n in nets {
+            *self.rip_history.entry(n).or_insert(0) += 1;
+        }
+        board.rip_history = Some(Arc::new(self.rip_history.clone()));
+    }
+
+    /// A board restored from the history or a rollback carries the counts it had; the autorouter's own are the truth.
+    fn sync_rip_history(&self, board: &mut RoutingBoard, settings: &RouterSettings) {
+        if settings.get_ripup_history_pct() > 0 && !self.is_optimizer_autorouter && !self.rip_history.is_empty() {
+            board.rip_history = Some(Arc::new(self.rip_history.clone()));
         }
     }
 
@@ -389,6 +414,7 @@ impl BatchAutorouter {
     /// incomplete items once. Returns false if the board is already completely routed (or
     /// nothing was attempted).
     pub fn autoroute_pass(&mut self, board: &mut RoutingBoard, settings: &RouterSettings, pass_no: i32, stop: &StopToken) -> (bool, PassCounters) {
+        self.sync_rip_history(board, settings);
         let r = catch_unwind(AssertUnwindSafe(|| self.autoroute_pass_impl(board, settings, pass_no, stop)));
         match r {
             Ok(v) => v,
@@ -539,6 +565,7 @@ impl BatchAutorouter {
         } else {
             self.stagnation_count = 0;
         }
+        self.bump_rip_history(board, settings, &current_incomplete_nets);
         self.previous_incomplete_count = incomplete;
         self.previous_incomplete_nets = current_incomplete_nets;
         (c.routed > 0 || c.not_routed > 0, c)
@@ -826,6 +853,7 @@ impl BatchAutorouter {
         } else {
             self.stagnation_count = 0;
         }
+        self.bump_rip_history(board, settings, &current_incomplete_nets);
         self.previous_incomplete_count = incomplete;
         self.previous_incomplete_nets = current_incomplete_nets;
         (c.routed > 0 || c.not_routed > 0, c)
@@ -1243,6 +1271,7 @@ impl BatchAutorouter {
                 );
             }
         }
+        board.rip_history = None; // the optimizer and the recovery stage route without it
         bh.clear();
         !stop.is_stop_autorouter_requested()
     }

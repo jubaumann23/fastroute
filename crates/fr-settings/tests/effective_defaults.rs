@@ -40,6 +40,8 @@ fn expected_defaults() -> RouterSettings {
         tighten_min_move_um: None,
         strict_width: None,
         neck_radius_um: None,
+        recover_attempts: None,
+        ripup_history: None,
         strict_drc: Some(false),
         job_timeout_string: Some("12:00:00".into()),
         layers: None,

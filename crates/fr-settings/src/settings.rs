@@ -207,6 +207,14 @@ pub struct RouterSettings {
     pub strict_width: Option<bool>,
     /// pcbkit W1: with `strict_width`, how far from a same-net pad's copper a neck-down may reach (um).
     pub neck_radius_um: Option<f64>,
+    /// pcbkit recovery (not in Freerouting): after the routing stage, how many targeted rip-up-and-reroute
+    /// attempts each connection that is still open gets (each attempt is kept only if it leaves fewer
+    /// connections open and no new clearance violation); a work count. 0/unset = off (Java behaviour).
+    pub recover_attempts: Option<f64>,
+    /// pcbkit negotiated rip-up (not in Freerouting): percent added to the rip-up cost of a net for every autorouter
+    /// pass that ended with that net still incomplete (a net that keeps losing its routes becomes costlier to rip
+    /// again, so the passes stop flipping the same few nets back and forth). 0/unset = off (Java behaviour).
+    pub ripup_history: Option<f64>,
     pub strict_drc: Option<bool>,
     /// Java `jobTimeoutString` (JSON `job_timeout`), e.g. "12:00:00".
     pub job_timeout_string: Option<String>,
@@ -449,6 +457,8 @@ impl RouterSettings {
         copy(&mut self.tighten_min_move_um, &s.tighten_min_move_um, &mut n);
         copy(&mut self.strict_width, &s.strict_width, &mut n);
         copy(&mut self.neck_radius_um, &s.neck_radius_um, &mut n);
+        copy(&mut self.recover_attempts, &s.recover_attempts, &mut n);
+        copy(&mut self.ripup_history, &s.ripup_history, &mut n);
         copy(&mut self.strict_drc, &s.strict_drc, &mut n);
         copy(&mut self.job_timeout_string, &s.job_timeout_string, &mut n);
         if let Some(src) = &s.layers {
@@ -544,6 +554,22 @@ impl RouterSettings {
     pub fn get_max_connection_expansions(&self) -> u64 {
         match self.max_connection_expansions {
             Some(v) if v >= 1.0 && v.is_finite() => v as u64,
+            _ => 0,
+        }
+    }
+
+    /// pcbkit negotiated rip-up, see [`RouterSettings::ripup_history`]; 0 = off.
+    pub fn get_ripup_history_pct(&self) -> u32 {
+        match self.ripup_history {
+            Some(v) if v >= 1.0 && v.is_finite() => v.min(10_000.0) as u32,
+            _ => 0,
+        }
+    }
+
+    /// pcbkit recovery, see [`RouterSettings::recover_attempts`]; 0 = off.
+    pub fn get_recover_attempts(&self) -> u32 {
+        match self.recover_attempts {
+            Some(v) if v >= 1.0 && v.is_finite() => v.min(1000.0) as u32,
             _ => 0,
         }
     }

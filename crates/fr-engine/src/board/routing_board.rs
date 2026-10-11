@@ -225,6 +225,8 @@ pub struct RoutingBoard {
     pub tighten_min_move: f64,
     // pcbkit R4: work counters, shared with the clones of this board (parallel passes).
     pub work_stats: Arc<WorkStats>,
+    /// pcbkit negotiated rip-up: passes that ended with the net incomplete (`router.ripup_history`); None = off.
+    pub rip_history: Option<std::sync::Arc<std::collections::HashMap<NetNo, u32>>>,
     // pcbkit hook H6: when Some, only nets with `mask[net_no] == true` are routed or fanned out.
     pub route_nets: Option<Vec<bool>>,
     /// Java `autorouteEngine` (transient: not copied by `clone`, see
@@ -333,6 +335,7 @@ impl RoutingBoard {
             tighten_round_cap: 0,
             tighten_min_move: 0.0,
             work_stats: Arc::default(),
+            rip_history: None,
             route_nets: None,
             autoroute_engine: Default::default(),
         }
