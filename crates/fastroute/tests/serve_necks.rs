@@ -87,7 +87,7 @@ fn wire(net: &str, layer: &str, width: i64, pts: &[(i64, i64)]) -> String {
 
 fn open(nets: &str) -> Server {
     let mut s = Server::start();
-    s.ok("hello", json!({ "protocol": "1.2.0", "client": "serve_necks", "threads": 1 }));
+    s.ok("hello", json!({ "protocol": "1.3.0", "client": "serve_necks", "threads": 1 }));
     s.ok("load", json!({ "dsn": { "path": tiny() }, "ses": { "text": ses(nets) } }));
     s
 }
@@ -128,8 +128,8 @@ fn count(r: &Value, key: &str) -> i64 {
 #[test]
 fn capabilities_and_errors() {
     let mut s = Server::start();
-    let h = s.ok("hello", json!({ "protocol": "1.2.0", "client": "t", "threads": 1 }));
-    assert_eq!(h["protocol"], "1.2.0");
+    let h = s.ok("hello", json!({ "protocol": "1.3.0", "client": "t", "threads": 1 }));
+    assert_eq!(h["protocol"], "1.3.0");
     for cap in ["widen", "check"] {
         assert!(h["capabilities"].as_array().unwrap().contains(&json!(cap)), "{h}");
     }

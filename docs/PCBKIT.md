@@ -83,7 +83,7 @@ STOCK_CLI_SHA256: 0e1bfbeed55916db2dffd87474e9d4e04ab7e4c824faf09469bb33b335cc92
   Pinned toolkit contract (the `rust-protocol` commit whose `scripts/router_conformance.py` the
   bench `conformance` subcommand runs; `contract-pin` prints it and FAILs on any other commit or a modified runner):
 
-CONTRACT_COMMIT: 3fc599c34fb1bea792e6e3a9dc4f43ba9ba73918
+CONTRACT_COMMIT: 0a9a833e7a2676a383363c1a3094c16eb2ed9765
 
   Re-pin it here, in the same commit, when the toolkit publishes a contract patch the fork passes.
   The gate prints an INFO row `core-files` listing the non-exempt files changed against the base.
@@ -151,7 +151,7 @@ CONTRACT_COMMIT: 3fc599c34fb1bea792e6e3a9dc4f43ba9ba73918
 fastroute serve            # JSON lines on stdin, one response line per request on stdout, logs on stderr
 ```
 
-Protocol 1.2.0 (spec: toolkit `docs/router-protocol/SPEC.md`). First line must be `hello` (protocol, client, threads,
+Protocol 1.3.0 (spec: toolkit `docs/router-protocol/SPEC.md`). First line must be `hello` (protocol, client, threads,
 settings); the reply lists the capabilities this build claims (`budget check congestion incremental locking move seed
 snapshot starts widen pairs tune`; `blockers` is added when `ops/blockers.rs` `CLAIMED` is true) and the router build hash. Then `load`
 (DSN path or text), `route`, `lock`/`unlock`, `move`, `snapshot`/`restore`, `congestion`, `export` (`ses`), `shutdown`. `route.starts` (1..16, default 4 = the CLI) sets the multi-start count and the result echoes it.
