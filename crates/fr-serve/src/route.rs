@@ -34,13 +34,14 @@ struct Budget {
 }
 
 impl Budget {
-    fn start(budget_ms: u64, stop: &StopToken) -> Budget {
+    fn start(budget_ms: u64, stop: &StopToken) -> Result<Budget, ProtoError> {
         let state = Arc::new((Mutex::new((false, false)), Condvar::new()));
         if budget_ms == 0 {
-            return Budget { state, timer: None };
+            return Ok(Budget { state, timer: None });
         }
         let (st, stop) = (state.clone(), stop.clone());
-        let timer = std::thread::spawn(move || {
+        // pcbkit P3: a thread that cannot start is an `internal` error, not a panic and not a silently missing budget
+        let timer = std::thread::Builder::new().name("fastroute-budget".into()).spawn(move || {
             let (lock, cv) = &*st;
             let deadline = Instant::now() + Duration::from_millis(budget_ms);
             let mut g = lock.lock().unwrap();
@@ -53,8 +54,8 @@ impl Budget {
                 }
                 g = cv.wait_timeout(g, deadline - now).unwrap().0;
             }
-        });
-        Budget { state, timer: Some(timer) }
+        }).map_err(|e| ProtoError::new("internal", format!("internal error in 'route': the budget timer thread could not be started: {e}; the session board is unchanged")))?;
+        Ok(Budget { state, timer: Some(timer) })
     }
 
     /// Ends the timer; true when the budget fired before the pipeline finished.
@@ -195,7 +196,7 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     };
     fr_engine::autoroute::engine::take_engine_fault(); // clear a fault left by an earlier request
     let t0 = Instant::now();
-    let budget = Budget::start(budget_ms as u64, &stop);
+    let budget = Budget::start(budget_ms as u64, &stop)?;
     // fresh work counters for this request (the session's clones share the old ones)
     work.board.board.work_stats = Arc::default();
     // differential pairs (capability `pairs`): routed and coupled first, held fixed while the rest is routed

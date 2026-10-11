@@ -465,7 +465,7 @@ pub struct BatchOptimizer {
 impl BatchOptimizer {
     pub fn new(mode: OptimizerMode) -> Self {
         let pool = match mode {
-            OptimizerMode::Parallel { threads } => match rayon::ThreadPoolBuilder::new().num_threads(threads.max(1)).build() {
+            OptimizerMode::Parallel { threads } => match super::pools::build(threads) {
                 Ok(pool) => Some(pool),
                 Err(e) => {
                     // pcbkit D1: the parallel algorithm then runs on the calling thread (same result)

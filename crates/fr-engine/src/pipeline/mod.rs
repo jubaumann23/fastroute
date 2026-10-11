@@ -34,6 +34,7 @@ pub mod fanout;
 pub mod history;
 pub mod optimizer;
 mod parallel_pass;
+pub mod pools;
 pub mod stats;
 
 use fr_settings::{RouterSettings, ALGORITHM_CURRENT};
@@ -267,9 +268,7 @@ fn multi_start(board: &mut RoutingBoard, start: &RoutingBoard, settings: &Router
     if first.incomplete_count - stats::ignored_incomplete_count(board) <= 0 || ctx.stop.is_stop_requested() {
         return;
     }
-    let variants: Vec<(usize, RoutingBoard, stats::Score)> = (1..ctx.multi_start)
-        .into_par_iter()
-        .map(|v| {
+    let run_variant = |v: usize| {
             let mut b = start.clone();
             let variant_ctx = PipelineContext {
                 // own autorouter stop (stagnation), shared job stop (time limit, Ctrl+C)
@@ -294,8 +293,24 @@ fn multi_start(board: &mut RoutingBoard, start: &RoutingBoard, settings: &Router
             b.finish_autoroute();
             let s = StatsCache::new().score(&b, settings);
             (v, b, s)
-        })
-        .collect();
+    };
+    // pcbkit P2: an explicit local pool with a bounded thread count (not rayon's global pool, which
+    // depends on the process environment). Without a pool (thread or address-space limit) the same
+    // variants run one after the other on the calling thread: the variants and their order are the
+    // same, so the chosen board is identical.
+    let variant_count = ctx.multi_start.saturating_sub(1);
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get()).min(variant_count).max(1);
+    let pool = match pools::build(workers) {
+        Ok(p) => Some(p),
+        Err(e) => {
+            log::warn!("multi-start thread pool could not be built ({e}): the variants run one after the other (same result)");
+            None
+        }
+    };
+    let variants: Vec<(usize, RoutingBoard, stats::Score)> = match &pool {
+        Some(p) => p.install(|| (1..ctx.multi_start).into_par_iter().map(&run_variant).collect()),
+        None => (1..ctx.multi_start).map(&run_variant).collect(),
+    };
     let key = |s: &stats::Score| (s.incomplete_count, s.clearance_violation_count, std::cmp::Reverse(ordered_f32(s.router_score)));
     let mut best: Option<(usize, RoutingBoard, stats::Score)> = None;
     for (v, b, s) in variants {

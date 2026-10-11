@@ -80,7 +80,8 @@ pub struct BatchAutorouter {
     /// sequential Freerouting pass, 0 = decided by `run_batch_loop` (`autorouter.max_threads`
     /// with enhancements, else 1).
     pub pass_threads: usize,
-    pass_pool: Option<std::sync::Arc<rayon::ThreadPool>>,
+    /// `None`: not tried yet; `Some(None)`: the pool could not be built (the pass runs its tasks inline).
+    pass_pool: Option<Option<std::sync::Arc<rayon::ThreadPool>>>,
     /// fastroute multi-start: shuffles the order of the first pass's signal items.
     pub order_seed: Option<i64>,
     pub fanout_timed_out: bool,
@@ -602,10 +603,17 @@ impl BatchAutorouter {
         let threads = self.pass_threads;
         let window = threads * PARALLEL_WINDOW_PER_THREAD;
         // one extra thread: the committing loop runs inside the pool as well
+        // pcbkit P1: when the pool cannot be built (thread or address-space limit) the same
+        // dispatch/commit algorithm runs with every task executed inline on the calling thread:
+        // identical result, no panic.
         let pool = self
             .pass_pool
-            .get_or_insert_with(|| {
-                std::sync::Arc::new(rayon::ThreadPoolBuilder::new().num_threads(threads + 1).build().expect("autorouter thread pool"))
+            .get_or_insert_with(|| match super::pools::build(threads + 1) {
+                Ok(p) => Some(std::sync::Arc::new(p)),
+                Err(e) => {
+                    log::warn!("autorouter thread pool could not be built ({e}): the parallel pass runs on the calling thread (same result)");
+                    None
+                }
             })
             .clone();
         let margin = (pp::FOOTPRINT_MARGIN_MM * pp::units_per_mm(board)) as i64;
@@ -624,8 +632,8 @@ impl BatchAutorouter {
         /// A finished connection: (ticket, result, ripped count, the worker's condensed changes).
         type Done = (usize, AutorouteAttemptResult, i32, Option<pp::Condensed>);
 
-        pool.install(|| {
-            rayon::scope(|scope| {
+        let mut pass_body = pin_scope(|scope| {
+            {
                 let (tx, rx) = mpsc::channel::<Done>();
                 // in flight: ticket -> (item, net)
                 let mut in_flight: std::collections::BTreeMap<usize, (ItemId, NetNo)> = std::collections::BTreeMap::new();
@@ -698,7 +706,7 @@ impl BatchAutorouter {
                         }
                         let base = snapshot.get_or_insert_with(|| Arc::new(board.clone_for_worker())).clone();
                         let tx = tx.clone();
-                        scope.spawn(move |_| {
+                        let task = move || {
                             let mut w = (*base).clone();
                             let done = match w.get_item(id) {
                                 None => (ticket, AutorouteAttemptResult::new(AutorouteAttemptState::Failed), 0, None),
@@ -729,7 +737,11 @@ impl BatchAutorouter {
                                 }
                             };
                             let _ = tx.send(done);
-                        });
+                        };
+                        match scope {
+                            Some(s) => s.spawn(move |_| task()),
+                            None => task(),
+                        }
                     }
                     if in_flight.is_empty() {
                         if queue.is_empty() {
@@ -835,8 +847,12 @@ impl BatchAutorouter {
                 }
                 // (a stop leaves tasks running: they end quickly, their results are dropped)
                 drop(tx);
-            });
+            }
         });
+        match &pool {
+            Some(p) => p.install(|| rayon::scope(|s| pass_body(Some(s)))),
+            None => pass_body(None),
+        }
         log::debug!(
             target: "fr_engine::pipeline::diag",
             "parallel pass #{pass_no}: {copied} results copied, {retried} retried, {rerouted} re-routed sequentially (changed items {reject_changed}, clearance {reject_clearance})"
@@ -1331,4 +1347,10 @@ pub fn enforce_strict_drc(board: &mut RoutingBoard, route_net_no: NetNo, max_ite
         AutorouteAttemptState::Failed,
         format!("strict_drc: connection ripped because {n} new item(s) included clearance violations"),
     ))
+}
+
+/// Fixes the scope lifetime of a pass body that is run either inside a rayon scope or, without a
+/// pool, with `None` (its tasks then run inline). Without this a closure's elided lifetime is `'static`.
+fn pin_scope<'s, F: FnMut(Option<&rayon::Scope<'s>>)>(f: F) -> F {
+    f
 }
