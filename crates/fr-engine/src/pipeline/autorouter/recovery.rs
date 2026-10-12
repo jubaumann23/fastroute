@@ -16,6 +16,12 @@
 //!
 //! Everything is a function of the board and the setting (counts, no clock, no threads), so the result stays
 //! deterministic. Each accepted attempt lowers the open count, so the rounds end.
+//!
+//! `router.recover_max_routes` (pcbkit work cap, default off) bounds the whole stage: every connection an attempt routes
+//! (the forced one and each one of the re-routing sweeps) counts one, and the stage ends once the count reaches the cap
+//! (an attempt cut short in its sweeps is still judged by step 3). On a congested placement every attempt rips a
+//! neighbour that cannot be re-routed, so without the cap the stage spends `attempts` x (open connections) attempts, each
+//! re-routing all open connections up to three times, and keeps nothing.
 
 use std::collections::HashMap;
 
@@ -45,10 +51,41 @@ pub struct RecoverReport {
     pub open_after: i32,
     pub attempts_run: u32,
     pub attempts_kept: u32,
+    /// Connections routed by the attempts (what `router.recover_max_routes` caps).
+    pub routes: u64,
+    /// True when the stage ended at `router.recover_max_routes`.
+    pub capped: bool,
+}
+
+/// The route count of the stage against `router.recover_max_routes` (0 = no cap).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct RouteBudget {
+    cap: u64,
+    pub(super) used: u64,
+}
+
+impl RouteBudget {
+    pub(super) fn new(cap: u64) -> Self {
+        RouteBudget { cap, used: 0 }
+    }
+
+    /// True when no further route may start.
+    pub(super) fn exhausted(&self) -> bool {
+        self.cap > 0 && self.used >= self.cap
+    }
+
+    /// Counts one route; false (and nothing counted) when the budget is exhausted.
+    pub(super) fn take(&mut self) -> bool {
+        if self.exhausted() {
+            return false;
+        }
+        self.used += 1;
+        true
+    }
 }
 
 /// The `n`-th rip-up noise number: 4, 5, 7, 8, 10, ... (`ripup_pass_no >= 4 && % 3 != 0` switches the noise on).
-fn noise_pass_no(n: u32) -> i32 {
+pub(super) fn noise_pass_no(n: u32) -> i32 {
     (4..).filter(|v| v % 3 != 0).nth(n as usize).expect("unbounded iterator")
 }
 
@@ -79,21 +116,26 @@ impl BatchAutorouter {
         // `retry_connection_necked` a set `router.neck_width_um` turns on for the whole run, here only for the
         // attempts of this stage); `router.min_trace_width_um` unset leaves the settings as they are
         let necked = Self::necked_settings(settings);
-        self.recover_rounds(board, &necked, attempts, ignored, &params, ctx, &mut report);
+        let mut budget = RouteBudget::new(settings.get_recover_max_routes());
+        self.recover_rounds(board, &necked, attempts, ignored, &params, ctx, &mut budget, &mut report);
         // pcbkit W2: a connection strict width left open gets a last attempt that may break it (the whole
         // attempt, rip-ups included, runs without strict width: a neighbour ripped for it must be able to neck too)
         if settings.is_strict_width() && settings.is_strict_last_resort() && report.open_after - ignored > 0 {
             let mut loose = settings.clone();
             loose.strict_width = None;
             let loose = Self::necked_settings(&loose);
-            self.recover_rounds(board, &loose, attempts.min(LAST_RESORT_ATTEMPTS), ignored, &params, ctx, &mut report);
+            self.recover_rounds(board, &loose, attempts.min(LAST_RESORT_ATTEMPTS), ignored, &params, ctx, &mut budget, &mut report);
         }
+        report.routes = budget.used;
+        report.capped = budget.exhausted();
         log::info!(
-            "Recovery: {} -> {} unrouted connections ({} attempts, {} kept).",
+            "Recovery: {} -> {} unrouted connections ({} attempts, {} kept, {} routes{}).",
             report.open_before,
             report.open_after,
             report.attempts_run,
-            report.attempts_kept
+            report.attempts_kept,
+            report.routes,
+            if report.capped { ", stopped at router.recover_max_routes" } else { "" }
         );
         report
     }
@@ -128,6 +170,7 @@ impl BatchAutorouter {
         ignored: i32,
         params: &ConnectionRouterParams,
         ctx: &PipelineContext,
+        budget: &mut RouteBudget,
         report: &mut RecoverReport,
     ) {
         for _round in 0..MAX_ROUNDS {
@@ -135,11 +178,11 @@ impl BatchAutorouter {
             let open = Self::get_autoroute_items(board);
             let ids: Vec<ItemId> = open.iter().map(|&k| board.item(k).id()).collect();
             for id in ids {
-                if ctx.stop.is_stop_requested() || report.open_after - ignored <= 0 {
+                if ctx.stop.is_stop_requested() || report.open_after - ignored <= 0 || budget.exhausted() {
                     break;
                 }
                 for attempt in 0..attempts {
-                    if ctx.stop.is_stop_requested() {
+                    if ctx.stop.is_stop_requested() || budget.exhausted() {
                         break;
                     }
                     // an earlier attempt may have connected this item on its way
@@ -149,7 +192,7 @@ impl BatchAutorouter {
                     }
                     report.attempts_run += 1;
                     let mut trial = board.clone_for_worker();
-                    let worth_another = self.recover_attempt(&mut trial, settings, params, id, attempt, ctx);
+                    let worth_another = self.recover_attempt(&mut trial, settings, params, id, attempt, ctx, budget);
                     let before = StatsCache::new().score(board, settings);
                     let after = StatsCache::new().score(&trial, settings);
                     if after.incomplete_count < before.incomplete_count && after.clearance_violation_count <= before.clearance_violation_count {
@@ -170,14 +213,14 @@ impl BatchAutorouter {
                     }
                 }
             }
-            if !progress {
+            if !progress || budget.exhausted() {
                 break;
             }
         }
     }
 
     /// `settings`, with the neck-down retry width set to the minimum trace width unless one is set.
-    fn necked_settings(settings: &RouterSettings) -> RouterSettings {
+    pub(super) fn necked_settings(settings: &RouterSettings) -> RouterSettings {
         let mut s = settings.clone();
         let min = settings.get_min_trace_width_um();
         if s.get_neck_width_um() <= 0.0 && min > 0.0 {
@@ -189,9 +232,22 @@ impl BatchAutorouter {
     /// One attempt on `trial`: forces the connection of item `id` in, then re-routes what that ripped.
     /// Returns false when more attempts at this connection are futile: the search ran to the end without a way through
     /// (rip-up costs and noise only reorder the search, they cannot open a way that is not there).
-    fn recover_attempt(&mut self, trial: &mut RoutingBoard, settings: &RouterSettings, params: &ConnectionRouterParams, id: ItemId, attempt: u32, ctx: &PipelineContext) -> bool {
+    #[allow(clippy::too_many_arguments)]
+    fn recover_attempt(
+        &mut self,
+        trial: &mut RoutingBoard,
+        settings: &RouterSettings,
+        params: &ConnectionRouterParams,
+        id: ItemId,
+        attempt: u32,
+        ctx: &PipelineContext,
+        budget: &mut RouteBudget,
+    ) -> bool {
         let stop = &ctx.stop;
         let Some(key) = trial.get_item(id) else { return false };
+        if !budget.take() {
+            return false;
+        }
         let net = trial.item(key).net_number(0);
         trial.start_marking_changed_area();
         let mut ripped = ItemSet::new();
@@ -204,7 +260,7 @@ impl BatchAutorouter {
             &mut ripped,
             None,
             attempt_cost_scale(attempt),
-            Some(&RecoverTuning { noise_pass_no: noise_pass_no(attempt), rip_zone_vias: true }),
+            Some(&RecoverTuning { noise_pass_no: noise_pass_no(attempt), rip_zone_vias: true, rip_protect_above: None }),
             Some(stop),
         );
         if forced.result.state != AutorouteAttemptState::Routed {
@@ -221,11 +277,11 @@ impl BatchAutorouter {
             fr_jcompat::random::shuffle(&mut open, &mut rnd);
             let ids: Vec<ItemId> = open.iter().map(|&k| trial.item(k).id()).collect();
             for sid in ids {
-                if stop.is_stop_requested() {
+                if stop.is_stop_requested() || budget.exhausted() {
                     break;
                 }
                 let Some(k) = trial.get_item(sid) else { continue };
-                if trial.item(k).net_count() != 1 {
+                if trial.item(k).net_count() != 1 || !budget.take() {
                     continue;
                 }
                 let n = trial.item(k).net_number(0);
@@ -237,7 +293,7 @@ impl BatchAutorouter {
             let option = if self.remove_unconnected_vias { StopConnectionOption::None } else { StopConnectionOption::FanoutVia };
             self.remove_tails(trial, option, Some(stop));
             let now = incomplete_count(trial, None);
-            if now == 0 || now >= left {
+            if now == 0 || now >= left || budget.exhausted() {
                 break;
             }
             left = now;
@@ -255,6 +311,19 @@ mod tests {
         let v: Vec<i32> = (0..6).map(noise_pass_no).collect();
         assert_eq!(v, vec![4, 5, 7, 8, 10, 11]);
         assert!(v.iter().all(|&n| n >= 4 && n % 3 != 0));
+    }
+
+    #[test]
+    fn a_route_budget_counts_up_to_its_cap_and_zero_means_no_cap() {
+        let mut b = RouteBudget::new(2);
+        assert!(!b.exhausted());
+        assert!(b.take() && b.take());
+        assert!(b.exhausted());
+        assert!(!b.take(), "nothing past the cap");
+        assert_eq!(b.used, 2);
+        let mut free = RouteBudget::new(0);
+        assert!((0..10_000).all(|_| free.take()));
+        assert!(!free.exhausted());
     }
 
     #[test]

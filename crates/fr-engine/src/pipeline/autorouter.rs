@@ -21,6 +21,7 @@ use super::history::{board_hash, BoardHistory, MAX_HISTORY_SIZE};
 use super::stats::{format_score_with_unfixable, incomplete_count, StatsCache};
 use super::{CheckpointKey, PipelineContext};
 
+mod chains;
 mod recovery;
 
 /// Java `BOARD_RANK_LIMIT`.

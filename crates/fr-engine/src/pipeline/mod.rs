@@ -239,6 +239,11 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
         ctx.observe(board, &LiveEvent::Stage("recovery"));
         autorouter.recover(board, settings, ctx);
     }
+    // pcbkit rip-up chains (router.chain_depth, default off): a bounded local search on what is still open
+    if ctx.enhancements && router_enabled && !ctx.stop.is_stop_requested() && settings.get_chain_depth() > 0 {
+        ctx.observe(board, &LiveEvent::Stage("chains"));
+        autorouter.chains(board, settings, ctx);
+    }
     if let Some(start) = strict_start.take() {
         if !ctx.stop.is_stop_requested() {
             plain_fallback(start, board, settings, ctx);

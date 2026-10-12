@@ -108,3 +108,49 @@ fn the_rip_up_history_is_off_by_default_and_does_not_outlive_the_routing_stage()
         assert!(board.rip_history.is_none(), "the optimizer and recovery route without the history (pct {pct:?})");
     }
 }
+
+/// `blocked.dsn`: N4 is walled in by a fixed GUARD wire, so every recovery attempt at it fails (one per end item).
+fn recover_blocked(max_routes: Option<f64>) -> (u32, u64, bool, i32) {
+    let mut settings = fr_settings::default_settings(1);
+    settings.optimizer.enabled = Some(false);
+    settings.autorouter.max_passes = Some(4);
+    settings.min_trace_width_um = Some(100.0);
+    settings.recover_attempts = Some(3.0);
+    settings.recover_max_routes = max_routes;
+    let mut board = fr_io::post_load::load_from_specctra_dsn(include_bytes!("data/blocked.dsn"), &mut settings).expect("load");
+    fr_io::post_load::prepare_for_routing(&mut board, &mut settings, None);
+    board.time_limits = TimeLimitPolicy::disabled();
+    let ctx = PipelineContext {
+        stop: StopToken::new(),
+        wall_clock_limits: false,
+        deterministic: true,
+        optimizer_mode: OptimizerMode::JavaCompat,
+        enhancements: true,
+        multi_start: 1,
+        checkpoint: None,
+        observer: None,
+    };
+    let mut router = fr_engine::pipeline::BatchAutorouter::for_job(&board, &settings);
+    router.run_batch_loop(&mut board, &settings, &ctx);
+    ctx.stop.clear_stop_autorouter();
+    let r = router.recover(&mut board, &settings, &ctx);
+    (r.attempts_run, r.routes, r.capped, r.open_after)
+}
+
+#[test]
+fn the_recovery_route_cap_ends_the_stage_and_zero_is_no_cap() {
+    let uncapped = recover_blocked(None);
+    let (attempts, routes, capped, open) = uncapped;
+    assert!(attempts >= 2 && routes >= 2 && !capped, "uncapped: every end item of N4 gets an attempt ({attempts}, {routes})");
+    assert_eq!(open, 1, "N4 stays open");
+    assert_eq!(recover_blocked(Some(1.0)), (1, 1, true, open), "a cap of one route allows one attempt and only saves work here");
+    assert_eq!(recover_blocked(Some(1000.0)), uncapped, "a cap above the work changes nothing");
+}
+
+#[test]
+fn the_recovery_route_cap_is_read_from_its_router_path() {
+    let mut s = fr_settings::default_settings(1);
+    assert_eq!(s.get_recover_max_routes(), 0, "off by default");
+    fr_settings::reflect::set_field_value(&mut s, "recover_max_routes", "1500").expect("recover_max_routes");
+    assert_eq!(s.get_recover_max_routes(), 1500);
+}

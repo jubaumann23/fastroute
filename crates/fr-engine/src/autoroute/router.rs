@@ -464,12 +464,15 @@ pub struct RecoverTuning {
     /// A via that touches a conduction area (a zone of its own net) may be ripped like any other via
     /// (`AutorouteControl::rip_zone_vias`).
     pub rip_zone_vias: bool,
+    /// pcbkit rip-up chains: items with an id above this may not be ripped (`Some(i32::MIN)`: no rip-up at all).
+    pub rip_protect_above: Option<i32>,
 }
 
 impl RecoverTuning {
     fn apply(&self, ctrl: &mut AutorouteControl) {
         ctrl.ripup_pass_no = self.noise_pass_no;
         ctrl.rip_zone_vias = self.rip_zone_vias;
+        ctrl.rip_protect_above = self.rip_protect_above;
     }
 }
 

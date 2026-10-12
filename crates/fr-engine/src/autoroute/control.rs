@@ -86,6 +86,8 @@ pub struct AutorouteControl {
     pub ripup_pass_no: i32,
     /// pcbkit recovery: a via touching a conduction area may be ripped (see `router::RecoverTuning`).
     pub rip_zone_vias: bool,
+    /// pcbkit rip-up chains: items with an id above this may not be ripped (`None` = no protection).
+    pub rip_protect_above: Option<i32>,
     /// pcbkit negotiated rip-up: percent per history count (`router.ripup_history`) and the counts (see
     /// `RoutingBoard::rip_history`).
     pub rip_history_pct: u32,
@@ -194,6 +196,7 @@ impl AutorouteControl {
             ripup_costs: 1000,
             ripup_pass_no: 1,
             rip_zone_vias: false,
+            rip_protect_above: None,
             rip_history_pct: settings.get_ripup_history_pct(),
             rip_history: board.rip_history.clone(),
             is_fanout: false,
