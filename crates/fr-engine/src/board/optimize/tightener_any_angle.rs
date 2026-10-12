@@ -6,7 +6,7 @@ use fr_geom::{Direction, FloatPoint, Line, Point, Polyline, Side, Signum};
 use super::super::item::ItemKey;
 use super::super::routing_board::{jmax, jmin, RoutingBoard};
 use super::tightener45::ContactFound;
-use super::trace_tightener::{TraceTightener, C_MAX_COS_ANGLE};
+use super::trace_tightener::{is_unstable_chamfer, TraceTightener, C_MAX_COS_ANGLE};
 use super::tracked::{TLine, TPolyline};
 
 /// Java `SKIP_LENGTH`.
@@ -655,7 +655,7 @@ impl TraceTightener {
         if found.acute_angle {
             let other_trace_line = found.other_trace_line.clone().unwrap();
             let factor = if found.prev_corner_side == Some(Side::OnTheLeft) { 2 } else { 6 };
-            let add_line = self.smoothen_add_line(&other_trace_line.line, factor, &current_end_corner, &current_prev_end_corner, found.other_trace_corner_approx.as_ref().unwrap())?;
+            let add_line = self.smoothen_add_line(board, &other_trace_line.line, factor, &current_end_corner, &current_prev_end_corner, found.other_trace_corner_approx.as_ref().unwrap(), found.other_half_width)?;
             // construct the new trace polyline.
             let mut new_lines: Vec<TLine> = Vec::with_capacity(new_line_count);
             new_lines.push(other_trace_line.clone());
@@ -713,7 +713,7 @@ impl TraceTightener {
         if found.acute_angle {
             let other_trace_line = found.other_trace_line.clone().unwrap();
             let factor = if found.prev_corner_side == Some(Side::OnTheLeft) { 6 } else { 2 };
-            let add_line = self.smoothen_add_line(&other_trace_line.line, factor, &current_end_corner, &current_prev_end_corner, found.other_trace_corner_approx.as_ref().unwrap())?;
+            let add_line = self.smoothen_add_line(board, &other_trace_line.line, factor, &current_end_corner, &current_prev_end_corner, found.other_trace_corner_approx.as_ref().unwrap(), found.other_half_width)?;
             // construct the new trace polyline.
             let mut new_lines: Vec<Option<TLine>> = vec![None; new_line_count];
             for (k, slot) in new_lines.iter_mut().enumerate().take(n - 1) {
@@ -743,12 +743,17 @@ impl TraceTightener {
 
     /// The acute angle line of the any angle `smoothenStart/EndCornerAtTrace` (`None` if the
     /// translate distance is below 0.99).
-    fn smoothen_add_line(&self, other_trace_line: &Line, factor: i32, current_end_corner: &Point, current_prev_end_corner: &Point, other_trace_corner_approx: &FloatPoint) -> Option<Line> {
+    fn smoothen_add_line(&self, board: &RoutingBoard, other_trace_line: &Line, factor: i32, current_end_corner: &Point, current_prev_end_corner: &Point, other_trace_corner_approx: &FloatPoint, other_half_width: i32) -> Option<Line> {
         let new_line_dir: Direction = other_trace_line.direction().turn_45_degree(factor);
         let translate_line = Line::get_instance(Point::Int(current_end_corner.to_float().round()), &new_line_dir);
         let mut translate_dist = (SQRT2 - 1.0) * self.current_half_width as f64;
         let prev_corner_dist = translate_line.signed_distance(&current_prev_end_corner.to_float()).abs();
         let other_dist = translate_line.signed_distance(other_trace_corner_approx).abs();
+        // pcbkit R6: a cut against another width or one that consumes a whole contact jog re-creates itself
+        if is_unstable_chamfer(board.tighten_stable_chamfer, translate_dist, prev_corner_dist, other_dist, self.current_half_width, other_half_width) {
+            board.work_stats.record_negligible_move();
+            return None;
+        }
         translate_dist = jmin(translate_dist, prev_corner_dist);
         translate_dist = jmin(translate_dist, other_dist);
         if translate_dist < 0.99 {
@@ -799,6 +804,7 @@ impl TraceTightener {
                 }
                 if other_trace_found {
                     found.other_trace_corner_approx = Some(corner_approx);
+                    found.other_half_width = item.trace().half_width();
                     found.other_trace_line = Some(other_line);
                     found.prev_corner_side = Some(current_prev_corner_side);
                     found.other_prev_trace_line = Some(other_prev_line);

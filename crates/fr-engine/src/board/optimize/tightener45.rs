@@ -5,7 +5,7 @@ use fr_geom::{Direction, FloatPoint, IntPoint, Line, Point, Polyline, Side, Sign
 
 use super::super::item::ItemKey;
 use super::super::routing_board::{jmax, jmin, RoutingBoard};
-use super::trace_tightener::TraceTightener;
+use super::trace_tightener::{is_unstable_chamfer, TraceTightener};
 use super::tracked::{TLine, TPolyline};
 
 impl TraceTightener {
@@ -413,6 +413,7 @@ impl TraceTightener {
                 }
                 if other_trace_found {
                     found.other_trace_corner_approx = Some(corner_approx);
+                    found.other_half_width = item.trace().half_width();
                     found.other_trace_line = Some(other_line);
                     found.prev_corner_side = Some(current_prev_corner_side);
                     found.other_prev_trace_line = Some(other_prev_line);
@@ -445,6 +446,11 @@ impl TraceTightener {
             let mut translate_dist = (SQRT2 - 1.0) * self.current_half_width as f64;
             let prev_corner_dist = translate_line.signed_distance(&current_prev_end_corner.to_float()).abs();
             let other_dist = translate_line.signed_distance(found.other_trace_corner_approx.as_ref().unwrap()).abs();
+            // pcbkit R6: a cut against another width or one that consumes a whole contact jog re-creates itself
+            if is_unstable_chamfer(board.tighten_stable_chamfer, translate_dist, prev_corner_dist, other_dist, self.current_half_width, found.other_half_width) {
+                board.work_stats.record_negligible_move();
+                return None;
+            }
             translate_dist = jmin(translate_dist, prev_corner_dist);
             translate_dist = jmin(translate_dist, other_dist);
             if translate_dist >= 0.99 {
@@ -504,6 +510,8 @@ pub(crate) struct ContactFound {
     pub acute_angle: bool,
     pub bend: bool,
     pub other_trace_corner_approx: Option<FloatPoint>,
+    /// pcbkit R6: the half width of the contact trace found.
+    pub other_half_width: i32,
     pub other_trace_line: Option<TLine>,
     pub other_prev_trace_line: Option<TLine>,
     pub prev_corner_side: Option<Side>,
