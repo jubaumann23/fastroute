@@ -33,6 +33,8 @@ const SETTLE_SWEEPS: usize = 3;
 const SETTLE_PASS_NO: i32 = 3;
 /// Attempts per connection of the strict-width last resort (it only breaks strict width where strict recovery failed).
 const LAST_RESORT_ATTEMPTS: u32 = 2;
+/// Passes of the loose batch loop that follows a stalled strict one (`BatchAutorouter::loose_continuation`).
+const LOOSE_CONTINUATION_PASSES: i32 = 8;
 /// A hard bound on the rounds over the open connections (each accepted attempt already lowers the open count).
 const MAX_ROUNDS: usize = 6;
 
@@ -66,6 +68,13 @@ impl BatchAutorouter {
             return report;
         }
         let params = self.params();
+        if settings.is_strict_width() && settings.is_strict_last_resort() {
+            self.loose_continuation(board, settings, ctx);
+            report.open_after = incomplete_count(board, None);
+            if report.open_after - ignored <= 0 {
+                return report;
+            }
+        }
         // a connection that fails at full width is retried at the fab's minimum trace width (the same
         // `retry_connection_necked` a set `router.neck_width_um` turns on for the whole run, here only for the
         // attempts of this stage); `router.min_trace_width_um` unset leaves the settings as they are
@@ -87,6 +96,26 @@ impl BatchAutorouter {
             report.attempts_kept
         );
         report
+    }
+
+    /// pcbkit W3: the strict batch loop stalled with connections open. Continue the ordinary batch passes on that board
+    /// with strict width off (no fanout), so that only the connections strict width cannot make (and the neighbours
+    /// they rip) are routed the way the defaults route: the board keeps its strict wiring everywhere else.
+    /// Does nothing on a complete board (pcbkit W4: also called by the pipeline before the multi-start).
+    pub(crate) fn loose_continuation(&mut self, board: &mut RoutingBoard, settings: &RouterSettings, ctx: &PipelineContext) {
+        if incomplete_count(board, None) - super::super::stats::ignored_incomplete_count(board) <= 0 {
+            return;
+        }
+        let mut loose = settings.clone();
+        loose.strict_width = None;
+        loose.fanout.enabled = Some(false);
+        let cap = loose.autorouter.max_passes.filter(|&m| m > 0).map_or(LOOSE_CONTINUATION_PASSES, |m| m.min(LOOSE_CONTINUATION_PASSES));
+        loose.autorouter.max_passes = Some(cap);
+        ctx.stop.clear_stop_autorouter();
+        let before = incomplete_count(board, None);
+        self.run_batch_loop(board, &loose, ctx);
+        ctx.stop.clear_stop_autorouter();
+        log::info!("Strict width last resort, loose batch passes: {} -> {} unrouted connections.", before, incomplete_count(board, None));
     }
 
     /// The rounds of [`Self::recover`] over the connections still open.

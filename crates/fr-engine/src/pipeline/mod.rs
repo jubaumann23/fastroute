@@ -195,14 +195,22 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
         autorouter.order_seed = board.order_seed;
     }
     let mut outcome = PipelineOutcome::default();
+    let mut strict_start: Option<RoutingBoard> = None;
 
     // runRoutingStage
     let routing_start = std::time::Instant::now();
     let router_enabled = settings.get_run_router() && settings.autorouter.max_passes.map(|m| m >= 0).unwrap_or(true);
     if router_enabled && !ctx.stop.is_stop_autorouter_requested() {
+        // pcbkit W3: the board before routing, for the plain fallback of a strict run that leaves connections open
+        strict_start = (ctx.enhancements && settings.is_strict_width() && settings.is_strict_last_resort()).then(|| board.clone());
         let unrouted_board = (ctx.enhancements && ctx.multi_start > 1).then(|| board.clone());
         let routing_start = std::time::Instant::now();
         autorouter.run_batch_loop(board, settings, ctx);
+        if strict_start.is_some() && !ctx.stop.is_stop_requested() {
+            // pcbkit W4: what the strict batch left open first goes to the loose continuation (seconds); the strict
+            // multi-start variants (each as long as the strict run) only run if that did not close everything
+            autorouter.loose_continuation(board, settings, ctx);
+        }
         if let Some(start) = unrouted_board {
             // the variants route with sequential passes: after a parallel first run they take
             // several times as long
@@ -231,6 +239,11 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
         ctx.observe(board, &LiveEvent::Stage("recovery"));
         autorouter.recover(board, settings, ctx);
     }
+    if let Some(start) = strict_start.take() {
+        if !ctx.stop.is_stop_requested() {
+            plain_fallback(start, board, settings, ctx);
+        }
+    }
     board.finish_autoroute();
     if ctx.enhancements {
         // The autorouter's own stop rules (stagnation, max passes) request a stop of the
@@ -254,6 +267,51 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
         outcome.optimizer_timed_out = optimizer.timed_out;
     }
     outcome
+}
+
+/// pcbkit W3: strict width (with its last resort) still left connections open. Route the board `start` (as it was
+/// before the strict run) once more exactly as the defaults do (no strict width; batch loop, multi-start, recovery) and
+/// keep that board if it has fewer open connections, or as many with fewer clearance violations. Strict width then
+/// never ends with more open connections than the defaults, and costs a second run only where it fell short.
+fn plain_fallback(start: RoutingBoard, board: &mut RoutingBoard, settings: &RouterSettings, ctx: &PipelineContext) {
+    if stats::incomplete_count(board, None) - stats::ignored_incomplete_count(board) <= 0 {
+        return;
+    }
+    let mut plain = settings.clone();
+    plain.strict_width = None;
+    plain.strict_last_resort = None;
+    let unrouted_board = (ctx.multi_start > 1).then(|| start.clone());
+    let mut alt = start;
+    let mut router = BatchAutorouter::for_job(&alt, &plain);
+    router.order_seed = alt.order_seed;
+    ctx.stop.clear_stop_autorouter();
+    let routing_start = std::time::Instant::now();
+    router.run_batch_loop(&mut alt, &plain, ctx);
+    if let Some(unrouted) = unrouted_board {
+        let took = routing_start.elapsed();
+        let variant_estimate = if router.pass_threads > 1 { took * 3 } else { took };
+        if ctx.deterministic || variant_estimate <= MULTI_START_MAX_FIRST_RUN {
+            multi_start(&mut alt, &unrouted, &plain, ctx);
+        }
+    }
+    if plain.get_recover_attempts() > 0 && !ctx.stop.is_stop_requested() {
+        router.recover(&mut alt, &plain, ctx);
+    }
+    alt.finish_autoroute();
+    let before = StatsCache::new().score(board, settings);
+    let after = StatsCache::new().score(&alt, settings);
+    let better = (after.incomplete_count, after.clearance_violation_count) < (before.incomplete_count, before.clearance_violation_count);
+    log::info!(
+        "Strict width fallback to the plain run: {} open / {} violations -> {} open / {} violations ({}).",
+        before.incomplete_count,
+        before.clearance_violation_count,
+        after.incomplete_count,
+        after.clearance_violation_count,
+        if better { "kept the plain run" } else { "kept the strict run" }
+    );
+    if better {
+        *board = alt;
+    }
 }
 
 /// fastroute multi-start: reruns the routing stage from `start` with `ctx.multi_start - 1`

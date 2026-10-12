@@ -170,3 +170,18 @@ fn the_strict_last_resort_routes_in_recovery_what_strict_width_left_open() {
     assert!(open_last < open_strict, "the last resort should connect something strict left open ({open_last} vs {open_strict})");
     assert!(narrowest(&ses) < 250.0 - SLACK_UM, "and it does so below the floor, which is what it is for");
 }
+
+#[test]
+fn a_strict_run_with_the_last_resort_never_leaves_more_open_than_the_plain_run() {
+    // W3: without recovery attempts nothing else could connect what strict width left open; the plain fallback does
+    let dsn = write_dsn("neck.dsn", &fine_pitch_dsn());
+    let plain = json!({ "router.min_trace_width_um": 250, "router.neck_width_um": 100 });
+    let (_, open_plain) = route(&dsn, plain.clone());
+    let mut strict = plain.clone();
+    strict.as_object_mut().unwrap().extend(json!({ "router.strict_width": true, "router.neck_radius_um": 1000 }).as_object().unwrap().clone());
+    let (_, open_strict) = route(&dsn, strict.clone());
+    assert!(open_strict > open_plain, "the board must make strict width lose connections ({open_strict} vs {open_plain})");
+    strict.as_object_mut().unwrap().insert("router.strict_last_resort".into(), json!(true));
+    let (_, open_last) = route(&dsn, strict);
+    assert!(open_last <= open_plain, "strict with the last resort left {open_last} open, the plain run {open_plain}");
+}

@@ -3,6 +3,7 @@
 //! items of a connection.
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
 use fr_geom::{ConvexShape, FloatLine, FloatPoint, IntPoint, Line, LineSegment, Point, Polyline, Side, TileShape};
 use fr_jcompat::{JavaRandom, JavaTreeSet};
@@ -143,6 +144,9 @@ pub struct MazeSearchEngine<'a> {
     pub expanded: u64,
     /// pcbkit R1: the search stopped because `ctrl.max_expansions` was reached.
     pub capped: bool,
+    /// pcbkit W4: per (pin, layer), may the inserter neck down at this pin under strict width (memo of
+    /// `inserter::pin_is_pitch_limited`, which scans the pins of the part).
+    strict_neck_pins: HashMap<(ItemKey, LayerNo), bool>,
 }
 
 impl<'a> MazeSearchEngine<'a> {
@@ -165,6 +169,7 @@ impl<'a> MazeSearchEngine<'a> {
             section_no_of_destination_door: 0,
             expanded: 0,
             capped: false,
+            strict_neck_pins: HashMap::new(),
         }
     }
 
@@ -358,7 +363,7 @@ impl<'a> MazeSearchEngine<'a> {
             if let Expandable::Target(t) = list_element.door {
                 // try evtl. neckdown at a start pin
                 let start_item = self.eng.target_door(t).item;
-                if self.board.item(start_item).is_pin() {
+                if self.board.item(start_item).is_pin() && self.pin_may_neck(start_item, layer_index) {
                     let neckdown_half_width = ctrl
                         .clamp_neckdown_half_width(self.board.pin_trace_neckdown_half_width(start_item, layer_index))
                         as f64;
@@ -883,16 +888,28 @@ impl<'a> MazeSearchEngine<'a> {
     }
 
     /// Java `checkNeckDownAtDestPin(room)`.
-    fn check_neck_down_at_dest_pin(&self, room: RoomId) -> f64 {
+    /// pcbkit W4: under strict width only at a pin where the inserter will neck (see [`Self::pin_may_neck`]).
+    fn check_neck_down_at_dest_pin(&mut self, room: RoomId) -> f64 {
         let layer = self.room_layer(room);
-        for &t in self.eng.room(room).target_doors() {
-            let item = self.eng.target_door(t).item;
-            if self.board.item(item).is_pin() {
+        let pin = self.eng.room(room).target_doors().iter().map(|&t| self.eng.target_door(t).item).find(|&item| self.board.item(item).is_pin());
+        match pin {
+            Some(item) if self.pin_may_neck(item, layer) => {
                 let half = self.board.pin_trace_neckdown_half_width(item, layer);
-                return self.ctrl.clamp_neckdown_half_width(half) as f64;
+                self.ctrl.clamp_neckdown_half_width(half) as f64
             }
+            _ => 0.0,
         }
-        0.0
+    }
+
+    /// pcbkit W4: may the search plan a neck-down into `pin` on `layer`? Always without strict width. With it, only at a
+    /// pitch-limited pin, the one place the inserter (`try_neck_down`, `insert_fanout_micro_neckdown`) necks; elsewhere
+    /// the search plans the full class width, so it does not find a path the inserter then cannot insert.
+    fn pin_may_neck(&mut self, pin: ItemKey, layer: LayerNo) -> bool {
+        if !self.ctrl.strict_width {
+            return true;
+        }
+        let (board, ctrl) = (&*self.board, self.ctrl);
+        *self.strict_neck_pins.entry((pin, layer)).or_insert_with(|| super::inserter::pin_is_pitch_limited(board, ctrl, pin, layer))
     }
 
     // ------------------------------------------------------------------------------------------
