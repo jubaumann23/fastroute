@@ -1,4 +1,4 @@
-//! pcbkit R6: end-corner smoothing that re-created its own cut every round converges with
+//! pcbkit R8: end-corner smoothing that re-created its own cut every round converges with
 //! `router.tighten_stable_chamfer`.
 //!
 //! Two traces of a net that run along each other from a shared corner (a hairpin) meet at an acute angle. The

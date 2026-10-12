@@ -223,7 +223,7 @@ pub struct RoutingBoard {
     // pcbkit R3: a pull-tight or smoothing change moving the trace less than this (board units) and
     // removing no corner is not applied (0 = off, upstream behaviour).
     pub tighten_min_move: f64,
-    // pcbkit R6: end-corner smoothing skips a chamfer that would consume a whole contact jog (false = upstream).
+    // pcbkit R8: end-corner smoothing skips a chamfer that would consume a whole contact jog (false = upstream).
     pub tighten_stable_chamfer: bool,
     // pcbkit R4: work counters, shared with the clones of this board (parallel passes).
     pub work_stats: Arc<WorkStats>,

@@ -640,7 +640,7 @@ impl RouterSettings {
         }
     }
 
-    /// pcbkit R6, see [`RouterSettings::tighten_stable_chamfer`].
+    /// pcbkit R8, see [`RouterSettings::tighten_stable_chamfer`].
     pub fn is_tighten_stable_chamfer(&self) -> bool {
         self.tighten_stable_chamfer == Some(true)
     }
