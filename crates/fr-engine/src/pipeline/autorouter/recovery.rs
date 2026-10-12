@@ -101,7 +101,11 @@ impl BatchAutorouter {
     /// pcbkit W3: the strict batch loop stalled with connections open. Continue the ordinary batch passes on that board
     /// with strict width off (no fanout), so that only the connections strict width cannot make (and the neighbours
     /// they rip) are routed the way the defaults route: the board keeps its strict wiring everywhere else.
-    fn loose_continuation(&mut self, board: &mut RoutingBoard, settings: &RouterSettings, ctx: &PipelineContext) {
+    /// Does nothing on a complete board (pcbkit W4: also called by the pipeline before the multi-start).
+    pub(crate) fn loose_continuation(&mut self, board: &mut RoutingBoard, settings: &RouterSettings, ctx: &PipelineContext) {
+        if incomplete_count(board, None) - super::super::stats::ignored_incomplete_count(board) <= 0 {
+            return;
+        }
         let mut loose = settings.clone();
         loose.strict_width = None;
         loose.fanout.enabled = Some(false);

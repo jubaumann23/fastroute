@@ -200,11 +200,16 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
     let routing_start = std::time::Instant::now();
     let router_enabled = settings.get_run_router() && settings.autorouter.max_passes.map(|m| m >= 0).unwrap_or(true);
     if router_enabled && !ctx.stop.is_stop_autorouter_requested() {
-        let unrouted_board = (ctx.enhancements && ctx.multi_start > 1).then(|| board.clone());
         // pcbkit W3: the board before routing, for the plain fallback of a strict run that leaves connections open
         strict_start = (ctx.enhancements && settings.is_strict_width() && settings.is_strict_last_resort()).then(|| board.clone());
+        let unrouted_board = (ctx.enhancements && ctx.multi_start > 1).then(|| board.clone());
         let routing_start = std::time::Instant::now();
         autorouter.run_batch_loop(board, settings, ctx);
+        if strict_start.is_some() && !ctx.stop.is_stop_requested() {
+            // pcbkit W4: what the strict batch left open first goes to the loose continuation (seconds); the strict
+            // multi-start variants (each as long as the strict run) only run if that did not close everything
+            autorouter.loose_continuation(board, settings, ctx);
+        }
         if let Some(start) = unrouted_board {
             // the variants route with sequential passes: after a parallel first run they take
             // several times as long
