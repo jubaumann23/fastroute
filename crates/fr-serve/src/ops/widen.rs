@@ -134,17 +134,26 @@ fn widen_trace(board: &mut BasicBoard, key: ItemKey, target: i32, step_half: i32
         return (0..segments).map(|_| Piece { half: target }).collect();
     }
     // several segments: one trace per segment, each widened on its own
-    let corners = t.poly.polyline.corners();
     board.remove_item(new_key);
     let mut out = Vec::with_capacity(segments);
-    for w in corners.windows(2) {
-        let poly = TPolyline::fresh(Polyline::from_points(&[w[0].clone(), w[1].clone()]));
+    for segment in segment_polylines(&t.poly.polyline) {
+        let poly = TPolyline::fresh(segment);
         match board.insert_trace_without_cleaning_tracked(poly, t.layer, t.half, &t.nets, t.class, t.fixed) {
             Some(k) => out.push(Piece { half: widen_segment(board, k, target, step_half) }),
             None => out.push(Piece { half: t.half }),
         }
     }
     out
+}
+
+/// The segments of `p`, each a polyline of the three lines that bound it in `p` (corner k lies on lines k and
+/// k + 1), so its corners are exactly those of `p`. A corner may be a rational point (the intersection of two
+/// lines); a line through two corners, as `Polyline::from_points` builds it, then has a rational point and
+/// `Line::intersection` panics ("RationalPoint is not an IntPoint": gpio4l energy-1 with
+/// `router.tighten_stable_chamfer`).
+fn segment_polylines(p: &Polyline) -> Vec<Polyline> {
+    let segments = (p.corner_count() - 1).max(0) as usize;
+    (0..segments).map(|k| Polyline::from_lines(p.lines[k..k + 3].to_vec())).collect()
 }
 
 /// Per net class totals.
@@ -277,4 +286,39 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     let result = widen_board(&mut work.board.board, &widths, only.as_ref());
     session.commit(work);
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::segment_polylines;
+    use fr_geom::{Line, Polyline};
+
+    /// Corners (0, 0), (6/7, 2/7) (rational: y = x / 3 meets y = 2 - 2x) and (2, -2).
+    fn with_rational_corner() -> Polyline {
+        Polyline::from_lines(vec![
+            Line::new_ints(0, 0, 0, 1),
+            Line::new_ints(0, 0, 3, 1),
+            Line::new_ints(0, 2, 1, 0),
+            Line::new_ints(2, 0, 2, 1),
+        ])
+    }
+
+    #[test]
+    fn segments_keep_a_rational_corner_exactly() {
+        let p = with_rational_corner();
+        let corners = p.corners();
+        assert_eq!(corners.len(), 3);
+        assert!(!corners[1].is_int_point());
+        let segs = segment_polylines(&p);
+        assert_eq!(segs.len(), 2);
+        for (k, s) in segs.iter().enumerate() {
+            assert_eq!(s.corners(), vec![corners[k].clone(), corners[k + 1].clone()]);
+        }
+    }
+
+    #[test]
+    fn a_single_segment_is_itself() {
+        let p = Polyline::from_lines(vec![Line::new_ints(0, 0, 0, 1), Line::new_ints(0, 0, 1, 0), Line::new_ints(5, 0, 5, 1)]);
+        assert_eq!(segment_polylines(&p)[0].corners(), p.corners());
+    }
 }
