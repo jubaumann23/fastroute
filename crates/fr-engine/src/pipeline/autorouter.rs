@@ -285,6 +285,11 @@ impl BatchAutorouter {
         self.stagnation_count = 0;
     }
 
+    /// The parameters of one connection search of this autorouter (pcbkit: for tests of the recovery and chain stages).
+    pub fn connection_params(&self) -> ConnectionRouterParams {
+        self.params()
+    }
+
     fn params(&self) -> ConnectionRouterParams {
         ConnectionRouterParams {
             trace_costs: self.trace_costs.clone(),

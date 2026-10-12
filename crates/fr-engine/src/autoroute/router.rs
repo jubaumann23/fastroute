@@ -466,6 +466,10 @@ pub struct RecoverTuning {
     pub rip_zone_vias: bool,
     /// pcbkit rip-up chains: items with an id above this may not be ripped (`Some(i32::MIN)`: no rip-up at all).
     pub rip_protect_above: Option<i32>,
+    /// pcbkit rip-up chains: search from the item's own connected set towards the rest of its net instead of the
+    /// other way round (signal nets only). The maze search is not complete: a connection it cannot find from one end
+    /// may be found from the other.
+    pub reverse: bool,
 }
 
 impl RecoverTuning {
@@ -542,6 +546,8 @@ fn route_connection_impl(
                 };
             }
         }
+        (connected_set, unconnected_set)
+    } else if tuning.is_some_and(|t| t.reverse) {
         (connected_set, unconnected_set)
     } else {
         (unconnected_set, connected_set)

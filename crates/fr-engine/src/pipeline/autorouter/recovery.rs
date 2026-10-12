@@ -260,7 +260,7 @@ impl BatchAutorouter {
             &mut ripped,
             None,
             attempt_cost_scale(attempt),
-            Some(&RecoverTuning { noise_pass_no: noise_pass_no(attempt), rip_zone_vias: true, rip_protect_above: None }),
+            Some(&RecoverTuning { noise_pass_no: noise_pass_no(attempt), rip_zone_vias: true, rip_protect_above: None, reverse: false }),
             Some(stop),
         );
         if forced.result.state != AutorouteAttemptState::Routed {

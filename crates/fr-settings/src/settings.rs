@@ -232,6 +232,13 @@ pub struct RouterSettings {
     /// pcbkit rip-up chains work cap: the chain stage ends once it has routed this many connections in all; a count,
     /// not a clock. 0/unset = no cap.
     pub chain_max_routes: Option<f64>,
+    /// pcbkit rip-up chains: a chain search that fails from the rest of the net towards the item is tried again from
+    /// the item's own end (the maze search is not symmetric). false/unset = one direction (the chain stage as before).
+    pub chain_reverse: Option<bool>,
+    /// pcbkit rip-up chains: a rip-up variant ends at the first ripped connection that cannot be re-routed (the chain
+    /// needs them all), and a variant that rips the same connections as an earlier one of its level is skipped.
+    /// false/unset = every variant re-routes all its ripped connections (the chain stage as before).
+    pub chain_prune: Option<bool>,
     /// pcbkit negotiated rip-up (not in Freerouting): percent added to the rip-up cost of a net for every autorouter
     /// pass that ended with that net still incomplete (a net that keeps losing its routes becomes costlier to rip
     /// again, so the passes stop flipping the same few nets back and forth). 0/unset = off (Java behaviour).
@@ -484,6 +491,8 @@ impl RouterSettings {
         copy(&mut self.recover_max_routes, &s.recover_max_routes, &mut n);
         copy(&mut self.chain_depth, &s.chain_depth, &mut n);
         copy(&mut self.chain_max_routes, &s.chain_max_routes, &mut n);
+        copy(&mut self.chain_reverse, &s.chain_reverse, &mut n);
+        copy(&mut self.chain_prune, &s.chain_prune, &mut n);
         copy(&mut self.ripup_history, &s.ripup_history, &mut n);
         copy(&mut self.strict_drc, &s.strict_drc, &mut n);
         copy(&mut self.job_timeout_string, &s.job_timeout_string, &mut n);
@@ -606,6 +615,16 @@ impl RouterSettings {
             Some(v) if v >= 1.0 && v.is_finite() => v.min(1e12) as u64,
             _ => 0,
         }
+    }
+
+    /// pcbkit rip-up chains, see [`RouterSettings::chain_reverse`].
+    pub fn is_chain_reverse(&self) -> bool {
+        self.chain_reverse == Some(true)
+    }
+
+    /// pcbkit rip-up chains, see [`RouterSettings::chain_prune`].
+    pub fn is_chain_prune(&self) -> bool {
+        self.chain_prune == Some(true)
     }
 
     /// pcbkit recovery work cap, see [`RouterSettings::recover_max_routes`]; 0 = no cap.

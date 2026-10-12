@@ -17,6 +17,17 @@
 //!
 //! Work is bounded by counts, never by a clock: variants per level, [`MAX_VICTIMS`], the depth, [`MAX_ROUNDS`] and
 //! `router.chain_max_routes` (every connection search counts one). No threads, no hash order: deterministic.
+//!
+//! A chain that failed is not tried again until another chain was kept: the board is the same, so it would fail the
+//! same way. Two opt-in refinements (pcbkit R9):
+//! - `router.chain_reverse`: the maze search is not complete (a connection it cannot find from the rest of the net
+//!   may be found from the item's end), so a depth-0 search that finds no way is repeated in reverse;
+//! - `router.chain_prune`: a variant ends at the first ripped connection that stays open after both of its ends were
+//!   tried (the chain needs them all), and a variant that rips the same connections as an earlier one of its level
+//!   is skipped. On cypress_small8 energy-2 this cuts the stage from about 2000 to 550-700 routes at the same result.
+//!
+//! With strict width and its last resort (`router.strict_last_resort`) the chains route without strict width: they
+//! run after the strict recovery and its loose last resort, and a chain held to the class width finds no way there.
 
 use fr_settings::RouterSettings;
 
@@ -61,6 +72,11 @@ struct Chain<'a> {
     params: &'a ConnectionRouterParams,
     stop: &'a StopToken,
     max_depth: u32,
+    /// `router.chain_reverse`: a search that finds no way is tried again from the item's own end.
+    reverse: bool,
+    /// `router.chain_prune`: a variant ends at its first ripped connection that cannot be re-routed, and a variant
+    /// that rips the same connections as an earlier one of the same level is skipped.
+    prune: bool,
     /// Items with a larger id were routed by this chain and may not be ripped.
     protect_above: i32,
     budget: &'a mut RouteBudget,
@@ -84,11 +100,11 @@ enum Rip {
 impl Rip {
     fn tuning(self, protect_above: i32) -> (i32, RecoverTuning) {
         match self {
-            Rip::None => (1, RecoverTuning { noise_pass_no: 1, rip_zone_vias: false, rip_protect_above: Some(i32::MIN) }),
+            Rip::None => (1, RecoverTuning { noise_pass_no: 1, rip_zone_vias: false, rip_protect_above: Some(i32::MIN), reverse: false }),
             Rip::Variant(v) => {
                 // pass number 1 switches the noise off; 4, 5, 7, ... switch it on with different seeds
                 let noise = if v == 0 { 1 } else { noise_pass_no(v - 1) };
-                (variant_cost_scale(v), RecoverTuning { noise_pass_no: noise, rip_zone_vias: true, rip_protect_above: Some(protect_above) })
+                (variant_cost_scale(v), RecoverTuning { noise_pass_no: noise, rip_zone_vias: true, rip_protect_above: Some(protect_above), reverse: false })
             }
         }
     }
@@ -123,11 +139,26 @@ impl BatchAutorouter {
             return report;
         }
         let params = self.params();
-        let necked = Self::necked_settings(settings);
+        // strict width with its last resort (W2): the chains come after the strict recovery and its loose last resort,
+        // so they are a last resort too and route without strict width (a chain at strict width is cut off where the
+        // class width does not fit, which is why these connections are still open)
+        let necked = if settings.is_strict_width() && settings.is_strict_last_resort() {
+            let mut loose = settings.clone();
+            loose.strict_width = None;
+            Self::necked_settings(&loose)
+        } else {
+            Self::necked_settings(settings)
+        };
         let mut budget = RouteBudget::new(settings.get_chain_max_routes());
+        // the number of kept chains when an item's chain last failed: the board is unchanged until the next kept chain,
+        // and the search is deterministic, so a chain that failed on it would fail again (and only cost routes)
+        let mut failed_at: std::collections::HashMap<i32, u32> = std::collections::HashMap::new();
         for _round in 0..MAX_ROUNDS {
             let mut progress = false;
             for id in open_ids(board) {
+                if failed_at.get(&id.0) == Some(&report.chains_kept) {
+                    continue;
+                }
                 if ctx.stop.is_stop_requested() || report.open_after - ignored <= 0 || budget.exhausted() {
                     break;
                 }
@@ -138,12 +169,13 @@ impl BatchAutorouter {
                 report.chains_tried += 1;
                 let mut trial = board.clone_for_worker();
                 let protect_above = IdGenerator::max_generated_id(&trial.communication.id_generator);
-                let mut chain = Chain { settings: &necked, params: &params, stop: &ctx.stop, max_depth, protect_above, budget: &mut budget, capped: false, no_way: 0, too_many: 0, unsettled: 0 };
+                let mut chain = Chain { settings: &necked, params: &params, stop: &ctx.stop, max_depth, reverse: settings.is_chain_reverse(), prune: settings.is_chain_prune(), protect_above, budget: &mut budget, capped: false, no_way: 0, too_many: 0, unsettled: 0 };
                 let kept = self.chain_route(&mut trial, &mut chain, id, 0);
                 report.no_way += chain.no_way;
                 report.too_many += chain.too_many;
                 report.unsettled += chain.unsettled;
                 if !kept {
+                    failed_at.insert(id.0, report.chains_kept);
                     continue;
                 }
                 let option = if self.remove_unconnected_vias { StopConnectionOption::None } else { StopConnectionOption::FanoutVia };
@@ -156,6 +188,8 @@ impl BatchAutorouter {
                     report.chains_kept += 1;
                     report.open_after = after.incomplete_count;
                     progress = true;
+                } else {
+                    failed_at.insert(id.0, report.chains_kept);
                 }
             }
             if !progress || budget.exhausted() || ctx.stop.is_stop_requested() {
@@ -187,7 +221,7 @@ impl BatchAutorouter {
         }
         let open0 = incomplete_count(board, None);
         // 1. alone, ripping nothing
-        if let Some(t) = self.chain_search(board, chain, id, Rip::None) {
+        if let Some(t) = self.chain_search(board, chain, id, Rip::None, depth) {
             if incomplete_count(&t, None) < open0 {
                 *board = t;
                 return true;
@@ -199,11 +233,14 @@ impl BatchAutorouter {
         // 2. rip-up variants, each judged with its ripped connections re-routed
         let before: Vec<ItemId> = open_ids(board);
         let variants = if depth == 0 { VARIANTS_TOP } else { VARIANTS_DEEP };
+        // `router.chain_prune`: the victim sets of the variants tried so far (a variant that rips the same
+        // connections as an earlier, failed one is not re-routed again)
+        let mut tried_victims: Vec<Vec<ItemId>> = Vec::new();
         for v in 0..variants {
             if chain.stop.is_stop_requested() || chain.budget.exhausted() {
                 break;
             }
-            let Some(mut t) = self.chain_search(board, chain, id, Rip::Variant(v)) else {
+            let Some(mut t) = self.chain_search(board, chain, id, Rip::Variant(v), depth) else {
                 // only the expansion cap or the budget stop a search early; costs cannot open a way that is not there
                 chain.no_way += 1;
                 if chain.capped {
@@ -222,11 +259,27 @@ impl BatchAutorouter {
             }
             let mut victims: Vec<ItemId> = open_ids(&t).into_iter().filter(|v| !before.contains(v)).collect();
             victims.sort_by_key(|&vid| t.get_item(vid).map(|k| (t.item(k).net_number(0), vid.0)).unwrap_or((i32::MAX, vid.0)));
-            for vid in victims {
+            if chain.prune {
+                if tried_victims.contains(&victims) {
+                    chain.unsettled += 1;
+                    continue;
+                }
+                tried_victims.push(victims.clone());
+            }
+            let net_of = |b: &RoutingBoard, vid: ItemId| b.get_item(vid).map(|k| b.item(k).net_number(0));
+            for (i, &vid) in victims.iter().enumerate() {
                 if chain.stop.is_stop_requested() || chain.budget.exhausted() {
                     break;
                 }
                 self.chain_route(&mut t, chain, vid, depth + 1);
+                // `router.chain_prune`: every ripped connection has to be re-routed for the open count to drop, so a
+                // net still open after the last of its items (both ends of a ripped connection are tried: the search
+                // is not symmetric) ends this variant
+                let net = net_of(&t, vid);
+                let last_of_net = victims.get(i + 1).map_or(true, |&next| net_of(&t, next) != net);
+                if chain.prune && last_of_net && victims[..=i].iter().any(|&v| net_of(&t, v) == net && still_open(&t, v)) {
+                    break;
+                }
             }
             if incomplete_count(&t, None) < open0 {
                 *board = t;
@@ -239,7 +292,19 @@ impl BatchAutorouter {
 
     /// One connection search for item `id` on a copy of `board`: the routed copy, or `None` (then `chain.capped` tells a
     /// search stopped by the expansion cap or the spent budget from one that ran to the end).
-    fn chain_search(&self, board: &RoutingBoard, chain: &mut Chain<'_>, id: ItemId, rip: Rip) -> Option<RoutingBoard> {
+    fn chain_search(&self, board: &RoutingBoard, chain: &mut Chain<'_>, id: ItemId, rip: Rip, depth: u32) -> Option<RoutingBoard> {
+        let found = self.chain_search_dir(board, chain, id, rip, false);
+        // `router.chain_reverse`, only for the open connection itself (depth 0; a ripped neighbour that fails is left
+        // to its own rip-up): the maze search is not complete, so a search that finds no way from the rest of the net
+        // is tried again from the item's own end
+        if found.is_some() || chain.capped || !chain.reverse || depth > 0 {
+            return found;
+        }
+        self.chain_search_dir(board, chain, id, rip, true)
+    }
+
+    /// [`Self::chain_search`] in one direction (`reverse`: from the item's connected set to the rest of its net).
+    fn chain_search_dir(&self, board: &RoutingBoard, chain: &mut Chain<'_>, id: ItemId, rip: Rip, reverse: bool) -> Option<RoutingBoard> {
         chain.capped = false;
         if !chain.budget.take() {
             chain.capped = true;
@@ -250,7 +315,8 @@ impl BatchAutorouter {
             return None;
         }
         let net = board.item(key).net_number(0);
-        let (scale, tuning) = rip.tuning(chain.protect_above);
+        let (scale, mut tuning) = rip.tuning(chain.protect_above);
+        tuning.reverse = reverse;
         let mut t = board.clone_for_worker();
         t.start_marking_changed_area();
         let mut ripped = ItemSet::new();
