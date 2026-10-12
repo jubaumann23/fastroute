@@ -446,7 +446,7 @@ impl TraceTightener {
             let mut translate_dist = (SQRT2 - 1.0) * self.current_half_width as f64;
             let prev_corner_dist = translate_line.signed_distance(&current_prev_end_corner.to_float()).abs();
             let other_dist = translate_line.signed_distance(found.other_trace_corner_approx.as_ref().unwrap()).abs();
-            // pcbkit R6: a cut against another width or one that consumes a whole contact jog re-creates itself
+            // pcbkit R8: a cut against another width or one that consumes a whole contact jog re-creates itself
             if is_unstable_chamfer(board.tighten_stable_chamfer, translate_dist, prev_corner_dist, other_dist, self.current_half_width, found.other_half_width) {
                 board.work_stats.record_negligible_move();
                 return None;
@@ -510,7 +510,7 @@ pub(crate) struct ContactFound {
     pub acute_angle: bool,
     pub bend: bool,
     pub other_trace_corner_approx: Option<FloatPoint>,
-    /// pcbkit R6: the half width of the contact trace found.
+    /// pcbkit R8: the half width of the contact trace found.
     pub other_half_width: i32,
     pub other_trace_line: Option<TLine>,
     pub other_prev_trace_line: Option<TLine>,

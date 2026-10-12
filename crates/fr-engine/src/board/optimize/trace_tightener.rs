@@ -701,7 +701,7 @@ fn point_to_segment_distance(p: &FloatPoint, a: &FloatPoint, b: &FloatPoint) -> 
     p.distance(&FloatPoint::new(a.x + t * dx, a.y + t * dy))
 }
 
-/// pcbkit R6: true if the end-corner smoothing of an acute angle should not be applied
+/// pcbkit R8: true if the end-corner smoothing of an acute angle should not be applied
 /// (`router.tighten_stable_chamfer` on, `on`) because the cut re-creates itself:
 /// - the contact trace has another half width (`other_half_width` vs `half_width`): the pieces `split_traces` cuts
 ///   off it never merge with the cut trace, so each round leaves stubs (a neck-down leg beside its full-width twin

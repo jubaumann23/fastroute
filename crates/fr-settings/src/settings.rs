@@ -201,7 +201,7 @@ pub struct RouterSettings {
     /// trace by less than this many micrometres (and removes no corner) is not applied, so a
     /// pull-tight pass converges instead of creeping. 0/unset = every change applied (Java behaviour).
     pub tighten_min_move_um: Option<f64>,
-    /// pcbkit R6 (not in Freerouting): end-corner smoothing cuts an acute angle only if the cut cannot re-create
+    /// pcbkit R8 (not in Freerouting): end-corner smoothing cuts an acute angle only if the cut cannot re-create
     /// itself: not against a contact trace of another width (its split pieces never merge with the cut trace) and
     /// not when the chamfer would consume the whole adjacent segment of the contact (a jog shorter than the
     /// chamfer). At a hairpin (two legs of a net along each other) such cuts moved the tip one step per round and

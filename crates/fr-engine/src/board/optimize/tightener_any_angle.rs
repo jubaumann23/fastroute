@@ -749,7 +749,7 @@ impl TraceTightener {
         let mut translate_dist = (SQRT2 - 1.0) * self.current_half_width as f64;
         let prev_corner_dist = translate_line.signed_distance(&current_prev_end_corner.to_float()).abs();
         let other_dist = translate_line.signed_distance(other_trace_corner_approx).abs();
-        // pcbkit R6: a cut against another width or one that consumes a whole contact jog re-creates itself
+        // pcbkit R8: a cut against another width or one that consumes a whole contact jog re-creates itself
         if is_unstable_chamfer(board.tighten_stable_chamfer, translate_dist, prev_corner_dist, other_dist, self.current_half_width, other_half_width) {
             board.work_stats.record_negligible_move();
             return None;
