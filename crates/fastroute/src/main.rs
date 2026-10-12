@@ -334,7 +334,7 @@ static STEP: Mutex<String> = Mutex::new(String::new());
 /// After a stop request: says every half minute that the run is still finishing its current
 /// step, so that a long step on a big board is not taken for a hang.
 fn stop_watchdog() {
-    std::thread::spawn(|| {
+    let spawned = std::thread::Builder::new().name("fastroute-watchdog".into()).spawn(|| {
         let t = Instant::now();
         loop {
             std::thread::sleep(Duration::from_secs(30));
@@ -349,6 +349,9 @@ fn stop_watchdog() {
             );
         }
     });
+    if let Err(e) = spawned {
+        log::warn!(target: "fastroute", "the stop watchdog thread could not be started: {e}");
+    }
 }
 
 /// Opens `url` in the default browser (best effort).
@@ -587,12 +590,15 @@ fn run() -> Result<(), String> {
     }
     if let Some(secs) = args.max_time {
         let stop = ctx.stop.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_secs_f64(secs));
-            log::warn!(target: "fastroute", "--max-time ({secs:.0} s) reached: finishing with the best result so far");
-            stop.request_stop();
-            stop_watchdog();
-        });
+        std::thread::Builder::new()
+            .name("fastroute-max-time".into())
+            .spawn(move || {
+                std::thread::sleep(Duration::from_secs_f64(secs));
+                log::warn!(target: "fastroute", "--max-time ({secs:.0} s) reached: finishing with the best result so far");
+                stop.request_stop();
+                stop_watchdog();
+            })
+            .map_err(|e| format!("--max-time: the timer thread could not be started: {e}"))?;
     }
     log::info!(
         target: "fastroute",
@@ -610,11 +616,14 @@ fn run() -> Result<(), String> {
         if let Some(secs) = settings.job_timeout_string.as_deref().and_then(fr_settings::parse_timespan_string) {
             let secs = secs.min(24 * 3600);
             let stop = ctx.stop.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_secs(secs.max(0) as u64));
-                log::warn!("job timeout ({secs} s) reached, stopping");
-                stop.request_stop();
-            });
+            std::thread::Builder::new()
+                .name("fastroute-job-timeout".into())
+                .spawn(move || {
+                    std::thread::sleep(Duration::from_secs(secs.max(0) as u64));
+                    log::warn!("job timeout ({secs} s) reached, stopping");
+                    stop.request_stop();
+                })
+                .map_err(|e| format!("job timeout: the timer thread could not be started: {e}"))?;
         }
     }
 

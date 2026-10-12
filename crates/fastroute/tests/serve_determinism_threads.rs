@@ -37,6 +37,12 @@ fn settings() -> Value {
 /// One server process (under `prlimit --as=limit` if given): hello, load, route from scratch,
 /// export. Returns the SES text and the server's peak virtual size in kB.
 fn route_ses(limit: Option<u64>) -> (String, u64) {
+    route_ses_with(limit, false, &dsn()).0
+}
+
+/// As `route_ses`; `no_pool` forces every thread-pool build to fail (pcbkit P1-P3 test hook) and
+/// also returns the server's stderr.
+fn route_ses_with(limit: Option<u64>, no_pool: bool, dsn_file: &std::path::Path) -> ((String, u64), String) {
     let mut cmd = match limit {
         Some(bytes) => {
             let mut c = Command::new("prlimit");
@@ -45,7 +51,16 @@ fn route_ses(limit: Option<u64>) -> (String, u64) {
         }
         None => Command::new(BIN),
     };
-    let mut child = cmd.arg("serve").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().expect("spawn fastroute serve");
+    if no_pool {
+        cmd.env("FASTROUTE_TEST_NO_POOL", "1");
+    }
+    let mut child = cmd.arg("serve").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().expect("spawn fastroute serve");
+    let mut stderr = child.stderr.take().unwrap();
+    let err_reader = std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = std::io::Read::read_to_string(&mut stderr, &mut text);
+        text
+    });
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap());
     let mut call = |id: i64, op: &str, args: Value| -> Value {
@@ -58,14 +73,14 @@ fn route_ses(limit: Option<u64>) -> (String, u64) {
         r["result"].clone()
     };
     call(1, "hello", json!({ "protocol": "1.0.0", "client": "serve_determinism_threads", "threads": THREADS, "settings": settings() }));
-    call(2, "load", json!({ "dsn": { "path": dsn().canonicalize().unwrap().to_str().unwrap() } }));
+    call(2, "load", json!({ "dsn": { "path": dsn_file.canonicalize().unwrap().to_str().unwrap() } }));
     call(3, "route", json!({ "seed": 0, "from": "scratch" }));
     let ses = call(4, "export", json!({ "format": "ses" }))["text"].as_str().unwrap().to_string();
     let vm_peak = vm_peak_kb(child.id());
     call(5, "shutdown", json!({}));
     drop(stdin);
     assert!(child.wait().unwrap().success());
-    (ses, vm_peak)
+    ((ses, vm_peak), err_reader.join().unwrap())
 }
 
 /// `VmPeak` of `pid` (under prlimit: prlimit execs the server, same pid); 0 where unknown.
@@ -100,4 +115,28 @@ fn an_address_space_limit_does_not_change_the_ses() {
         let (limited, _) = route_ses(Some(ADDRESS_SPACE));
         assert!(limited == free, "the route under prlimit --as={ADDRESS_SPACE} differs");
     }
+}
+
+/// P1-P3: with every thread-pool build failing, the autorouter pass, the multi-start and the
+/// optimizer run on the calling thread and the SES is byte-identical to the pooled run.
+#[test]
+fn a_failing_thread_pool_does_not_change_the_ses() {
+    let (pooled, _) = route_ses(None);
+    let ((fallback, _), stderr) = route_ses_with(None, true, &dsn());
+    assert!(pooled == fallback, "the route without any thread pool differs from the pooled route");
+    eprintln!("stderr of the no-pool run:\n{stderr}");
+    assert!(!stderr.contains("panicked"), "the no-pool run panicked:\n{stderr}");
+}
+
+/// The multi-start needs an incomplete board: the blocked board leaves a connection unrouted, so the
+/// variants run; without a pool they run one after the other and the chosen board is the same.
+#[test]
+fn a_failing_thread_pool_does_not_change_the_multi_start_choice() {
+    let blocked = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fr-serve/tests/data/blocked.dsn");
+    let ((pooled, _), pooled_err) = route_ses_with(None, false, &blocked);
+    let ((fallback, _), err) = route_ses_with(None, true, &blocked);
+    assert!(pooled_err.contains("Multi-start"), "the blocked board did not run the multi-start:\n{pooled_err}");
+    assert!(err.contains("multi-start thread pool could not be built"), "no multi-start fallback in:\n{err}");
+    assert!(pooled == fallback, "the multi-start without a pool chose another board");
+    assert!(!err.contains("panicked"), "{err}");
 }

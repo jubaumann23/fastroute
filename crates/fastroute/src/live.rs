@@ -72,12 +72,18 @@ impl Live {
         let url = format!("http://{}", listener.local_addr().map_err(|e| e.to_string())?);
         let live = Arc::new(Live { start, stop, state: Mutex::new(State::default()) });
         let l = live.clone();
-        std::thread::spawn(move || {
-            for stream in listener.incoming().flatten() {
-                let l = l.clone();
-                std::thread::spawn(move || l.serve(stream));
-            }
-        });
+        std::thread::Builder::new()
+            .name("fastroute-live".into())
+            .spawn(move || {
+                for stream in listener.incoming().flatten() {
+                    let l = l.clone();
+                    // a connection that cannot get a thread is dropped (the viewer reconnects)
+                    if let Err(e) = std::thread::Builder::new().name("fastroute-live-conn".into()).spawn(move || l.serve(stream)) {
+                        log::warn!("--live: connection thread could not be started: {e}");
+                    }
+                }
+            })
+            .map_err(|e| format!("--live: the server thread could not be started: {e}"))?;
         Ok((live, url))
     }
 
