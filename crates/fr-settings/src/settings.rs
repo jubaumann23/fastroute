@@ -215,6 +215,10 @@ pub struct RouterSettings {
     /// attempts each connection that is still open gets (each attempt is kept only if it leaves fewer
     /// connections open and no new clearance violation); a work count. 0/unset = off (Java behaviour).
     pub recover_attempts: Option<f64>,
+    /// pcbkit recovery work cap: the recovery stage ends once its attempts have routed this many connections in all
+    /// (the forced connection and the re-routing sweeps each count one), so a placement where nothing can be recovered
+    /// costs a bounded amount of work; a count, not a clock. 0/unset = no cap.
+    pub recover_max_routes: Option<f64>,
     /// pcbkit negotiated rip-up (not in Freerouting): percent added to the rip-up cost of a net for every autorouter
     /// pass that ended with that net still incomplete (a net that keeps losing its routes becomes costlier to rip
     /// again, so the passes stop flipping the same few nets back and forth). 0/unset = off (Java behaviour).
@@ -463,6 +467,7 @@ impl RouterSettings {
         copy(&mut self.neck_radius_um, &s.neck_radius_um, &mut n);
         copy(&mut self.strict_last_resort, &s.strict_last_resort, &mut n);
         copy(&mut self.recover_attempts, &s.recover_attempts, &mut n);
+        copy(&mut self.recover_max_routes, &s.recover_max_routes, &mut n);
         copy(&mut self.ripup_history, &s.ripup_history, &mut n);
         copy(&mut self.strict_drc, &s.strict_drc, &mut n);
         copy(&mut self.job_timeout_string, &s.job_timeout_string, &mut n);
@@ -567,6 +572,14 @@ impl RouterSettings {
     pub fn get_ripup_history_pct(&self) -> u32 {
         match self.ripup_history {
             Some(v) if v >= 1.0 && v.is_finite() => v.min(10_000.0) as u32,
+            _ => 0,
+        }
+    }
+
+    /// pcbkit recovery work cap, see [`RouterSettings::recover_max_routes`]; 0 = no cap.
+    pub fn get_recover_max_routes(&self) -> u64 {
+        match self.recover_max_routes {
+            Some(v) if v >= 1.0 && v.is_finite() => v.min(1e12) as u64,
             _ => 0,
         }
     }
