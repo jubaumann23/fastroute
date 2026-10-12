@@ -1,0 +1,62 @@
+(pcb chain_block.dsn
+  (parser
+    (string_quote ")
+    (space_in_quoted_tokens on)
+    (host_cad "KiCad's Pcbnew")
+    (host_version "10.0.5")
+  )
+  (resolution um 10)
+  (unit um)
+  (structure
+    (layer F.Cu
+      (type signal)
+      (property
+        (index 0)
+      )
+    )
+    (boundary
+      (path pcb 0  0 0  20000 0  20000 30000  0 30000  0 0)
+    )
+    (rule
+      (width 152.4)
+      (clearance 152.4)
+    )
+  )
+  (placement
+    (component "TP"
+      (place TA1 10000 8000 front 0)
+      (place TA2 10000 24324 front 0)
+      (place TB1 5676 15000 front 0)
+      (place TB2 14324 15000 front 0)
+    )
+  )
+  (library
+    (image "TP"
+      (pin Pad800 1 0 0)
+    )
+    (padstack Pad800
+      (shape (polygon F.Cu 0  -400 400  400 400  400 -400  -400 -400))
+      (attach off)
+    )
+  )
+  (network
+    (net NA
+      (pins TA1-1 TA2-1)
+    )
+    (net NB
+      (pins TB1-1 TB2-1)
+    )
+    (net GUARD
+    )
+    (class kicad_default NA NB GUARD
+      (rule
+        (width 152.4)
+        (clearance 152.4)
+      )
+    )
+  )
+  (wiring
+    (wire (path F.Cu 152.4  5000 5000  15000 5000  15000 25000  5000 25000  5000 5000)(net GUARD)(type fix))
+    (wire (path F.Cu 152.4  5676 15000  14324 15000)(net NB))
+  )
+)

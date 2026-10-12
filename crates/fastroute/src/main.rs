@@ -277,6 +277,8 @@ common --router.* settings (numbers, true/false, comma-separated lists):
   --router.ripup_history=P                  add P % to the rip-up cost of a net for each pass that ended with it incomplete (0 = off)
   --router.recover_attempts=N               after routing, N targeted rip-up-and-reroute attempts per open connection (0 = off)
   --router.recover_max_routes=N             end the recovery stage after its attempts routed N connections in all (0 = no cap)
+  --router.chain_depth=D                    after recovery, rip-up chains: an open connection rips at most 3 others, re-routed recursively to depth D (0 = off)
+  --router.chain_max_routes=N               end the chain stage after it routed N connections in all (0 = no cap)
   --router.max_tighten_rounds=N             stop one pull-tight pass after N rounds (0 = no cap)
   --router.tighten_min_move_um=U            pull-tight: do not apply a change that moves the trace
                                             by less than U um and removes no corner (0 = off)

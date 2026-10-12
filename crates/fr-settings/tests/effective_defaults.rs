@@ -43,6 +43,8 @@ fn expected_defaults() -> RouterSettings {
         strict_last_resort: None,
         recover_attempts: None,
         recover_max_routes: None,
+        chain_depth: None,
+        chain_max_routes: None,
         ripup_history: None,
         strict_drc: Some(false),
         job_timeout_string: Some("12:00:00".into()),

@@ -57,23 +57,23 @@ pub struct RecoverReport {
 
 /// The route count of the stage against `router.recover_max_routes` (0 = no cap).
 #[derive(Clone, Copy, Debug)]
-struct RouteBudget {
+pub(super) struct RouteBudget {
     cap: u64,
-    used: u64,
+    pub(super) used: u64,
 }
 
 impl RouteBudget {
-    fn new(cap: u64) -> Self {
+    pub(super) fn new(cap: u64) -> Self {
         RouteBudget { cap, used: 0 }
     }
 
     /// True when no further route may start.
-    fn exhausted(&self) -> bool {
+    pub(super) fn exhausted(&self) -> bool {
         self.cap > 0 && self.used >= self.cap
     }
 
     /// Counts one route; false (and nothing counted) when the budget is exhausted.
-    fn take(&mut self) -> bool {
+    pub(super) fn take(&mut self) -> bool {
         if self.exhausted() {
             return false;
         }
@@ -83,7 +83,7 @@ impl RouteBudget {
 }
 
 /// The `n`-th rip-up noise number: 4, 5, 7, 8, 10, ... (`ripup_pass_no >= 4 && % 3 != 0` switches the noise on).
-fn noise_pass_no(n: u32) -> i32 {
+pub(super) fn noise_pass_no(n: u32) -> i32 {
     (4..).filter(|v| v % 3 != 0).nth(n as usize).expect("unbounded iterator")
 }
 
@@ -191,7 +191,7 @@ impl BatchAutorouter {
     }
 
     /// `settings`, with the neck-down retry width set to the minimum trace width unless one is set.
-    fn necked_settings(settings: &RouterSettings) -> RouterSettings {
+    pub(super) fn necked_settings(settings: &RouterSettings) -> RouterSettings {
         let mut s = settings.clone();
         let min = settings.get_min_trace_width_um();
         if s.get_neck_width_um() <= 0.0 && min > 0.0 {
@@ -231,7 +231,7 @@ impl BatchAutorouter {
             &mut ripped,
             None,
             attempt_cost_scale(attempt),
-            Some(&RecoverTuning { noise_pass_no: noise_pass_no(attempt), rip_zone_vias: true }),
+            Some(&RecoverTuning { noise_pass_no: noise_pass_no(attempt), rip_zone_vias: true, rip_protect_above: None }),
             Some(stop),
         );
         if forced.result.state != AutorouteAttemptState::Routed {

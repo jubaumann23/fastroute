@@ -219,6 +219,13 @@ pub struct RouterSettings {
     /// (the forced connection and the re-routing sweeps each count one), so a placement where nothing can be recovered
     /// costs a bounded amount of work; a count, not a clock. 0/unset = no cap.
     pub recover_max_routes: Option<f64>,
+    /// pcbkit rip-up chains (not in Freerouting): after recovery, each connection still open may rip at most three
+    /// connections, which are then re-routed (themselves ripping, recursively) down to this depth; a chain is kept only
+    /// if it leaves fewer connections open and no new clearance violation. 0/unset = off (Java behaviour).
+    pub chain_depth: Option<f64>,
+    /// pcbkit rip-up chains work cap: the chain stage ends once it has routed this many connections in all; a count,
+    /// not a clock. 0/unset = no cap.
+    pub chain_max_routes: Option<f64>,
     /// pcbkit negotiated rip-up (not in Freerouting): percent added to the rip-up cost of a net for every autorouter
     /// pass that ended with that net still incomplete (a net that keeps losing its routes becomes costlier to rip
     /// again, so the passes stop flipping the same few nets back and forth). 0/unset = off (Java behaviour).
@@ -468,6 +475,8 @@ impl RouterSettings {
         copy(&mut self.strict_last_resort, &s.strict_last_resort, &mut n);
         copy(&mut self.recover_attempts, &s.recover_attempts, &mut n);
         copy(&mut self.recover_max_routes, &s.recover_max_routes, &mut n);
+        copy(&mut self.chain_depth, &s.chain_depth, &mut n);
+        copy(&mut self.chain_max_routes, &s.chain_max_routes, &mut n);
         copy(&mut self.ripup_history, &s.ripup_history, &mut n);
         copy(&mut self.strict_drc, &s.strict_drc, &mut n);
         copy(&mut self.job_timeout_string, &s.job_timeout_string, &mut n);
@@ -572,6 +581,22 @@ impl RouterSettings {
     pub fn get_ripup_history_pct(&self) -> u32 {
         match self.ripup_history {
             Some(v) if v >= 1.0 && v.is_finite() => v.min(10_000.0) as u32,
+            _ => 0,
+        }
+    }
+
+    /// pcbkit rip-up chains, see [`RouterSettings::chain_depth`]; 0 = off, at most 3.
+    pub fn get_chain_depth(&self) -> u32 {
+        match self.chain_depth {
+            Some(v) if v >= 1.0 && v.is_finite() => v.min(3.0) as u32,
+            _ => 0,
+        }
+    }
+
+    /// pcbkit rip-up chains work cap, see [`RouterSettings::chain_max_routes`]; 0 = no cap.
+    pub fn get_chain_max_routes(&self) -> u64 {
+        match self.chain_max_routes {
+            Some(v) if v >= 1.0 && v.is_finite() => v.min(1e12) as u64,
             _ => 0,
         }
     }

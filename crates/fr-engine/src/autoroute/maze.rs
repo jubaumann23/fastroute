@@ -1224,6 +1224,9 @@ impl<'a> MazeSearchEngine<'a> {
         if !self.board.item(obstacle_item).is_routable() {
             return -1;
         }
+        if ctrl.rip_protect_above.is_some_and(|t| self.board.item(obstacle_item).id().0 > t) {
+            return -1; // pcbkit rip-up chains: the chain's own routes stay
+        }
         if door_is_small && !self.enter_through_small_door(list_element, obstacle_item) {
             return -1;
         }
