@@ -5,7 +5,7 @@ use fr_settings::{ExpansionCostFactor, RouterSettings};
 
 use crate::board::{AutorouteAttemptState, ItemKey, RoutingBoard};
 use crate::ids::{ClearanceClassNo, LayerNo, NetNo};
-use crate::rules::ViaRule;
+use crate::rules::{ViaRule, CLEARANCE_SAFETY_MARGIN};
 
 /// Java `AutorouteAttemptResult`: the state and a detail message.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -270,7 +270,8 @@ impl AutorouteControl {
             self.trace_half_width[iu] =
                 if net_number > 0 { rules.get_trace_half_width(net_number, i) } else { rules.get_trace_half_width(1, i) };
             self.compensated_trace_half_width[iu] = self.trace_half_width[iu]
-                .wrapping_add(rules.clearance_matrix.clearance_compensation_value(self.trace_clearance_class, i));
+                .wrapping_add(rules.clearance_matrix.clearance_compensation_value(self.trace_clearance_class, i))
+                .wrapping_add(strict_planning_margin(self.strict_width));
             if let Some(nc) = net_class {
                 if !nc.is_active_routing_layer(i) {
                     self.layer_active[iu] = false;
@@ -407,6 +408,18 @@ fn um_to_units(board: &RoutingBoard, um: f64) -> i32 {
     )) as i32
 }
 
+/// pcbkit W4: extra half width the maze plans with under strict width. The inserter's shove check keeps
+/// [`CLEARANCE_SAFETY_MARGIN`] beyond the clearance (`BasicBoard::clearance_value`), the maze only the clearance plus
+/// `TRACE_WIDTH_TOLERANCE`, so a path that hugs an obstacle is found but cannot be inserted at the class width. The
+/// defaults hide that with a micro neck-down anywhere; strict width forbids that neck, so it plans with the margin.
+pub(crate) fn strict_planning_margin(strict_width: bool) -> i32 {
+    if strict_width {
+        CLEARANCE_SAFETY_MARGIN
+    } else {
+        0
+    }
+}
+
 /// pcbkit W2: a pad is pitch-limited for a track when a track of `full_width` centred on it would come closer than
 /// the clearance to another-net copper of its own part: `2 * (gap - clearance) < full_width + margin`, `gap` being the
 /// distance from the pad centre to the nearest other-net pad copper. Mirrors the toolkit's `_neckdown.fit_width`, so a
@@ -440,6 +453,12 @@ mod pcbkit_expansion_cap_tests {
 #[cfg(test)]
 mod pcbkit_min_width_tests {
     use super::{clamp_half_width_to_min, neck_within_radius, pad_pitch_limited};
+
+    #[test]
+    fn strict_width_plans_with_the_inserters_safety_margin() {
+        assert_eq!(super::strict_planning_margin(false), 0);
+        assert_eq!(super::strict_planning_margin(true), crate::rules::CLEARANCE_SAFETY_MARGIN);
+    }
 
     #[test]
     fn a_pad_is_pitch_limited_when_the_track_would_break_the_clearance() {

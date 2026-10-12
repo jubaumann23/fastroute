@@ -464,7 +464,7 @@ fn within_neck_reach(board: &RoutingBoard, ctrl: &AutorouteControl, pins: &[Opti
 
 /// pcbkit W2: true if a track of the class width centred on `pin` would come closer than the clearance to another-net
 /// pad of the same part on `layer` (the toolkit's `fit_width`); true for a pin outside any part (nothing to compare).
-fn pin_is_pitch_limited(board: &RoutingBoard, ctrl: &AutorouteControl, pin: ItemKey, layer: LayerNo) -> bool {
+pub(super) fn pin_is_pitch_limited(board: &RoutingBoard, ctrl: &AutorouteControl, pin: ItemKey, layer: LayerNo) -> bool {
     let component = board.item(pin).component_no();
     if component <= 0 {
         return true;
