@@ -279,6 +279,8 @@ common --router.* settings (numbers, true/false, comma-separated lists):
   --router.max_tighten_rounds=N             stop one pull-tight pass after N rounds (0 = no cap)
   --router.tighten_min_move_um=U            pull-tight: do not apply a change that moves the trace
                                             by less than U um and removes no corner (0 = off)
+  --router.tighten_skip_jog_chamfer=true|false  pull-tight: do not cut an acute-angle chamfer that would
+                                            consume a whole contact jog (hairpin zipper)
   --router.strict_width=true|false          never route below the net-class width, except in a neck-down
   --router.neck_radius_um=R                 with strict_width: neck-downs only within R um of a same-net pad
   --router.strict_last_resort=true|false    with strict_width + recover_attempts: a last recovery attempt may neck

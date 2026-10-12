@@ -201,6 +201,12 @@ pub struct RouterSettings {
     /// trace by less than this many micrometres (and removes no corner) is not applied, so a
     /// pull-tight pass converges instead of creeping. 0/unset = every change applied (Java behaviour).
     pub tighten_min_move_um: Option<f64>,
+    /// pcbkit R6 (not in Freerouting): end-corner smoothing does not cut an acute angle whose chamfer would
+    /// consume the whole adjacent segment of the contact trace (a jog shorter than the chamfer). At the tip of a
+    /// hairpin (two legs of a net running along each other) such a cut lands at the jog's far end and re-creates
+    /// the same jog one step on, so the tip moved one jog length per round: a pull-tight pass of hundreds of rounds.
+    /// Unset/false = Java behaviour.
+    pub tighten_skip_jog_chamfer: Option<bool>,
     /// pcbkit W1 (not in Freerouting): strict width. A track is never routed below its net-class width except
     /// inside a neck-down: within `neck_radius_um` of the copper of a pad of its own net, at no less than
     /// `min_trace_width_um`. The whole-connection necked retry (`neck_width_um`) is off. Unset/false = Java behaviour.
@@ -459,6 +465,7 @@ impl RouterSettings {
         copy(&mut self.max_connection_expansions, &s.max_connection_expansions, &mut n);
         copy(&mut self.max_tighten_rounds, &s.max_tighten_rounds, &mut n);
         copy(&mut self.tighten_min_move_um, &s.tighten_min_move_um, &mut n);
+        copy(&mut self.tighten_skip_jog_chamfer, &s.tighten_skip_jog_chamfer, &mut n);
         copy(&mut self.strict_width, &s.strict_width, &mut n);
         copy(&mut self.neck_radius_um, &s.neck_radius_um, &mut n);
         copy(&mut self.strict_last_resort, &s.strict_last_resort, &mut n);
@@ -593,6 +600,11 @@ impl RouterSettings {
             Some(v) if v > 0.0 && v.is_finite() => v,
             _ => 0.0,
         }
+    }
+
+    /// pcbkit R6, see [`RouterSettings::tighten_skip_jog_chamfer`].
+    pub fn is_tighten_skip_jog_chamfer(&self) -> bool {
+        self.tighten_skip_jog_chamfer == Some(true)
     }
 
     /// pcbkit W1, see [`RouterSettings::strict_width`].

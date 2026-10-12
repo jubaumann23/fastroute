@@ -5,7 +5,7 @@ use fr_geom::{Direction, FloatPoint, IntPoint, Line, Point, Polyline, Side, Sign
 
 use super::super::item::ItemKey;
 use super::super::routing_board::{jmax, jmin, RoutingBoard};
-use super::trace_tightener::TraceTightener;
+use super::trace_tightener::{is_jog_chamfer, TraceTightener};
 use super::tracked::{TLine, TPolyline};
 
 impl TraceTightener {
@@ -445,6 +445,11 @@ impl TraceTightener {
             let mut translate_dist = (SQRT2 - 1.0) * self.current_half_width as f64;
             let prev_corner_dist = translate_line.signed_distance(&current_prev_end_corner.to_float()).abs();
             let other_dist = translate_line.signed_distance(found.other_trace_corner_approx.as_ref().unwrap()).abs();
+            // pcbkit R6: a cut that would consume the whole contact jog only moves a hairpin tip one jog on
+            if is_jog_chamfer(board.tighten_skip_jog_chamfer, translate_dist, prev_corner_dist, other_dist) {
+                board.work_stats.record_negligible_move();
+                return None;
+            }
             translate_dist = jmin(translate_dist, prev_corner_dist);
             translate_dist = jmin(translate_dist, other_dist);
             if translate_dist >= 0.99 {
