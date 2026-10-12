@@ -383,15 +383,20 @@ impl BasicBoard {
         if !self.item(key).is_on_board() {
             return None;
         }
-        // splitting a trace that cannot be deleted would duplicate it
-        if self.is_deletion_forbidden(key) {
+        // splitting a trace that cannot be deleted would duplicate it (pcbkit F3: unless it is removed unchecked)
+        let forced = self.is_deletion_forbidden(key);
+        if forced && !self.may_split_fixed_trace(key) {
             return None;
         }
         let split_polylines = self.item(key).trace().tpolyline().split(line_index, new_end_line)?;
         if self.split_inside_drill_pad_prohibited(key, line_index, &new_end_line.line) {
             return None;
         }
-        self.remove_item(key);
+        if forced {
+            self.remove_item_unchecked(key);
+        } else {
+            self.remove_item(key);
+        }
         let item = self.item(key);
         let (layer, half_width, nets, cl, fixed) = (
             item.trace().layer,

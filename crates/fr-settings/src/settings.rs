@@ -239,6 +239,11 @@ pub struct RouterSettings {
     /// needs them all), and a variant that rips the same connections as an earlier one of its level is skipped.
     /// false/unset = every variant re-routes all its ripped connections (the chain stage as before).
     pub chain_prune: Option<bool>,
+    /// pcbkit F3: a via, pin or trace end of the net on the inside of a `(type fix)` trace splits that trace there (the
+    /// pieces stay fixed), so it is in contact. Freerouting never splits a fixed trace: such an item is not connected
+    /// in the contact model although the maze search reaches it, so the connection is "routed" and stays open in every
+    /// pass. false/unset = fixed traces are never split (Java behaviour).
+    pub split_fixed_traces: Option<bool>,
     /// pcbkit negotiated rip-up (not in Freerouting): percent added to the rip-up cost of a net for every autorouter
     /// pass that ended with that net still incomplete (a net that keeps losing its routes becomes costlier to rip
     /// again, so the passes stop flipping the same few nets back and forth). 0/unset = off (Java behaviour).
@@ -493,6 +498,7 @@ impl RouterSettings {
         copy(&mut self.chain_max_routes, &s.chain_max_routes, &mut n);
         copy(&mut self.chain_reverse, &s.chain_reverse, &mut n);
         copy(&mut self.chain_prune, &s.chain_prune, &mut n);
+        copy(&mut self.split_fixed_traces, &s.split_fixed_traces, &mut n);
         copy(&mut self.ripup_history, &s.ripup_history, &mut n);
         copy(&mut self.strict_drc, &s.strict_drc, &mut n);
         copy(&mut self.job_timeout_string, &s.job_timeout_string, &mut n);
@@ -625,6 +631,11 @@ impl RouterSettings {
     /// pcbkit rip-up chains, see [`RouterSettings::chain_prune`].
     pub fn is_chain_prune(&self) -> bool {
         self.chain_prune == Some(true)
+    }
+
+    /// pcbkit F3, see [`RouterSettings::split_fixed_traces`].
+    pub fn is_split_fixed_traces(&self) -> bool {
+        self.split_fixed_traces == Some(true)
     }
 
     /// pcbkit recovery work cap, see [`RouterSettings::recover_max_routes`]; 0 = no cap.

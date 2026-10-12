@@ -189,6 +189,14 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
         log::warn!("The optimizer algorithm is not supported; the default algorithm 'freerouting-optimizer' will be used instead.");
         settings.optimizer.algorithm = Some("freerouting-optimizer".to_string());
     }
+    // pcbkit F3 (router.split_fixed_traces, default off): contacts on the inside of fixed traces become trace ends
+    if ctx.enhancements && settings.is_split_fixed_traces() && !board.split_fixed_traces {
+        board.split_fixed_traces = true;
+        let n = board.split_fixed_traces_at_contacts();
+        if n > 0 {
+            log::info!("Split {n} fixed traces at the vias, pins and trace ends of their net on their inside.");
+        }
+    }
     let mut autorouter = BatchAutorouter::for_job(board, settings);
     // pcbkit hook H5: board-level order seed
     if board.order_seed.is_some() {
@@ -275,7 +283,8 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
 }
 
 /// pcbkit W3: strict width (with its last resort) still left connections open. Route the board `start` (as it was
-/// before the strict run) once more exactly as the defaults do (no strict width; batch loop, multi-start, recovery) and
+/// before the strict run) once more exactly as the defaults do (no strict width; batch loop, multi-start, recovery,
+/// rip-up chains, each under the same work caps) and
 /// keep that board if it has fewer open connections, or as many with fewer clearance violations. Strict width then
 /// never ends with more open connections than the defaults, and costs a second run only where it fell short.
 fn plain_fallback(start: RoutingBoard, board: &mut RoutingBoard, settings: &RouterSettings, ctx: &PipelineContext) {
@@ -301,6 +310,11 @@ fn plain_fallback(start: RoutingBoard, board: &mut RoutingBoard, settings: &Rout
     }
     if plain.get_recover_attempts() > 0 && !ctx.stop.is_stop_requested() {
         router.recover(&mut alt, &plain, ctx);
+    }
+    // the defaults run the chain stage too: without it the fallback cannot match them (it cost a whole plain run and
+    // could not win on cypress_small8 energy-2)
+    if plain.get_chain_depth() > 0 && !ctx.stop.is_stop_requested() {
+        router.chains(&mut alt, &plain, ctx);
     }
     alt.finish_autoroute();
     let before = StatsCache::new().score(board, settings);

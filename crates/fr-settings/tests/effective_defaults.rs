@@ -48,6 +48,7 @@ fn expected_defaults() -> RouterSettings {
         chain_max_routes: None,
         chain_reverse: None,
         chain_prune: None,
+        split_fixed_traces: None,
         ripup_history: None,
         strict_drc: Some(false),
         job_timeout_string: Some("12:00:00".into()),

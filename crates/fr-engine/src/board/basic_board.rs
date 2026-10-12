@@ -73,6 +73,9 @@ pub struct BasicBoard {
     pub(crate) revision: i32,
     /// pcbkit hook H2b: pieces of a split trace inherit the parent's fixed state (default off).
     pub keep_fixed_on_split: bool,
+    /// pcbkit F3 (`router.split_fixed_traces`, default off): `(type fix)` traces may be split at a contact on their
+    /// inside (see [`Self::may_split_fixed_trace`]).
+    pub split_fixed_traces: bool,
     max_trace_half_width: i32,
     min_trace_half_width: i32,
     pub pre_existing_clearance_violations_count: i32,
@@ -175,6 +178,7 @@ impl BasicBoard {
             normalize_suppressed_net_nos: BTreeSet::new(),
             revision: 0,
             keep_fixed_on_split: false,
+            split_fixed_traces: false,
             max_trace_half_width: 1000,
             min_trace_half_width: 10000,
             pre_existing_clearance_violations_count: 0,
@@ -789,6 +793,11 @@ impl BasicBoard {
         if self.is_deletion_forbidden(key) {
             return;
         }
+        self.remove_item_unchecked(key);
+    }
+
+    /// [`Self::remove_item`] without the deletion check (pcbkit F3: a split fixed trace is replaced by its pieces).
+    pub(crate) fn remove_item_unchecked(&mut self, key: ItemKey) {
         self.additional_update_after_change(key);
         self.tree_remove(key);
         self.journal_delete(key);
@@ -885,6 +894,33 @@ impl BasicBoard {
             return !self.layer_structure.layers[c.area.layer as usize].is_signal;
         }
         false
+    }
+
+    /// pcbkit F3: with [`Self::split_fixed_traces`], a `(type fix)` trace (`SystemFixed`, not part of a component) may be
+    /// split although it cannot be deleted; its pieces keep the fixed state. Without the split, a via, pin or trace end
+    /// of the net on its inside is never in contact (contacts are at trace ends), while the maze search regards it as
+    /// reached. `UserFixed` (locked or `protect`) wiring is left alone: the serve lock registry tracks it by id.
+    pub fn may_split_fixed_trace(&self, key: ItemKey) -> bool {
+        let item = self.item(key);
+        self.split_fixed_traces && item.is_trace() && item.component_no <= 0 && item.fixed_state() == FixedState::SystemFixed
+    }
+
+    /// pcbkit F3: splits every `(type fix)` trace at the vias, pins and trace ends of its net on its inside (the state
+    /// a loaded board is in before routing; afterwards the normalization after each insert does it). Needs
+    /// [`Self::split_fixed_traces`]. Returns the number of traces that were split.
+    pub fn split_fixed_traces_at_contacts(&mut self) -> usize {
+        if !self.split_fixed_traces {
+            return 0;
+        }
+        let fixed: Vec<ItemKey> = self.get_traces().into_iter().filter(|&k| self.may_split_fixed_trace(k)).collect();
+        let mut n = 0;
+        for key in fixed {
+            // (a split at a via or pin replaces the trace without returning its pieces)
+            if self.item(key).is_on_board() && (self.split_trace(key, None).len() > 1 || !self.item(key).is_on_board()) {
+                n += 1;
+            }
+        }
+        n
     }
 
     /// Java `Trace.isShoveFixed()` / `Item.isShoveFixed()`.
