@@ -640,7 +640,7 @@ impl RoutingBoard {
     /// to board units like `router.min_trace_width_um`) to this board. Unset keeps upstream behaviour.
     pub fn apply_tighten_settings(&mut self, settings: &fr_settings::RouterSettings) {
         self.tighten_round_cap = settings.get_max_tighten_rounds();
-        self.tighten_skip_jog_chamfer = settings.is_tighten_skip_jog_chamfer();
+        self.tighten_stable_chamfer = settings.is_tighten_stable_chamfer();
         let um = settings.get_tighten_min_move_um();
         self.tighten_min_move = if um > 0.0 {
             let resolution = self.communication.resolution.max(1);
@@ -701,15 +701,17 @@ fn point_to_segment_distance(p: &FloatPoint, a: &FloatPoint, b: &FloatPoint) -> 
     p.distance(&FloatPoint::new(a.x + t * dx, a.y + t * dy))
 }
 
-/// pcbkit R6: true if the end-corner smoothing of an acute angle should not be applied: the gate is on
-/// (`router.tighten_skip_jog_chamfer`) and the cut is limited by the contact trace's adjacent segment
-/// (`other_dist`), which is shorter than the chamfer the trace wants (`desired`, (sqrt 2 - 1) * half width) and
-/// than the trace's own segment (`prev_corner_dist`). Such a cut consumes the whole contact segment, its new corner
-/// lands at the segment's far end and `split_traces` cuts a jog of the same length off the leg behind it: at a
-/// hairpin tip the next round finds the same jog one step on (recorded steps 15-87 units with half widths
-/// 500-1000), so the pass ran one round per jog length.
-pub(crate) fn is_jog_chamfer(skip: bool, desired: f64, prev_corner_dist: f64, other_dist: f64) -> bool {
-    skip && other_dist < desired && other_dist <= prev_corner_dist
+/// pcbkit R6: true if the end-corner smoothing of an acute angle should not be applied
+/// (`router.tighten_stable_chamfer` on, `on`) because the cut re-creates itself:
+/// - the contact trace has another half width (`other_half_width` vs `half_width`): the pieces `split_traces` cuts
+///   off it never merge with the cut trace, so each round leaves stubs (a neck-down leg beside its full-width twin
+///   became a staircase of 42 alternating-width stubs over 49 rounds, stm32io energy-9 USB_D_P);
+/// - the cut is limited by the contact's adjacent segment (`other_dist`), shorter than the chamfer the trace wants
+///   (`desired`, (sqrt 2 - 1) * half width) and than the trace's own segment (`prev_corner_dist`): the new corner
+///   lands at that jog's far end and `split_traces` cuts a jog of the same length off the leg behind it, so at a
+///   hairpin tip the next round finds the same jog one step on (steps 15-87 units recorded, half widths 500-1000).
+pub(crate) fn is_unstable_chamfer(on: bool, desired: f64, prev_corner_dist: f64, other_dist: f64, half_width: i32, other_half_width: i32) -> bool {
+    on && (other_half_width != half_width || (other_dist < desired && other_dist <= prev_corner_dist))
 }
 
 /// pcbkit R2: true once a pull-tight pass has started more than `cap` rounds (`cap` 0 = unlimited).
@@ -777,32 +779,40 @@ mod pcbkit_round_cap_tests {
 }
 
 #[cfg(test)]
-mod pcbkit_jog_chamfer_tests {
-    use super::is_jog_chamfer;
+mod pcbkit_stable_chamfer_tests {
+    use super::is_unstable_chamfer;
 
     // recorded at the hairpin tip of stm32io energy-9 (USB_D_N, half width 562): the contact jog was 88 units,
     // the chamfer the trace wants (sqrt 2 - 1) * 562 = 232.8
     const DESIRED: f64 = 232.8;
+    const HW: i32 = 562;
 
     #[test]
     fn off_never_skips() {
-        assert!(!is_jog_chamfer(false, DESIRED, 1e9, 88.0));
+        assert!(!is_unstable_chamfer(false, DESIRED, 1e9, 88.0, HW, HW));
+        assert!(!is_unstable_chamfer(false, DESIRED, 1e9, 5000.0, HW, 750));
     }
 
     #[test]
     fn a_cut_that_consumes_a_short_contact_jog_is_skipped() {
-        assert!(is_jog_chamfer(true, DESIRED, 1e9, 88.0));
+        assert!(is_unstable_chamfer(true, DESIRED, 1e9, 88.0, HW, HW));
     }
 
     #[test]
-    fn a_contact_segment_that_holds_the_chamfer_is_cut() {
-        assert!(!is_jog_chamfer(true, DESIRED, 1e9, DESIRED));
-        assert!(!is_jog_chamfer(true, DESIRED, 1e9, 5000.0));
+    fn a_cut_against_another_width_is_skipped() {
+        // USB_D_P: the 562 leg beside its 750 twin
+        assert!(is_unstable_chamfer(true, DESIRED, 1e9, 5000.0, HW, 750));
+    }
+
+    #[test]
+    fn a_same_width_contact_segment_that_holds_the_chamfer_is_cut() {
+        assert!(!is_unstable_chamfer(true, DESIRED, 1e9, DESIRED, HW, HW));
+        assert!(!is_unstable_chamfer(true, DESIRED, 1e9, 5000.0, HW, HW));
     }
 
     #[test]
     fn a_cut_limited_by_the_own_segment_is_cut() {
         // the trace's own adjacent segment binds first: not the zipper fixed point, upstream behaviour
-        assert!(!is_jog_chamfer(true, DESIRED, 40.0, 88.0));
+        assert!(!is_unstable_chamfer(true, DESIRED, 40.0, 88.0, HW, HW));
     }
 }

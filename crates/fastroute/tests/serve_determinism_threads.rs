@@ -30,7 +30,7 @@ fn settings() -> Value {
         "router.max_tighten_rounds": 50,
         "router.max_connection_expansions": 100000,
         "router.tighten_min_move_um": 1,
-        "router.tighten_skip_jog_chamfer": true,
+        "router.tighten_stable_chamfer": true,
         "router.recover_attempts": 8,
     })
 }

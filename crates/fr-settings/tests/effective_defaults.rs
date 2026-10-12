@@ -38,7 +38,7 @@ fn expected_defaults() -> RouterSettings {
         max_connection_expansions: None,
         max_tighten_rounds: None,
         tighten_min_move_um: None,
-        tighten_skip_jog_chamfer: None,
+        tighten_stable_chamfer: None,
         strict_width: None,
         neck_radius_um: None,
         strict_last_resort: None,
