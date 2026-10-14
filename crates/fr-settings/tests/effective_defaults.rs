@@ -42,6 +42,7 @@ fn expected_defaults() -> RouterSettings {
         strict_width: None,
         neck_radius_um: None,
         strict_last_resort: None,
+        rewiden: None,
         recover_attempts: None,
         recover_max_routes: None,
         chain_depth: None,

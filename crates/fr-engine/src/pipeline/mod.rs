@@ -257,6 +257,12 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
             plain_fallback(start, board, settings, ctx);
         }
     }
+    // pcbkit W5 (router.rewiden, default off): put narrowed traces back at their class width (shove, else rip the
+    // squeezing neighbours and route them again)
+    if ctx.enhancements && router_enabled && settings.is_rewiden() && !ctx.stop.is_stop_requested() {
+        ctx.observe(board, &LiveEvent::Stage("rewiden"));
+        autorouter.rewiden(board, settings, ctx);
+    }
     board.finish_autoroute();
     if ctx.enhancements {
         // The autorouter's own stop rules (stagnation, max passes) request a stop of the

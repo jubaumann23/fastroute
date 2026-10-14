@@ -23,6 +23,9 @@ use super::{CheckpointKey, PipelineContext};
 
 mod chains;
 mod recovery;
+mod rewiden;
+
+pub use rewiden::RewidenReport;
 
 /// Java `BOARD_RANK_LIMIT`.
 const BOARD_RANK_LIMIT: i32 = MAX_HISTORY_SIZE as i32;

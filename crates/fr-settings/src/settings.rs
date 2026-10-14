@@ -217,6 +217,10 @@ pub struct RouterSettings {
     /// a last attempt that may break strict width (neck-downs anywhere, the necked retry): a routed connection
     /// with a narrow stretch beats an open one. Unset/false = strict width is never broken.
     pub strict_last_resort: Option<bool>,
+    /// pcbkit W5: after routing and the optimizer, put every trace the router left narrower than its net-class width
+    /// back at the class width, shoving the neighbouring wiring aside where there is room (`pipeline::rewiden`).
+    /// Unset/false = Java behaviour.
+    pub rewiden: Option<bool>,
     /// pcbkit recovery (not in Freerouting): after the routing stage, how many targeted rip-up-and-reroute
     /// attempts each connection that is still open gets (each attempt is kept only if it leaves fewer
     /// connections open and no new clearance violation); a work count. 0/unset = off (Java behaviour).
@@ -492,6 +496,7 @@ impl RouterSettings {
         copy(&mut self.strict_width, &s.strict_width, &mut n);
         copy(&mut self.neck_radius_um, &s.neck_radius_um, &mut n);
         copy(&mut self.strict_last_resort, &s.strict_last_resort, &mut n);
+        copy(&mut self.rewiden, &s.rewiden, &mut n);
         copy(&mut self.recover_attempts, &s.recover_attempts, &mut n);
         copy(&mut self.recover_max_routes, &s.recover_max_routes, &mut n);
         copy(&mut self.chain_depth, &s.chain_depth, &mut n);
@@ -683,6 +688,11 @@ impl RouterSettings {
     /// pcbkit W2, see [`RouterSettings::strict_last_resort`].
     pub fn is_strict_last_resort(&self) -> bool {
         self.strict_last_resort == Some(true)
+    }
+
+    /// pcbkit W5, see [`RouterSettings::rewiden`].
+    pub fn is_rewiden(&self) -> bool {
+        self.rewiden == Some(true)
     }
 
     /// pcbkit W1, see [`RouterSettings::neck_radius_um`]; 0 = no neck-down away from the pad itself.
