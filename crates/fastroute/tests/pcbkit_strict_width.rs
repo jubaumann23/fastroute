@@ -185,3 +185,64 @@ fn a_strict_run_with_the_last_resort_never_leaves_more_open_than_the_plain_run()
     let (_, open_last) = route(&dsn, strict);
     assert!(open_last <= open_plain, "strict with the last resort left {open_last} open, the plain run {open_plain}");
 }
+
+/// A pad of plane net P (700 um square) boxed in by eight foreign single-pin pads 500 um away: a 600 um track (plus
+/// 150 um clearance each side) cannot leave it, a 100 um one can. P's only other item is its plane on In1.Cu, so the
+/// connection can only end in a via into that plane.
+fn boxed_plane_pad_dsn() -> String {
+    let mut pins = String::from("(pin BIG 1 0 0)");
+    let mut nets = String::from("(net P (pins U1-1))");
+    let mut names = String::new();
+    let mut n = 2;
+    for dx in [-1200, 0, 1200] {
+        for dy in [-1200, 0, 1200] {
+            if dx == 0 && dy == 0 {
+                continue;
+            }
+            pins += &format!("(pin BIG {n} {dx} {dy})");
+            nets += &format!("(net S{n} (pins U1-{n}))");
+            names += &format!("S{n} ");
+            n += 1;
+        }
+    }
+    format!(
+        r#"(pcb plane.dsn (parser (string_quote ") (space_in_quoted_tokens on) (host_cad "KiCad's Pcbnew") (host_version "10.0.5"))
+  (resolution um 10) (unit um)
+  (structure
+    (layer F.Cu (type signal) (property (index 0))) (layer In1.Cu (type power) (property (index 1)))
+    (layer B.Cu (type signal) (property (index 2)))
+    (boundary (path pcb 0  0 0  10000 0  10000 -10000  0 -10000  0 0))
+    (plane P (polygon In1.Cu 0  0 0  10000 0  10000 -10000  0 -10000  0 0))
+    (via "Via[0-2]_600:300_um")
+    (rule (width 150) (clearance 150)))
+  (placement (component "BOX" (place U1 5000 -5000 front 0 (PN a))))
+  (library
+    (image "BOX" {pins})
+    (padstack BIG (shape (polygon F.Cu 0 -350 350 350 350 350 -350 -350 -350)) (attach off))
+    (padstack "Via[0-2]_600:300_um" (shape (circle F.Cu 600)) (shape (circle In1.Cu 600)) (shape (circle B.Cu 600)) (attach off)))
+  (network {nets}
+    (class kicad_default {names} (circuit (use_via "Via[0-2]_600:300_um")) (rule (width 150) (clearance 150)))
+    (class power P (circuit (use_via "Via[0-2]_600:300_um")) (rule (width 600) (clearance 150)))))"#
+    )
+}
+
+#[test]
+fn the_necked_retry_may_end_in_a_via_into_the_nets_plane() {
+    // a connection blocked at its class width is retried at the neck width; that retry must accept the same plane
+    // ends as the full-width route, or a plane-net pad crowded by foreign pins stays open at any width
+    let dsn = write_dsn("plane.dsn", &boxed_plane_pad_dsn());
+    let (_, open_full) = route(&dsn, json!({ "router.min_trace_width_um": 100 }));
+    assert_eq!(open_full, 1, "the board must block P at its 600 um class width");
+    let (ses, open_necked) = route(&dsn, json!({ "router.min_trace_width_um": 100, "router.neck_width_um": 100 }));
+    assert_eq!(open_necked, 0, "the 100 um retry fits through the 500 um gaps and ends in a via into P's plane");
+    assert!(narrowest(&ses) < 600.0 - SLACK_UM);
+}
+
+#[test]
+fn the_strict_last_resort_connects_a_boxed_plane_pad_narrow() {
+    let dsn = write_dsn("plane.dsn", &boxed_plane_pad_dsn());
+    let strict = json!({ "router.min_trace_width_um": 100, "router.strict_width": true, "router.neck_radius_um": 1000,
+                         "router.recover_attempts": 2, "router.strict_last_resort": true });
+    let (_, open) = route(&dsn, strict);
+    assert_eq!(open, 0, "strict width's last resort is the per-connection narrow fallback: it must reach the plane");
+}

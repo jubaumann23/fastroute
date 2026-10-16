@@ -631,6 +631,9 @@ fn retry_connection_necked(
         t.apply(&mut neck_control);
     }
     neck_control.remove_unconnected_vias = params.remove_unconnected_vias;
+    // pcbkit W6: the retry accepts the same plane ends as the full-width route it replaces; without this a plane-net
+    // pad crowded by foreign pins found its necked way into the plane and had it refused ("layers are disabled")
+    neck_control.connect_to_planes = params.connect_to_planes;
     for i in 0..neck_control.layer_count as usize {
         let compensation = neck_control.compensated_trace_half_width[i] - neck_control.trace_half_width[i];
         neck_control.trace_half_width[i] = neck_control.trace_half_width[i].min(neck_half_width);
