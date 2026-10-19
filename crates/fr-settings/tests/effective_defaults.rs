@@ -45,6 +45,7 @@ fn expected_defaults() -> RouterSettings {
         rewiden: None,
         recover_attempts: None,
         recover_max_routes: None,
+        pair_max_growth: None,
         chain_depth: None,
         chain_max_routes: None,
         chain_reverse: None,

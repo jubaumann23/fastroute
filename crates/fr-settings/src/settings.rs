@@ -229,6 +229,10 @@ pub struct RouterSettings {
     /// (the forced connection and the re-routing sweeps each count one), so a placement where nothing can be recovered
     /// costs a bounded amount of work; a count, not a clock. 0/unset = no cap.
     pub recover_max_routes: Option<f64>,
+    /// pcbkit differential pairs: a coupling pass that makes the longer net of a pair more than this factor longer
+    /// is a detour (the follower loops around the lead's pad escape), not a coupling, and is not kept (1.25 = at
+    /// most 25 % longer). 0/unset = off (every coupling that lengthens the coupled run is kept).
+    pub pair_max_growth: Option<f64>,
     /// pcbkit rip-up chains (not in Freerouting): after recovery, each connection still open may rip at most three
     /// connections, which are then re-routed (themselves ripping, recursively) down to this depth; a chain is kept only
     /// if it leaves fewer connections open and no new clearance violation. 0/unset = off (Java behaviour).
@@ -499,6 +503,7 @@ impl RouterSettings {
         copy(&mut self.rewiden, &s.rewiden, &mut n);
         copy(&mut self.recover_attempts, &s.recover_attempts, &mut n);
         copy(&mut self.recover_max_routes, &s.recover_max_routes, &mut n);
+        copy(&mut self.pair_max_growth, &s.pair_max_growth, &mut n);
         copy(&mut self.chain_depth, &s.chain_depth, &mut n);
         copy(&mut self.chain_max_routes, &s.chain_max_routes, &mut n);
         copy(&mut self.chain_reverse, &s.chain_reverse, &mut n);
@@ -648,6 +653,14 @@ impl RouterSettings {
         match self.recover_max_routes {
             Some(v) if v >= 1.0 && v.is_finite() => v.min(1e12) as u64,
             _ => 0,
+        }
+    }
+
+    /// pcbkit pair detour guard, see [`RouterSettings::pair_max_growth`]; 0 = off (values below 1 are off too).
+    pub fn get_pair_max_growth(&self) -> f64 {
+        match self.pair_max_growth {
+            Some(v) if v >= 1.0 && v.is_finite() => v.min(1000.0),
+            _ => 0.0,
         }
     }
 

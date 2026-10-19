@@ -93,6 +93,16 @@ fn net_length(board: &RoutingBoard, net: NetNo) -> f64 {
     crate::tuning::net_length(board, net)
 }
 
+fn longest_net(board: &RoutingBoard, p: NetNo, n: NetNo) -> f64 {
+    net_length(board, p).max(net_length(board, n))
+}
+
+/// A coupling that makes the longer net of the pair more than `max_growth` times longer is a detour (the follower
+/// loops around the lead's pad escape: eth4l USB-C pair 58 -> 112 mm), not a coupling. `max_growth` 0 = never.
+fn is_detour(before: f64, after: f64, max_growth: f64) -> bool {
+    max_growth >= 1.0 && after > before * max_growth
+}
+
 /// Couples all pairs; returns what was done.
 pub fn couple_pairs(board: &mut RoutingBoard, pairs: &[DiffPair], settings: &RouterSettings, stop: &StopToken) -> Vec<PairResult> {
     let upm = units_per_mm(board);
@@ -125,6 +135,15 @@ pub fn couple_pairs(board: &mut RoutingBoard, pairs: &[DiffPair], settings: &Rou
         for (lead, follow) in [(p, n), (n, p)] {
             let geo = PairGeometry::new(board, lead, follow, pair, settings);
             match couple(board, lead, follow, &geo, settings, stop) {
+                Ok(next) if is_detour(longest_net(board, p, n), longest_net(&next, p, n), settings.get_pair_max_growth()) => {
+                    if reason.is_empty() {
+                        reason = format!(
+                            "coupling would lengthen the pair from {:.1} to {:.1} mm (router.pair_max_growth): a detour, not kept",
+                            longest_net(board, p, n) / upm,
+                            longest_net(&next, p, n) / upm
+                        );
+                    }
+                }
                 Ok(next) => {
                     let got = total_score(&next, pairs, settings);
                     if best.as_ref().map(|b| got > b.1).unwrap_or(true) {
@@ -877,11 +896,21 @@ pub fn release_pairs(board: &mut RoutingBoard, fixed: &[crate::ids::ItemId]) {
 
 #[cfg(test)]
 mod tests {
-    use super::{offset_parts, offset_polyline};
+    use super::{is_detour, offset_parts, offset_polyline};
     use fr_geom::{FloatPoint, IntPoint, Polyline};
 
     fn pl(points: &[(i32, i32)]) -> Polyline {
         Polyline::from_int_points(&points.iter().map(|&(x, y)| IntPoint::new(x, y)).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn a_coupling_that_lengthens_the_pair_too_much_is_a_detour() {
+        assert!(!is_detour(58.0, 112.0, 0.0), "off: every coupling is kept");
+        assert!(is_detour(58.0, 112.0, 1.25), "58 -> 112 mm (eth4l USB-C pair) is a detour");
+        assert!(!is_detour(28.0, 19.7, 1.25), "a coupling that shortens the longer net is kept");
+        assert!(!is_detour(40.0, 50.0, 1.25), "exactly 25 % longer is still a coupling");
+        assert!(is_detour(40.0, 50.1, 1.25));
+        assert!(!is_detour(40.0, 500.0, 0.9), "a factor below 1 is off");
     }
 
     #[test]
