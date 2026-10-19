@@ -20,7 +20,7 @@
 use crate::board::{ItemKey, RoutingBoard};
 use crate::drc::clearance_violation::clearance_violation_count;
 use crate::ids::{FixedState, LayerNo, NetNo};
-use fr_geom::{FloatPoint, IntPoint, Point, Polyline};
+use fr_geom::{FloatPoint, IntPoint, Line, Point, Polyline};
 
 /// Extra half width of the clearance check of a meander, micrometres.
 const TUNING_SAFETY_MARGIN_UM: f64 = 5.0;
@@ -260,6 +260,32 @@ enum Side {
     Alternate,
 }
 
+/// The trace polyline with segment `seg` replaced by the bumps `mid` (four integer points per bump, on the
+/// segment's integer corners). When every corner is an integer point the polyline is built through the points. A
+/// corner may also be a rational point (the intersection of two lines); a line through such a corner, as
+/// `Polyline::from_points` builds it, makes `Line::intersection_approx` panic ("RationalPoint is not an IntPoint":
+/// differential pairs with `auto_pairs` on eth4l). Then the corners away from the segment stay those of `old`: its
+/// lines are kept, and only the bumps get new lines.
+fn meandered(old: &Polyline, corners: &[Point], seg: usize, mid: &[Point]) -> Polyline {
+    if corners.iter().all(|c| matches!(c, Point::Int(_))) {
+        let mut pts: Vec<Point> = corners[..=seg].to_vec();
+        pts.extend_from_slice(mid);
+        pts.extend_from_slice(&corners[seg + 1..]);
+        return Polyline::from_points(&pts);
+    }
+    let base = old.lines[seg + 1].clone(); // segment `seg` lies on line seg + 1 (corner k: lines k and k + 1)
+    let mut lines: Vec<Line> = old.lines[..=seg + 1].to_vec();
+    for bump in mid.chunks(4) {
+        let p: Vec<IntPoint> = bump.iter().map(Point::as_int).collect();
+        lines.push(Line::from_int_points(p[0], p[1]));
+        lines.push(Line::from_int_points(p[1], p[2]));
+        lines.push(Line::from_int_points(p[2], p[3]));
+        lines.push(base.clone());
+    }
+    lines.extend_from_slice(&old.lines[seg + 2..]);
+    Polyline::from_lines(lines)
+}
+
 /// Replaces segment `seg` of trace `key` by a serpentine adding up to `need`; returns the new
 /// board and the added length if the result has no new clearance violation.
 fn try_meander(board: &RoutingBoard, key: ItemKey, seg: usize, need: f64, max_amp: f64, pitch: f64, side: Side) -> Option<(RoutingBoard, f64)> {
@@ -300,7 +326,7 @@ fn try_meander(board: &RoutingBoard, key: ItemKey, seg: usize, need: f64, max_am
     // centre the bumps on the segment
     let used = (2 * k - 1) * pitch_steps;
     let start = (steps - used) / 2;
-    let mut pts: Vec<Point> = corners[..=seg].to_vec();
+    let mut mid: Vec<Point> = Vec::with_capacity(4 * k as usize);
     let at = |s: i64, o: i64| Point::Int(IntPoint::new((pa.x as i64 + ex * s + nx * o) as i32, (pa.y as i64 + ey * s + ny * o) as i32));
     let mut s = start;
     for i in 0..k {
@@ -316,13 +342,12 @@ fn try_meander(board: &RoutingBoard, key: ItemKey, seg: usize, need: f64, max_am
             }
         };
         let o = sign * amp_steps;
-        pts.push(at(s, 0));
-        pts.push(at(s, o));
-        pts.push(at(s + pitch_steps, o));
-        pts.push(at(s + pitch_steps, 0));
+        mid.push(at(s, 0));
+        mid.push(at(s, o));
+        mid.push(at(s + pitch_steps, o));
+        mid.push(at(s + pitch_steps, 0));
         s += 2 * pitch_steps;
     }
-    pts.extend_from_slice(&corners[seg + 1..]);
     let added = 2.0 * (k * amp_steps) as f64 * step_len;
 
     let mut next = board.clone();
@@ -339,7 +364,7 @@ fn try_meander(board: &RoutingBoard, key: ItemKey, seg: usize, need: f64, max_am
     // The check uses a slightly wider trace: KiCad measures the exact 45-degree geometry and
     // finds micrometre violations the integer checks here miss (the router keeps the same
     // safety margin when it routes).
-    let polyline = Polyline::from_points(&pts);
+    let polyline = meandered(t.polyline(), &corners, seg, &mid);
     let mut probe = next.clone();
     let margin = (TUNING_SAFETY_MARGIN_UM * next.communication.resolution.max(1) as f64).round() as i32;
     let probe_key = probe.insert_trace_without_cleaning(polyline.clone(), layer, half_width + margin, &nets, class, fixed)?;
@@ -352,7 +377,34 @@ fn try_meander(board: &RoutingBoard, key: ItemKey, seg: usize, need: f64, max_am
 
 #[cfg(test)]
 mod tests {
-    use super::glob_match;
+    use super::{glob_match, meandered};
+    use fr_geom::{IntPoint, Line, Point, Polyline};
+
+    /// A trace whose corner 2 is a rational point (45-degree line meets a 1:3 line at x = 1501.5) and whose segment 0
+    /// is an integer segment: the shape `auto_pairs` on eth4l produced. The meander on segment 0 must keep the
+    /// rational corner and build lines without a rational point (it used to panic in `corner_approx`).
+    #[test]
+    fn meander_keeps_rational_corner() {
+        let old = Polyline::from_lines(vec![
+            Line::new_ints(0, 0, 0, 1),
+            Line::new_ints(0, 0, 1000, 0),
+            Line::new_ints(1000, 0, 1001, 1),
+            Line::new_ints(1500, 501, 1503, 502),
+            Line::new_ints(5000, 0, 5000, 1),
+        ]);
+        let corners = old.corners();
+        assert!(matches!(corners[0], Point::Int(_)) && matches!(corners[1], Point::Int(_)));
+        assert!(corners.iter().any(|c| matches!(c, Point::Rational(_))), "fixture must hold a rational corner");
+        let p = |x, y| Point::Int(IntPoint::new(x, y));
+        let mid = [p(300, 0), p(300, 50), p(400, 50), p(400, 0)];
+        let new = meandered(&old, &corners, 0, &mid);
+        let (a, b) = (old.corner_approx_arr(), new.corner_approx_arr());
+        assert_eq!(b.len(), a.len() + 4, "four corners per bump");
+        let (last_old, last_new) = (a.last().unwrap(), b.last().unwrap());
+        assert!((last_old.x - last_new.x).abs() < 1e-6 && (last_old.y - last_new.y).abs() < 1e-6);
+        assert!(b.iter().any(|c| (c.x - 1501.5).abs() < 1e-6), "the rational corner survives");
+        assert!(b.iter().any(|c| (c.x - 300.0).abs() < 1e-6 && (c.y - 50.0).abs() < 1e-6), "the bump is there");
+    }
 
     #[test]
     fn globs() {
