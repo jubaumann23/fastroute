@@ -197,6 +197,11 @@ pub fn begin(board: &mut RoutingBoard, settings: &RouterSettings, req: &Request,
     State { run, skipped, prerouted, held }
 }
 
+/// True when pairs were pre-routed and are held fixed.
+pub fn holds_pairs(state: &State) -> bool {
+    !state.held.is_empty()
+}
+
 /// Stage 2 (after the first pipeline run): releases the held pairs. True when connections of the
 /// nets `routable` (net number -> may change) are left, so the caller routes once more with the pairs free.
 pub fn release(board: &mut RoutingBoard, state: &mut State, routable: &dyn Fn(i32) -> bool) -> bool {
@@ -229,9 +234,12 @@ pub fn finish(
     let mut coupled: Vec<PairResult> = Vec::new();
     let mut skews: Vec<SkewResult> = Vec::new();
     if !state.run.is_empty() && !stop.is_stop_requested() {
+        crate::route::trace("couple_pairs start");
         coupled = fr_engine::diffpair::couple_pairs(board, &state.run, settings, stop);
+        crate::route::trace("couple_pairs done; match_pair_lengths start");
         skews = fr_engine::diffpair::match_pair_lengths(board, &state.run, settings, req.pair_skew_mm, stop);
     }
+    crate::route::trace("match_pair_lengths done");
     let mut pairs: Vec<Value> = Vec::with_capacity(req.pairs.len());
     for pair in &req.pairs {
         pairs.push(pair_row(board, req, pair, &state, &coupled, &skews));

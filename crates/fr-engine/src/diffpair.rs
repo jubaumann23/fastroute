@@ -103,8 +103,41 @@ fn is_detour(before: f64, after: f64, max_growth: f64) -> bool {
     max_growth >= 1.0 && after > before * max_growth
 }
 
+/// Worker threads of the coupling tries (pcbkit P3): the tries of one pair (2 orientations x 2 sides x up to 4 run counts)
+/// are independent routes of copies of the same board; they run on a local pool and are judged in the order the
+/// sequential code judged them, so the result is the same with any number of threads, or none.
+const COUPLE_MAX_THREADS: usize = 8;
+
+fn map_all<T: Sync, R: Send>(par: bool, items: &[T], f: impl Fn(&T) -> R + Sync + Send) -> Vec<R> {
+    use rayon::prelude::*;
+    if par {
+        items.par_iter().map(f).collect()
+    } else {
+        items.iter().map(f).collect()
+    }
+}
+
 /// Couples all pairs; returns what was done.
 pub fn couple_pairs(board: &mut RoutingBoard, pairs: &[DiffPair], settings: &RouterSettings, stop: &StopToken) -> Vec<PairResult> {
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(COUPLE_MAX_THREADS);
+    let pool = if threads > 1 {
+        match crate::pipeline::pools::build(threads) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                log::warn!("pair coupling thread pool could not be built ({e}): the tries run one after the other (same result)");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    match &pool {
+        Some(p) => p.install(|| couple_pairs_in(board, pairs, settings, stop, true)),
+        None => couple_pairs_in(board, pairs, settings, stop, false),
+    }
+}
+
+fn couple_pairs_in(board: &mut RoutingBoard, pairs: &[DiffPair], settings: &RouterSettings, stop: &StopToken, par: bool) -> Vec<PairResult> {
     let upm = units_per_mm(board);
     let mut out = Vec::new();
     for pair in pairs {
@@ -132,9 +165,14 @@ pub fn couple_pairs(board: &mut RoutingBoard, pairs: &[DiffPair], settings: &Rou
         // detour-rich one couples better the other way round
         let mut best: Option<(RoutingBoard, f64)> = None;
         let mut reason = String::new();
-        for (lead, follow) in [(p, n), (n, p)] {
-            let geo = PairGeometry::new(board, lead, follow, pair, settings);
-            match couple(board, lead, follow, &geo, settings, stop) {
+        let board_ref: &RoutingBoard = board;
+        let orientations = [(p, n), (n, p)];
+        let tries = map_all(par, &orientations, |&(lead, follow)| {
+            let geo = PairGeometry::new(board_ref, lead, follow, pair, settings);
+            couple(board_ref, lead, follow, &geo, settings, stop, par)
+        });
+        for tried in tries {
+            match tried {
                 Ok(next) if is_detour(longest_net(board, p, n), longest_net(&next, p, n), settings.get_pair_max_growth()) => {
                     if reason.is_empty() {
                         reason = format!(
@@ -518,7 +556,17 @@ fn section(off: &Polyline, corners: &[FloatPoint], s0: usize, f0: f64, s1: usize
 }
 
 /// Makes the follower run along the lead on a clone of the board.
-fn couple(board: &RoutingBoard, lead: NetNo, follow: NetNo, geo: &PairGeometry, settings: &RouterSettings, stop: &StopToken) -> Result<RoutingBoard, String> {
+/// What one (side, run count) try of [`couple`] came to.
+enum Tried {
+    /// not made (stop requested): changes nothing
+    Skipped,
+    /// failed, and why
+    Failed(String),
+    /// joined, with the pair score of the result
+    Coupled(RoutingBoard, f64),
+}
+
+fn couple(board: &RoutingBoard, lead: NetNo, follow: NetNo, geo: &PairGeometry, settings: &RouterSettings, stop: &StopToken, par: bool) -> Result<RoutingBoard, String> {
     let upm = units_per_mm(board);
     let (paths, seed) = oriented_traces(board, lead, follow);
     log::debug!(target: "fr_engine::pipeline::diag", "diff pair: net {lead} -> {follow}: {} traces, seed side {seed:?}", paths.len());
@@ -538,15 +586,15 @@ fn couple(board: &RoutingBoard, lead: NetNo, follow: NetNo, geo: &PairGeometry, 
         }
     }
 
-    let mut best: Option<RoutingBoard> = None;
-    let mut last_err = String::from("no room beside the pair");
     let sides: Vec<i32> = match seed {
         Some(s) => vec![s, -s],
         None => vec![1, -1],
     };
-    for side in sides {
+    // every try is an independent route of a copy of the board; they may run side by side, and are judged below in
+    // the order of the sequential loop (sides, then run counts)
+    let per_side: Vec<Vec<Tried>> = map_all(par, &sides, |&side| {
         if stop.is_stop_requested() {
-            break;
+            return Vec::new();
         }
         let mut next = board.clone();
         // the follower's own routing goes; locked (SYSTEM_FIXED) copper stays
@@ -567,7 +615,7 @@ fn couple(board: &RoutingBoard, lead: NetNo, follow: NetNo, geo: &PairGeometry, 
 
         let mut runs = coupled_runs(&next, &paths, geo, side, follow, upm);
         if runs.is_empty() {
-            continue;
+            return Vec::new();
         }
         // longest runs first; if the router cannot join all of them, fewer (short runs in
         // crowded spots are the hard ones)
@@ -576,46 +624,51 @@ fn couple(board: &RoutingBoard, lead: NetNo, follow: NetNo, geo: &PairGeometry, 
         counts.retain(|&c| c >= 1 && c <= runs.len());
         counts.dedup();
         let base = next;
-        for count in counts {
+        map_all(par, &counts, |&count| {
             if stop.is_stop_requested() {
-                break;
+                return Tried::Skipped;
             }
             let mut next = base.clone();
             for (layer, polyline) in &runs[..count] {
                 next.insert_trace_without_cleaning(polyline.clone(), *layer, geo.half_width[*layer as usize], &[follow], geo.clearance_class, FixedState::Unfixed);
             }
             if let Err(e) = connect_net(&mut next, follow, follow_groups_before, settings, stop) {
-                last_err = e;
-                continue;
+                return Tried::Failed(e);
             }
             next.remove_trace_tails(follow, StopConnectionOption::None);
             if pin_groups(&next, follow) > follow_groups_before {
-                last_err = "follower not connected".into();
-                continue;
+                return Tried::Failed("follower not connected".into());
             }
             if incomplete_count(&next, None) > incomplete_before {
-                last_err = "other connections lost".into();
-                continue;
+                return Tried::Failed("other connections lost".into());
             }
             let violating = next.get_connectable_items(follow).into_iter().any(|k| {
                 let it = next.item(k);
                 (it.is_trace() || it.is_via()) && clearance_violation_count(&next, k) > 0
             });
             if violating {
-                last_err = "clearance violation".into();
-                continue;
+                return Tried::Failed("clearance violation".into());
             }
             log::debug!(target: "fr_engine::pipeline::diag", "diff pair: side {side}, {count} of {} runs joined, {} pin groups, {} groups", runs.len(), pin_groups(&next, follow), follow_components(&next, follow));
-            let better = match &best {
-                Some(b) => pair_score(&next, lead, follow, geo) > pair_score(b, lead, follow, geo),
-                None => true,
-            };
-            if better {
-                best = Some(next);
+            let score = pair_score(&next, lead, follow, geo);
+            Tried::Coupled(next, score)
+        })
+    });
+
+    let mut best: Option<(RoutingBoard, f64)> = None;
+    let mut last_err = String::from("no room beside the pair");
+    for tried in per_side.into_iter().flatten() {
+        match tried {
+            Tried::Skipped => {}
+            Tried::Failed(e) => last_err = e,
+            Tried::Coupled(next, score) => {
+                if best.as_ref().map(|b| score > b.1).unwrap_or(true) {
+                    best = Some((next, score));
+                }
             }
         }
     }
-    best.ok_or(last_err)
+    best.map(|b| b.0).ok_or(last_err)
 }
 
 /// The parts of the offset paths that have room, as (layer, polyline) of the follower.

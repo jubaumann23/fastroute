@@ -235,3 +235,34 @@ fn bad_arguments() {
     assert_eq!(s.ok("route", json!({ "seed": 0, "starts": 1 }))["complete"], json!(true));
     s.finish();
 }
+
+/// One route of `pairs.dsn` with the given hello settings and server environment: (result without wall time, SES).
+fn run_with(env: &[(&str, &str)], settings: Value) -> (Value, String) {
+    let mut s = Server::start_with(env);
+    s.hello(1, settings);
+    s.ok("load", json!({ "dsn": path(&serve_data("pairs.dsn")) }));
+    let r = s.ok("route", pair_args());
+    let ses = s.ses();
+    s.finish();
+    (stable(r), ses)
+}
+
+/// pcbkit P3: the coupling tries run side by side on a local pool; with no pool (the test hook) they run one after the
+/// other, and the route is the same.
+#[test]
+fn coupling_tries_give_the_same_route_with_and_without_a_pool() {
+    let with_pool = run_with(&[], json!({}));
+    let without = run_with(&[("FASTROUTE_TEST_NO_POOL", "1")], json!({}));
+    assert_eq!(with_pool, without);
+}
+
+/// pcbkit P4 (`router.pair_quick_hold`): on a board the held run completes, nothing is cut, so the route is the same;
+/// the setting is known to the server and the route stays deterministic.
+#[test]
+fn quick_pair_hold_changes_nothing_when_the_held_run_completes() {
+    let off = run_with(&[], json!({}));
+    let on = run_with(&[], json!({ "router.pair_quick_hold": true }));
+    assert_eq!(off.0["complete"], json!(true), "{}", off.0);
+    assert_eq!(off, on);
+    assert_eq!(on, run_with(&[], json!({ "router.pair_quick_hold": true })));
+}

@@ -192,6 +192,14 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
             if let LiveEvent::RouterPass { pass_no, .. } = ev {
                 counter.fetch_max(*pass_no, Ordering::SeqCst);
             }
+            if trace_on() {
+                match ev {
+                    LiveEvent::Stage(s) => trace(&format!("stage {s}")),
+                    LiveEvent::RouterPass { pass_no, secs, incomplete, .. } => trace(&format!("router pass {pass_no} {secs:.2}s incomplete {incomplete}")),
+                    LiveEvent::OptimizerPass { pass_no, secs, incomplete, .. } => trace(&format!("optimizer pass {pass_no} {secs:.2}s incomplete {incomplete}")),
+                    _ => {}
+                }
+            }
         })),
     };
     fr_engine::autoroute::engine::take_engine_fault(); // clear a fault left by an earlier request
@@ -200,12 +208,15 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     // fresh work counters for this request (the session's clones share the old ones)
     work.board.board.work_stats = Arc::default();
     // differential pairs (capability `pairs`): routed and coupled first, held fixed while the rest is routed
+    trace("route start");
     let mut hs_state = (!hs_req.is_empty()).then(|| {
         let b = &mut work.board;
         crate::hs::begin(&mut b.board, &b.settings, &hs_req, &work.locks, listed.as_deref(), &stop)
     });
+    trace("hs::begin done");
     // locked nets get no new wiring: they are left out of the route mask (SPEC 5.4)
     let run_mask = work.locks.route_mask(&work.board.board, mask.clone());
+    let quick_hold = hs_state.as_ref().is_some_and(crate::hs::holds_pairs) && work.board.settings.is_pair_quick_hold();
     let run = |work: &mut crate::session::Work| {
         work.board.board.order_seed = (seed > 0).then_some(seed);
         work.board.board.route_nets = run_mask.clone();
@@ -213,16 +224,25 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
         work.board.board.order_seed = None;
         work.board.board.route_nets = None;
     };
+    work.board.board.held_quick = quick_hold;
+    work.board.board.held_cut = false;
     run(&mut work);
+    work.board.board.held_quick = false;
+    let cut = std::mem::take(&mut work.board.board.held_cut);
+    trace("pipeline run 1 done");
     let mut hs_report = None;
     if let Some(mut state) = hs_state.take() {
-        // the held pairs may have blocked connections: route once more with the pairs free
-        if crate::hs::release(&mut work.board.board, &mut state, &allowed) && !stop.is_stop_requested() {
+        // the held pairs may have blocked connections: route once more with the pairs free (always after a cut run 1,
+        // which skipped its rescue stages)
+        if (crate::hs::release(&mut work.board.board, &mut state, &allowed) || cut) && !stop.is_stop_requested() {
+            trace("released; pipeline run 2");
             run(&mut work);
+            trace("pipeline run 2 done");
         }
         let b = &mut work.board;
         hs_report = Some(crate::hs::finish(&mut b.board, &b.settings, &hs_req, state, &work.locks, listed.as_deref(), &stop).into_json());
     }
+    trace("hs::finish done");
     let budget_hit = budget.finish();
     // F2: the engine abandoned a step that kept panicking; the half-routed copy is dropped and the
     // session keeps the board it had (SPEC error code `internal`).
@@ -304,4 +324,20 @@ fn summarize(
         "nets": facts::net_rows(board, &unrouted, locks),
         "unrouted_connections": unrouted.iter().map(facts::Unrouted::to_json).collect::<Vec<_>>(),
     })
+}
+
+fn trace_on() -> bool {
+    std::env::var_os("FR_STAGE_TRACE").is_some()
+}
+
+fn trace_clock() -> &'static Instant {
+    static T0: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    T0.get_or_init(Instant::now)
+}
+
+/// Stage timing to stderr when `FR_STAGE_TRACE` is set (profiling aid; never changes a result).
+pub(crate) fn trace(what: &str) {
+    if trace_on() {
+        eprintln!("[trace {:8.2}s] {what}", trace_clock().elapsed().as_secs_f64());
+    }
 }

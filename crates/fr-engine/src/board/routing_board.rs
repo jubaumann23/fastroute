@@ -218,6 +218,10 @@ pub struct RoutingBoard {
     pub time_limits: TimeLimitPolicy,
     // pcbkit hook H5: order seed for the pipeline's autorouter (None = upstream behaviour).
     pub order_seed: Option<i64>,
+    // pcbkit hook H7 (router.pair_quick_hold): this run holds pre-routed pairs; the pipeline ends it after the batch
+    // autorouter if connections are open (`held_cut` tells the caller it did). false = upstream behaviour.
+    pub held_quick: bool,
+    pub held_cut: bool,
     // pcbkit R2: the most rounds one pull-tight pass may run (0 = unlimited, upstream behaviour).
     pub tighten_round_cap: u32,
     // pcbkit R3: a pull-tight or smoothing change moving the trace less than this (board units) and
@@ -334,6 +338,8 @@ impl RoutingBoard {
             shove_failing_layer: -1,
             time_limits: TimeLimitPolicy::default(),
             order_seed: None,
+            held_quick: false,
+            held_cut: false,
             tighten_round_cap: 0,
             tighten_min_move: 0.0,
             tighten_stable_chamfer: false,
