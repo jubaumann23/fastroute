@@ -182,6 +182,10 @@ pub struct State {
     skipped: Vec<(DiffPair, &'static str)>,
     prerouted: Vec<PairResult>,
     held: Vec<ItemId>,
+    /// longer net of each held pair (p, n, mm) at the moment it was released (reported, `held_mm`)
+    held_mm: Vec<(String, String, f64)>,
+    /// longer net of each pre-routed pair (p, n, mm) right after the pre-route, before anything else was routed
+    pre_mm: Vec<(String, String, f64)>,
 }
 
 /// Stage 1 (before the pipeline): sets the layer heights and pre-routes the pairs, holding their
@@ -194,7 +198,13 @@ pub fn begin(board: &mut RoutingBoard, settings: &RouterSettings, req: &Request,
     } else {
         fr_engine::diffpair::preroute_pairs(board, &run, settings, stop, Some(FixedState::UserFixed))
     };
-    State { run, skipped, prerouted, held }
+    let pre_mm = lengths_of(board, &run);
+    State { run, skipped, prerouted, held, held_mm: Vec::new(), pre_mm }
+}
+
+/// The longer net of each pair, mm.
+fn lengths_of(board: &RoutingBoard, pairs: &[DiffPair]) -> Vec<(String, String, f64)> {
+    pairs.iter().filter_map(|p| Some((p.p.clone(), p.n.clone(), length_mm(board, &p.p)?.max(length_mm(board, &p.n)?)))).collect()
 }
 
 /// True when pairs were pre-routed and are held fixed.
@@ -208,11 +218,49 @@ pub fn release(board: &mut RoutingBoard, state: &mut State, routable: &dyn Fn(i3
     if state.held.is_empty() {
         return false;
     }
+    state.held_mm = lengths_of(board, &state.run);
     fr_engine::diffpair::release_pairs(board, &state.held);
     state.held.clear();
     let mut nets = std::collections::BTreeSet::new();
     fr_engine::pipeline::stats::incomplete_count(board, Some(&mut nets));
     nets.into_iter().any(|n| routable(n))
+}
+
+/// The longer net of each pre-routed pair right after the pre-route, a complete pad to pad pair that nothing else had
+/// touched: what the quick hold's guard measures the finished pair against. (The held pairs are fixed, so this is also
+/// their length when they are released, `held_mm`.)
+pub fn preroute_lengths(state: &State) -> Vec<(String, String, f64)> {
+    state.pre_mm.clone()
+}
+
+/// Largest growth of a pair since it was pre-routed, from the report rows of `finish`: the pair's longer net now over
+/// its longer net right after its pre-route. Pairs that were not routed (skipped, missing) or held nothing are not judged;
+/// None when no pair is judged.
+pub fn pair_growth(rows: &[Value], held: &[(String, String, f64)]) -> Option<f64> {
+    rows.iter()
+        .filter_map(|r| {
+            let (p, n) = (r.get("p")?.as_str()?, r.get("n")?.as_str()?);
+            let now = r.get("p_length_mm")?.as_f64()?.max(r.get("n_length_mm")?.as_f64()?);
+            let before = held.iter().find(|(hp, hn, _)| hp == p && hn == n)?.2;
+            (before > 0.0).then(|| now / before)
+        })
+        .reduce(f64::max)
+}
+
+/// Why a quick pair hold result is not kept (the guard of `router.pair_quick_max_growth`), or None when it is kept. `narrow` is
+/// (narrow segments the finished route left, narrow segments the held run left): only narrow segments the release added count.
+pub fn quick_verdict(growth: Option<f64>, limit: f64, narrow: (u32, u32), unrouted: usize) -> Option<String> {
+    let (narrow_left, narrow_held) = narrow;
+    if unrouted > 0 {
+        return Some(format!("{unrouted} connection(s) open"));
+    }
+    if narrow_left > narrow_held {
+        return Some(format!("{narrow_left} narrow segment(s) left, the held run left {narrow_held}"));
+    }
+    match growth {
+        Some(g) if g > limit => Some(format!("a pair is {:.1} % longer than when it was pre-routed (limit {:.1} %)", (g - 1.0) * 100.0, (limit - 1.0) * 100.0)),
+        _ => None,
+    }
 }
 
 /// Results of stages 3 to 5.
@@ -276,6 +324,13 @@ fn pair_row(board: &RoutingBoard, req: &Request, pair: &DiffPair, state: &State,
     o.insert("kept".into(), json!(kept));
     o.insert("coupled_mm".into(), json!(coupled_mm));
     o.insert("preroute_coupled_mm".into(), json!(pre.map_or(0.0, |r| r.coupled_after_mm)));
+    if let Some((_, _, pre)) = state.pre_mm.iter().find(|(hp, hn, _)| *hp == pair.p && *hn == pair.n) {
+        o.insert("pre_mm".into(), json!(pre));
+    }
+    if let Some((_, _, held)) = state.held_mm.iter().find(|(hp, hn, _)| *hp == pair.p && *hn == pair.n) {
+        // the pair's longer net when the hold ended: what the route made of it is judged against this (P5)
+        o.insert("held_mm".into(), json!(held));
+    }
     o.insert("p_length_mm".into(), json!(lp));
     o.insert("n_length_mm".into(), json!(ln));
     o.insert("skew_mm".into(), json!(skew_after));
@@ -381,6 +436,30 @@ mod tests {
 
     fn parse(v: Value) -> R<Request> {
         Request::parse(v.as_object().unwrap())
+    }
+
+    #[test]
+    fn quick_verdict_keeps_only_a_clean_short_result() {
+        assert_eq!(quick_verdict(Some(1.05), 1.05, (0, 0), 0), None);
+        assert_eq!(quick_verdict(None, 1.05, (0, 0), 0), None);
+        assert_eq!(quick_verdict(Some(0.9), 1.05, (0, 0), 0), None);
+        assert!(quick_verdict(Some(1.2), 1.05, (0, 0), 0).unwrap().contains("20.0 % longer"));
+        assert!(quick_verdict(Some(1.0), 1.05, (2, 0), 0).unwrap().contains("narrow"));
+        assert_eq!(quick_verdict(Some(1.0), 1.05, (2, 2), 0), None, "narrow segments the held run already had are not the release's");
+        assert_eq!(quick_verdict(Some(1.0), 1.05, (1, 3), 0), None);
+        assert!(quick_verdict(Some(1.0), 1.05, (0, 0), 1).unwrap().contains("open"));
+    }
+
+    #[test]
+    fn pair_growth_takes_the_worst_judged_pair() {
+        let held = vec![("A_P".to_string(), "A_N".to_string(), 10.0), ("B_P".to_string(), "B_N".to_string(), 0.0)];
+        let rows = vec![
+            json!({ "p": "A_P", "n": "A_N", "p_length_mm": 11.0, "n_length_mm": 12.0 }),
+            json!({ "p": "B_P", "n": "B_N", "p_length_mm": 99.0, "n_length_mm": 99.0 }),
+            json!({ "p": "C_P", "n": "C_N", "status": "skipped" }),
+        ];
+        assert_eq!(pair_growth(&rows, &held), Some(1.2));
+        assert_eq!(pair_growth(&rows[1..], &held), None);
     }
 
     #[test]

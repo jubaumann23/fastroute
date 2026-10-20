@@ -207,42 +207,81 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     let budget = Budget::start(budget_ms as u64, &stop)?;
     // fresh work counters for this request (the session's clones share the old ones)
     work.board.board.work_stats = Arc::default();
+    // pcbkit P5 (router.pair_quick_max_growth): a quick pair hold with a guard keeps the board as it was, to route again
+    // with the whole held pipeline when the quick result is not good enough
+    let guard_limit = work.board.settings.get_pair_quick_max_growth();
+    let quick_wanted = !hs_req.pairs.is_empty() && work.board.settings.is_pair_quick_hold();
+    let mut spare = (quick_wanted && guard_limit > 0.0).then(|| work.clone());
+    let mut quick_note: Option<Value> = None;
+    let mut allow_quick = true;
     // differential pairs (capability `pairs`): routed and coupled first, held fixed while the rest is routed
     trace("route start");
-    let mut hs_state = (!hs_req.is_empty()).then(|| {
-        let b = &mut work.board;
-        crate::hs::begin(&mut b.board, &b.settings, &hs_req, &work.locks, listed.as_deref(), &stop)
-    });
-    trace("hs::begin done");
-    // locked nets get no new wiring: they are left out of the route mask (SPEC 5.4)
-    let run_mask = work.locks.route_mask(&work.board.board, mask.clone());
-    let quick_hold = hs_state.as_ref().is_some_and(crate::hs::holds_pairs) && work.board.settings.is_pair_quick_hold();
-    let run = |work: &mut crate::session::Work| {
-        work.board.board.order_seed = (seed > 0).then_some(seed);
-        work.board.board.route_nets = run_mask.clone();
-        pipeline::run_pipeline(&mut work.board.board, &mut work.board.settings, &ctx);
-        work.board.board.order_seed = None;
-        work.board.board.route_nets = None;
-    };
-    work.board.board.held_quick = quick_hold;
-    work.board.board.held_cut = false;
-    run(&mut work);
-    work.board.board.held_quick = false;
-    let cut = std::mem::take(&mut work.board.board.held_cut);
-    trace("pipeline run 1 done");
-    let mut hs_report = None;
-    if let Some(mut state) = hs_state.take() {
-        // the held pairs may have blocked connections: route once more with the pairs free (always after a cut run 1,
-        // which skipped its rescue stages)
-        if (crate::hs::release(&mut work.board.board, &mut state, &allowed) || cut) && !stop.is_stop_requested() {
-            trace("released; pipeline run 2");
-            run(&mut work);
-            trace("pipeline run 2 done");
+    let hs_report = loop {
+        let mut hs_state = (!hs_req.is_empty()).then(|| {
+            let b = &mut work.board;
+            crate::hs::begin(&mut b.board, &b.settings, &hs_req, &work.locks, listed.as_deref(), &stop)
+        });
+        trace("hs::begin done");
+        // locked nets get no new wiring: they are left out of the route mask (SPEC 5.4)
+        let run_mask = work.locks.route_mask(&work.board.board, mask.clone());
+        let quick_hold = allow_quick && hs_state.as_ref().is_some_and(crate::hs::holds_pairs) && work.board.settings.is_pair_quick_hold();
+        let run = |work: &mut crate::session::Work| {
+            work.board.board.order_seed = (seed > 0).then_some(seed);
+            work.board.board.route_nets = run_mask.clone();
+            pipeline::run_pipeline(&mut work.board.board, &mut work.board.settings, &ctx);
+            work.board.board.order_seed = None;
+            work.board.board.route_nets = None;
+        };
+        work.board.board.held_quick = quick_hold;
+        work.board.board.held_cut = false;
+        work.board.board.rewiden_left = 0;
+        run(&mut work);
+        work.board.board.held_quick = false;
+        let cut = std::mem::take(&mut work.board.board.held_cut);
+        trace("pipeline run 1 done");
+        let narrow_held = work.board.board.rewiden_left; // what the held run left narrow (before the release)
+        let mut hs_report = None;
+        let mut held = Vec::new();
+        if let Some(mut state) = hs_state.take() {
+            // the held pairs may have blocked connections: route once more with the pairs free (always after a cut run 1,
+            // which skipped its rescue stages)
+            if (crate::hs::release(&mut work.board.board, &mut state, &allowed) || cut) && !stop.is_stop_requested() {
+                trace("released; pipeline run 2");
+                run(&mut work);
+                trace("pipeline run 2 done");
+            }
+            held = crate::hs::preroute_lengths(&state);
+            let b = &mut work.board;
+            hs_report = Some(crate::hs::finish(&mut b.board, &b.settings, &hs_req, state, &work.locks, listed.as_deref(), &stop));
         }
-        let b = &mut work.board;
-        hs_report = Some(crate::hs::finish(&mut b.board, &b.settings, &hs_req, state, &work.locks, listed.as_deref(), &stop).into_json());
-    }
-    trace("hs::finish done");
+        trace("hs::finish done");
+        if !cut {
+            break hs_report;
+        }
+        // the quick hold cut run 1: judge the result against the pairs as they were held (P5)
+        let rows = hs_report.as_ref().map_or(&[][..], |r| r.pairs.as_slice());
+        let growth = crate::hs::pair_growth(rows, &held);
+        let (_, open) = facts::connections(&work.board.board);
+        let verdict = crate::hs::quick_verdict(growth, guard_limit, (work.board.board.rewiden_left, narrow_held), open.len());
+        let mut note = json!({ "cut": true, "growth": growth, "narrow_left": work.board.board.rewiden_left, "narrow_held": narrow_held, "unrouted": open.len() });
+        match (verdict, spare.take()) {
+            (Some(why), Some(start)) if guard_limit > 0.0 && !stop.is_stop_requested() => {
+                trace(&format!("quick pair hold not kept: {why}; routing again with the whole held pipeline"));
+                note["kept"] = json!(false);
+                note["reason"] = json!(why);
+                quick_note = Some(note);
+                work = start;
+                work.board.board.work_stats = Arc::default();
+                allow_quick = false;
+            }
+            _ => {
+                note["kept"] = json!(true);
+                quick_note.get_or_insert(note);
+                break hs_report;
+            }
+        }
+    };
+    let hs_report = hs_report.map(crate::hs::Report::into_json);
     let budget_hit = budget.finish();
     // F2: the engine abandoned a step that kept panicking; the half-routed copy is dropped and the
     // session keeps the board it had (SPEC error code `internal`).
@@ -264,6 +303,10 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     let mut result = summarize(&work.board.board, &work.locks, seed, starts, passes.load(Ordering::SeqCst), budget_hit, wall_ms);
     if WORK_CLAIMED {
         result["work"] = work_json(&work.board.board.work_stats);
+    }
+    if let Some(note) = quick_note {
+        // present only when the quick pair hold cut a run: what it did and whether the guard kept it
+        result["pair_quick"] = note;
     }
     if let Some((pairs, groups)) = hs_report {
         // present only for what the request asked for (SPEC 5.5)

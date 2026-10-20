@@ -266,3 +266,15 @@ fn quick_pair_hold_changes_nothing_when_the_held_run_completes() {
     assert_eq!(off, on);
     assert_eq!(on, run_with(&[], json!({ "router.pair_quick_hold": true })));
 }
+
+/// pcbkit P5 (`router.pair_quick_max_growth`): the guard of the quick hold is a known setting; on a board whose held run
+/// completes nothing is cut, so any guard leaves the route as it is, and a result that was not cut has no `pair_quick`.
+#[test]
+fn quick_pair_hold_guard_changes_nothing_when_the_held_run_completes() {
+    let off = run_with(&[], json!({}));
+    for limit in [1.0, 1.05, 0.0] {
+        let on = run_with(&[], json!({ "router.pair_quick_hold": true, "router.pair_quick_max_growth": limit }));
+        assert_eq!(off, on, "limit {limit}");
+        assert!(on.0.get("pair_quick").is_none(), "{}", on.0);
+    }
+}

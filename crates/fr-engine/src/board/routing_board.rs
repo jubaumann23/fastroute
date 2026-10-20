@@ -222,6 +222,8 @@ pub struct RoutingBoard {
     // autorouter if connections are open (`held_cut` tells the caller it did). false = upstream behaviour.
     pub held_quick: bool,
     pub held_cut: bool,
+    // pcbkit H7 guard: narrow segments the last re-widen stage of the pipeline left (0 when it did not run).
+    pub rewiden_left: u32,
     // pcbkit R2: the most rounds one pull-tight pass may run (0 = unlimited, upstream behaviour).
     pub tighten_round_cap: u32,
     // pcbkit R3: a pull-tight or smoothing change moving the trace less than this (board units) and
@@ -340,6 +342,7 @@ impl RoutingBoard {
             order_seed: None,
             held_quick: false,
             held_cut: false,
+            rewiden_left: 0,
             tighten_round_cap: 0,
             tighten_min_move: 0.0,
             tighten_stable_chamfer: false,

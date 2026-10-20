@@ -277,8 +277,10 @@ common --router.* settings (numbers, true/false, comma-separated lists):
   --router.ripup_history=P                  add P % to the rip-up cost of a net for each pass that ended with it incomplete (0 = off)
   --router.recover_attempts=N               after routing, N targeted rip-up-and-reroute attempts per open connection (0 = off)
   --router.recover_max_routes=N             end the recovery stage after its attempts routed N connections in all (0 = no cap)
-  --router.pair_quick_hold=true|false       serve with pairs: the run that holds the pre-routed pairs ends after its batch autorouter when
-                                            connections are open; the pairs are then released and the whole pipeline runs on the freed board
+  --router.pair_quick_hold=true|false       serve with pairs: the run that holds the pre-routed pairs skips multi-start, chains and the plain fallback
+                                            when connections are open; the pairs are then released and the whole pipeline runs on the freed board
+  --router.pair_quick_max_growth=F          with pair_quick_hold: keep the quick result only if no pair is more than F times longer than after its pre-route
+                                            (1.05) and nothing is open or narrow; else route again with the whole held pipeline (0 = off)
   --router.pair_max_growth=F                with --pairs: do not keep a coupling that makes a pair's longer net more than F times longer (1.25; 0 = off)
   --router.chain_depth=D                    after recovery, rip-up chains: an open connection rips at most 3 others, re-routed recursively to depth D (0 = off)
   --router.chain_max_routes=N               end the chain stage after it routed N connections in all (0 = no cap)

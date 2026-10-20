@@ -47,6 +47,7 @@ fn expected_defaults() -> RouterSettings {
         recover_max_routes: None,
         pair_max_growth: None,
         pair_quick_hold: None,
+        pair_quick_max_growth: None,
         chain_depth: None,
         chain_max_routes: None,
         chain_reverse: None,

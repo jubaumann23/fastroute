@@ -219,11 +219,13 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
             // multi-start variants (each as long as the strict run) only run if that did not close everything
             autorouter.loose_continuation(board, settings, ctx);
         }
-        // pcbkit H7 (router.pair_quick_hold): a run that holds pre-routed pairs and left connections open ends here;
-        // the caller releases the pairs and runs the pipeline again
+        // pcbkit H7 (router.pair_quick_hold): a run that holds pre-routed pairs and left connections open skips the stages
+        // that rescue them (multi-start, chains, the strict-width plain fallback: they cannot rip the held pairs, and what
+        // they cannot close the released second run does in a second); recovery, re-widen and the optimizer still run with
+        // the pairs held, as without the quick hold, so the pairs are optimized around and not ripped by the second run
         if board.held_quick && ctx.enhancements && !ctx.stop.is_stop_requested() && stats::incomplete_count(board, None) - stats::ignored_incomplete_count(board) > 0 {
             board.held_cut = true;
-            log::info!("Held pairs: connections left open; the rescue stages wait until the pairs are released.");
+            log::info!("Held pairs: connections left open; multi-start, chains and the plain fallback wait until the pairs are released.");
         }
         if let (Some(start), false) = (unrouted_board, board.held_cut) {
             // the variants route with sequential passes: after a parallel first run they take
@@ -249,7 +251,7 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
     }
     outcome.fanout_timed_out = autorouter.fanout_timed_out;
     // pcbkit recovery (router.recover_attempts, default off): targeted rip-up-and-reroute of what is still open
-    if ctx.enhancements && router_enabled && !board.held_cut && !ctx.stop.is_stop_requested() && settings.get_recover_attempts() > 0 {
+    if ctx.enhancements && router_enabled && !ctx.stop.is_stop_requested() && settings.get_recover_attempts() > 0 {
         ctx.observe(board, &LiveEvent::Stage("recovery"));
         autorouter.recover(board, settings, ctx);
     }
@@ -265,9 +267,9 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
     }
     // pcbkit W5 (router.rewiden, default off): put narrowed traces back at their class width (shove, else rip the
     // squeezing neighbours and route them again)
-    if ctx.enhancements && router_enabled && !board.held_cut && settings.is_rewiden() && !ctx.stop.is_stop_requested() {
+    if ctx.enhancements && router_enabled && settings.is_rewiden() && !ctx.stop.is_stop_requested() {
         ctx.observe(board, &LiveEvent::Stage("rewiden"));
-        autorouter.rewiden(board, settings, ctx);
+        board.rewiden_left = autorouter.rewiden(board, settings, ctx).narrow_segments_left;
     }
     board.finish_autoroute();
     if ctx.enhancements {
@@ -278,7 +280,7 @@ pub fn run_pipeline(board: &mut RoutingBoard, settings: &mut RouterSettings, ctx
     }
 
     // runOptimizationStage
-    if run_optimizer && !board.held_cut && !ctx.stop.is_stop_requested() {
+    if run_optimizer && !ctx.stop.is_stop_requested() {
         ctx.observe(board, &LiveEvent::Stage("optimizer"));
         let mut optimizer = BatchOptimizer::new(ctx.optimizer_mode);
         if ctx.enhancements && !ctx.deterministic {
