@@ -256,6 +256,16 @@ pub fn widen_board(board: &mut BasicBoard, widths: &BTreeMap<NetNo, i64>, only: 
     })
 }
 
+/// Segments under their net class width after a `widen` of the whole board: what the toolkit's `widen` then `check` count as
+/// narrow (`check`'s `width_class` findings, `summary.width`). Works on a copy; the board itself is not touched. Used by the
+/// quick pair hold check (`router.pair_quick_check`) to compare a finished route with the held run in the toolkit's terms.
+pub fn narrow_after_widen(board: &fr_engine::board::RoutingBoard) -> u32 {
+    let mut copy = board.clone();
+    copy.work_stats = Default::default(); // the copy's counters are not the request's
+    let report = widen_board(&mut copy, &BTreeMap::new(), None);
+    report["left_narrow"].as_i64().unwrap_or(0).max(0) as u32
+}
+
 pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     if !CLAIMED {
         return Err(ProtoError::unsupported("widen", "widen"));
@@ -290,7 +300,9 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::segment_polylines;
+    use super::{handle, narrow_after_widen, segment_polylines};
+    use crate::session::Session;
+    use serde_json::json;
     use fr_geom::{Line, Polyline};
 
     /// Corners (0, 0), (6/7, 2/7) (rational: y = x / 3 meets y = 2 - 2x) and (2, -2).
@@ -314,6 +326,31 @@ mod tests {
         for (k, s) in segs.iter().enumerate() {
             assert_eq!(s.corners(), vec![corners[k].clone(), corners[k + 1].clone()]);
         }
+    }
+
+    /// tiny.dsn routed, then every net class asked for far wider traces than were routed: the count of the copy equals the
+    /// `left_narrow` of a real `widen` op on the session (what the toolkit counts), and the board itself is not touched.
+    #[test]
+    fn narrow_after_widen_is_the_widen_ops_left_narrow_and_changes_nothing() {
+        use crate::settings::SessionSettings;
+        let mut s = Session::new();
+        s.hello = Some(SessionSettings::from_hello(1, None).unwrap());
+        let dsn = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/tiny.dsn");
+        let load = json!({ "dsn": { "path": dsn.to_str().unwrap() } });
+        crate::load::handle(&mut s, load.as_object().unwrap()).unwrap();
+        let routed = crate::route::handle(&mut s, json!({ "seed": 0 }).as_object().unwrap()).unwrap();
+        assert_eq!(routed["unrouted"], json!(0), "{routed}");
+        let mut work = s.begin().unwrap();
+        assert_eq!(narrow_after_widen(&work.board.board), 0, "routed at the class width: nothing is narrow");
+        let class = work.board.board.rules.get_default_trace_half_width(0);
+        work.board.board.rules_mut().set_default_trace_half_widths(class * 40);
+        s.commit(work);
+        let before = fr_io::ses_writer::ses_bytes(&s.loaded().unwrap().board, "t");
+        let counted = narrow_after_widen(&s.loaded().unwrap().board);
+        assert_eq!(before, fr_io::ses_writer::ses_bytes(&s.loaded().unwrap().board, "t"), "the board is untouched");
+        let widened = handle(&mut s, json!({}).as_object().unwrap()).unwrap();
+        assert!(counted > 0, "{widened}");
+        assert_eq!(i64::from(counted), widened["left_narrow"].as_i64().unwrap());
     }
 
     #[test]

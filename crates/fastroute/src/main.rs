@@ -281,6 +281,8 @@ common --router.* settings (numbers, true/false, comma-separated lists):
                                             when connections are open; the pairs are then released and the whole pipeline runs on the freed board
   --router.pair_quick_max_growth=F          with pair_quick_hold: keep the quick result only if no pair is more than F times longer than after its pre-route
                                             (1.05) and nothing is open or narrow; else route again with the whole held pipeline (0 = off)
+  --router.pair_quick_check=true|false      with pair_quick_hold: keep the quick result only if nothing is open and no segment is narrow
+                                            (counted as the widen + check ops count them); no length condition; else route again (off)
   --router.pair_max_growth=F                with --pairs: do not keep a coupling that makes a pair's longer net more than F times longer (1.25; 0 = off)
   --router.chain_depth=D                    after recovery, rip-up chains: an open connection rips at most 3 others, re-routed recursively to depth D (0 = off)
   --router.chain_max_routes=N               end the chain stage after it routed N connections in all (0 = no cap)

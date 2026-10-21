@@ -207,11 +207,12 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
     let budget = Budget::start(budget_ms as u64, &stop)?;
     // fresh work counters for this request (the session's clones share the old ones)
     work.board.board.work_stats = Arc::default();
-    // pcbkit P5 (router.pair_quick_max_growth): a quick pair hold with a guard keeps the board as it was, to route again
-    // with the whole held pipeline when the quick result is not good enough
+    // pcbkit P5 (router.pair_quick_max_growth) and round 8 (router.pair_quick_check): a quick pair hold with a guard keeps the
+    // board as it was, to route again with the whole held pipeline when the quick result is not good enough
     let guard_limit = work.board.settings.get_pair_quick_max_growth();
     let quick_wanted = !hs_req.pairs.is_empty() && work.board.settings.is_pair_quick_hold();
-    let mut spare = (quick_wanted && guard_limit > 0.0).then(|| work.clone());
+    let judged = quick_wanted && (guard_limit > 0.0 || work.board.settings.is_pair_quick_check());
+    let mut spare = judged.then(|| work.clone());
     let mut quick_note: Option<Value> = None;
     let mut allow_quick = true;
     // differential pairs (capability `pairs`): routed and coupled first, held fixed while the rest is routed
@@ -239,7 +240,6 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
         work.board.board.held_quick = false;
         let cut = std::mem::take(&mut work.board.board.held_cut);
         trace("pipeline run 1 done");
-        let narrow_held = work.board.board.rewiden_left; // what the held run left narrow (before the release)
         let mut hs_report = None;
         let mut held = Vec::new();
         if let Some(mut state) = hs_state.take() {
@@ -262,10 +262,11 @@ pub fn handle(session: &mut Session, args: &Map<String, Value>) -> R<Value> {
         let rows = hs_report.as_ref().map_or(&[][..], |r| r.pairs.as_slice());
         let growth = crate::hs::pair_growth(rows, &held);
         let (_, open) = facts::connections(&work.board.board);
-        let verdict = crate::hs::quick_verdict(growth, guard_limit, (work.board.board.rewiden_left, narrow_held), open.len());
-        let mut note = json!({ "cut": true, "growth": growth, "narrow_left": work.board.board.rewiden_left, "narrow_held": narrow_held, "unrouted": open.len() });
+        let narrow_left = if judged { crate::ops::widen::narrow_after_widen(&work.board.board) } else { 0 };
+        let verdict = if judged { crate::hs::quick_verdict(growth, guard_limit, narrow_left, open.len()) } else { None };
+        let mut note = json!({ "cut": true, "growth": growth, "narrow_left": narrow_left, "unrouted": open.len() });
         match (verdict, spare.take()) {
-            (Some(why), Some(start)) if guard_limit > 0.0 && !stop.is_stop_requested() => {
+            (Some(why), Some(start)) if !stop.is_stop_requested() => {
                 trace(&format!("quick pair hold not kept: {why}; routing again with the whole held pipeline"));
                 note["kept"] = json!(false);
                 note["reason"] = json!(why);

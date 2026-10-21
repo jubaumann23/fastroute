@@ -244,6 +244,12 @@ pub struct RouterSettings {
     /// most 5 % longer) and it left no connection open and no narrow segment; otherwise the route is made again with the
     /// whole pipeline in the held run, as without the quick hold. 0/unset (values below 1 too) = no guard.
     pub pair_quick_max_growth: Option<f64>,
+    /// pcbkit differential pairs, the narrow check of [`RouterSettings::pair_quick_hold`] (round 8 quick-narrow): a quick run (one
+    /// that was cut) is kept only if it left no connection open and no narrow segment, counted as the toolkit counts them
+    /// (the `check` op's `width_class` findings after the `widen` op), with no length condition
+    /// unless [`RouterSettings::pair_quick_max_growth`] asks for one; otherwise the route is made again with the whole pipeline in
+    /// the held run, as without the quick hold. unset/false = off.
+    pub pair_quick_check: Option<bool>,
     /// pcbkit rip-up chains (not in Freerouting): after recovery, each connection still open may rip at most three
     /// connections, which are then re-routed (themselves ripping, recursively) down to this depth; a chain is kept only
     /// if it leaves fewer connections open and no new clearance violation. 0/unset = off (Java behaviour).
@@ -517,6 +523,7 @@ impl RouterSettings {
         copy(&mut self.pair_max_growth, &s.pair_max_growth, &mut n);
         copy(&mut self.pair_quick_hold, &s.pair_quick_hold, &mut n);
         copy(&mut self.pair_quick_max_growth, &s.pair_quick_max_growth, &mut n);
+        copy(&mut self.pair_quick_check, &s.pair_quick_check, &mut n);
         copy(&mut self.chain_depth, &s.chain_depth, &mut n);
         copy(&mut self.chain_max_routes, &s.chain_max_routes, &mut n);
         copy(&mut self.chain_reverse, &s.chain_reverse, &mut n);
@@ -672,6 +679,11 @@ impl RouterSettings {
     /// pcbkit pair hold run, see [`RouterSettings::pair_quick_hold`].
     pub fn is_pair_quick_hold(&self) -> bool {
         self.pair_quick_hold == Some(true)
+    }
+
+    /// pcbkit quick pair hold narrow check, see [`RouterSettings::pair_quick_check`].
+    pub fn is_pair_quick_check(&self) -> bool {
+        self.pair_quick_check == Some(true)
     }
 
     /// pcbkit quick pair hold guard, see [`RouterSettings::pair_quick_max_growth`]; 0 = no guard (values below 1 are off too).

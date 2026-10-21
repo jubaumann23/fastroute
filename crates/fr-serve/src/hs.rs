@@ -247,18 +247,21 @@ pub fn pair_growth(rows: &[Value], held: &[(String, String, f64)]) -> Option<f64
         .reduce(f64::max)
 }
 
-/// Why a quick pair hold result is not kept (the guard of `router.pair_quick_max_growth`), or None when it is kept. `narrow` is
-/// (narrow segments the finished route left, narrow segments the held run left): only narrow segments the release added count.
-pub fn quick_verdict(growth: Option<f64>, limit: f64, narrow: (u32, u32), unrouted: usize) -> Option<String> {
-    let (narrow_left, narrow_held) = narrow;
+/// Why a quick pair hold result is not kept (`router.pair_quick_check` and the length guard `router.pair_quick_max_growth`), or
+/// None when it is kept. `narrow_left` is the narrow segments the finished route has, counted by `ops::widen::narrow_after_widen`
+/// (the toolkit's count: `widen`, then `check`); ANY of them fails the result, because the held run is no reference for what the
+/// default would leave (round 8: stm32io s22 had 9 narrow segments after the quick run's held part and after the release, the
+/// default's full held run ends with none), and the fallback IS the default, so a result with narrow segments is never worse
+/// than the default's. `limit` below 1 (0 = off) drops the length condition.
+pub fn quick_verdict(growth: Option<f64>, limit: f64, narrow_left: u32, unrouted: usize) -> Option<String> {
     if unrouted > 0 {
         return Some(format!("{unrouted} connection(s) open"));
     }
-    if narrow_left > narrow_held {
-        return Some(format!("{narrow_left} narrow segment(s) left, the held run left {narrow_held}"));
+    if narrow_left > 0 {
+        return Some(format!("{narrow_left} narrow segment(s) left"));
     }
     match growth {
-        Some(g) if g > limit => Some(format!("a pair is {:.1} % longer than when it was pre-routed (limit {:.1} %)", (g - 1.0) * 100.0, (limit - 1.0) * 100.0)),
+        Some(g) if limit >= 1.0 && g > limit => Some(format!("a pair is {:.1} % longer than when it was pre-routed (limit {:.1} %)", (g - 1.0) * 100.0, (limit - 1.0) * 100.0)),
         _ => None,
     }
 }
@@ -440,14 +443,23 @@ mod tests {
 
     #[test]
     fn quick_verdict_keeps_only_a_clean_short_result() {
-        assert_eq!(quick_verdict(Some(1.05), 1.05, (0, 0), 0), None);
-        assert_eq!(quick_verdict(None, 1.05, (0, 0), 0), None);
-        assert_eq!(quick_verdict(Some(0.9), 1.05, (0, 0), 0), None);
-        assert!(quick_verdict(Some(1.2), 1.05, (0, 0), 0).unwrap().contains("20.0 % longer"));
-        assert!(quick_verdict(Some(1.0), 1.05, (2, 0), 0).unwrap().contains("narrow"));
-        assert_eq!(quick_verdict(Some(1.0), 1.05, (2, 2), 0), None, "narrow segments the held run already had are not the release's");
-        assert_eq!(quick_verdict(Some(1.0), 1.05, (1, 3), 0), None);
-        assert!(quick_verdict(Some(1.0), 1.05, (0, 0), 1).unwrap().contains("open"));
+        assert_eq!(quick_verdict(Some(1.05), 1.05, 0, 0), None);
+        assert_eq!(quick_verdict(None, 1.05, 0, 0), None);
+        assert_eq!(quick_verdict(Some(0.9), 1.05, 0, 0), None);
+        assert!(quick_verdict(Some(1.2), 1.05, 0, 0).unwrap().contains("20.0 % longer"));
+        assert!(quick_verdict(Some(1.0), 1.05, 2, 0).unwrap().contains("narrow"));
+        assert!(quick_verdict(Some(1.0), 1.05, 1, 0).unwrap().contains("1 narrow"));
+        assert!(quick_verdict(Some(1.0), 1.05, 0, 1).unwrap().contains("open"));
+    }
+
+    #[test]
+    fn quick_verdict_without_a_length_limit_judges_only_open_and_narrow() {
+        assert_eq!(quick_verdict(Some(3.0), 0.0, 0, 0), None, "no length condition when the limit is 0");
+        assert_eq!(quick_verdict(None, 0.0, 0, 0), None);
+        assert!(quick_verdict(Some(3.0), 0.0, 1, 0).unwrap().contains("narrow"));
+        assert!(quick_verdict(Some(3.0), 0.0, 0, 2).unwrap().contains("open"));
+        assert!(quick_verdict(None, 0.0, 5, 0).unwrap().contains("5 narrow"));
+        assert!(quick_verdict(None, 0.0, 5, 1).unwrap().contains("open"), "open connections are named first");
     }
 
     #[test]

@@ -278,3 +278,19 @@ fn quick_pair_hold_guard_changes_nothing_when_the_held_run_completes() {
         assert!(on.0.get("pair_quick").is_none(), "{}", on.0);
     }
 }
+
+/// round 8 (`router.pair_quick_check`): the narrow check of the quick hold is a known setting; on a board whose held run
+/// completes nothing is cut, so the check (alone or with a length limit) leaves the route as it is, with no `pair_quick`.
+#[test]
+fn quick_pair_check_changes_nothing_when_the_held_run_completes() {
+    let off = run_with(&[], json!({}));
+    for extra in [json!({}), json!({ "router.pair_quick_max_growth": 1.05 })] {
+        let mut s = json!({ "router.pair_quick_hold": true, "router.pair_quick_check": true });
+        s.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let on = run_with(&[], s);
+        assert_eq!(off, on);
+        assert!(on.0.get("pair_quick").is_none(), "{}", on.0);
+    }
+    // the check without the quick hold does nothing either
+    assert_eq!(off, run_with(&[], json!({ "router.pair_quick_check": true })));
+}
