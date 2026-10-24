@@ -234,6 +234,9 @@ impl BasicBoard {
             let mut entries = self.overlapping_tree_entries_list(DEFAULT_TREE, &query, layer, &[]);
             let mut pos = 0;
             while pos < entries.len() {
+                if self.normalize_stopped() {
+                    return result;
+                }
                 if !self.item(key).is_on_board() {
                     // this trace has been deleted in a cleanup operation
                     return result;

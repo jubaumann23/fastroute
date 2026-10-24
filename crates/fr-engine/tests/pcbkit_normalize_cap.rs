@@ -1,5 +1,5 @@
 //! pcbkit pair budget: `normalize_traces` ends at a stop request and leaves a net of more than
-//! `MAX_NORMALIZE_TRACES` traces alone.
+//! `router.max_normalize_traces` (`BasicBoard::normalize_trace_cap`, default off) traces alone.
 //!
 //! The pair attempt of rp2040env energy-15 never answered its 840 s budget: the rip-up passes with the pairs held
 //! fragmented the VDD_1V1 net into 300 to 950 traces, and one `normalize_traces` round over them took 3 to 330 s
@@ -15,6 +15,7 @@ use fr_engine::structure::{Communication, Components, CoordinateTransform, Layer
 use fr_geom::*;
 
 const NET_A: i32 = 1;
+const CAP: usize = 400;
 
 fn board() -> BasicBoard {
     let ls = LayerStructure::new(vec![Layer::new("F.Cu", true), Layer::new("B.Cu", true)]);
@@ -68,18 +69,20 @@ fn joins_collinear_traces_of_a_small_net() {
 
 #[test]
 fn leaves_a_net_of_more_than_the_cap_alone() {
-    let mut b = board_with(MAX_NORMALIZE_TRACES);
+    let mut b = board_with(CAP);
+    b.normalize_trace_cap = CAP;
     let before = traces(&b);
-    assert!(before > MAX_NORMALIZE_TRACES);
+    assert!(before > CAP);
     assert!(!b.normalize_traces(NET_A), "no normalization over {before} traces");
     assert_eq!(traces(&b), before);
 }
 
 #[test]
 fn a_net_at_the_cap_is_still_normalized() {
-    let mut b = board_with(MAX_NORMALIZE_TRACES - 2);
+    let mut b = board_with(CAP - 2);
+    b.normalize_trace_cap = CAP;
     let before = traces(&b);
-    assert_eq!(before, MAX_NORMALIZE_TRACES);
+    assert_eq!(before, CAP);
     assert!(b.normalize_traces(NET_A));
     assert_eq!(traces(&b), before - 1);
 }
@@ -101,4 +104,23 @@ fn without_a_stop_request_the_stoppable_form_is_the_plain_one() {
     let stop = StopToken::new();
     assert!(b.normalize_traces_stoppable(NET_A, Some(&stop)));
     assert_eq!(traces(&b), before - 1);
+}
+
+#[test]
+fn the_cap_is_off_by_default_and_a_large_net_is_normalized() {
+    let mut b = board_with(CAP);
+    assert_eq!(b.normalize_trace_cap, 0);
+    let before = traces(&b);
+    assert!(b.normalize_traces(NET_A));
+    assert_eq!(traces(&b), before - 1);
+}
+
+#[test]
+fn the_setting_reaches_the_board() {
+    let mut settings = fr_settings::default_settings(1);
+    assert_eq!(settings.get_max_normalize_traces(), 0);
+    settings.max_normalize_traces = Some(400.0);
+    assert_eq!(settings.get_max_normalize_traces(), 400);
+    settings.max_normalize_traces = Some(0.0);
+    assert_eq!(settings.get_max_normalize_traces(), 0);
 }

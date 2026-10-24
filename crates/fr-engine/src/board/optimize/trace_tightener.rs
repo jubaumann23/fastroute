@@ -640,6 +640,7 @@ impl RoutingBoard {
     /// to board units like `router.min_trace_width_um`) to this board. Unset keeps upstream behaviour.
     pub fn apply_tighten_settings(&mut self, settings: &fr_settings::RouterSettings) {
         self.tighten_round_cap = settings.get_max_tighten_rounds();
+        self.basic.normalize_trace_cap = settings.get_max_normalize_traces();
         self.tighten_stable_chamfer = settings.is_tighten_stable_chamfer();
         let um = settings.get_tighten_min_move_um();
         self.tighten_min_move = if um > 0.0 {

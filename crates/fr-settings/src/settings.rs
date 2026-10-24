@@ -201,6 +201,10 @@ pub struct RouterSettings {
     /// trace by less than this many micrometres (and removes no corner) is not applied, so a
     /// pull-tight pass converges instead of creeping. 0/unset = every change applied (Java behaviour).
     pub tighten_min_move_um: Option<f64>,
+    /// pcbkit (not in Freerouting): trace normalization leaves a net with more polyline traces than this alone. An item
+    /// count, so the outcome does not depend on the machine. 0/unset = no cap (Java behaviour). A net that rip-up passes
+    /// fragmented into hundreds of traces makes one normalization round cost minutes (rp2040env energy-15: 68 s at 761).
+    pub max_normalize_traces: Option<f64>,
     /// pcbkit R8 (not in Freerouting): end-corner smoothing cuts an acute angle only if the cut cannot re-create
     /// itself: not against a contact trace of another width (its split pieces never merge with the cut trace) and
     /// not when the chamfer would consume the whole adjacent segment of the contact (a jog shorter than the
@@ -513,6 +517,7 @@ impl RouterSettings {
         copy(&mut self.max_connection_expansions, &s.max_connection_expansions, &mut n);
         copy(&mut self.max_tighten_rounds, &s.max_tighten_rounds, &mut n);
         copy(&mut self.tighten_min_move_um, &s.tighten_min_move_um, &mut n);
+        copy(&mut self.max_normalize_traces, &s.max_normalize_traces, &mut n);
         copy(&mut self.tighten_stable_chamfer, &s.tighten_stable_chamfer, &mut n);
         copy(&mut self.strict_width, &s.strict_width, &mut n);
         copy(&mut self.neck_radius_um, &s.neck_radius_um, &mut n);
@@ -714,6 +719,14 @@ impl RouterSettings {
     pub fn get_max_tighten_rounds(&self) -> u32 {
         match self.max_tighten_rounds {
             Some(v) if v >= 1.0 && v.is_finite() => v.min(u32::MAX as f64) as u32,
+            _ => 0,
+        }
+    }
+
+    /// See [`RouterSettings::max_normalize_traces`]; 0 = no cap.
+    pub fn get_max_normalize_traces(&self) -> usize {
+        match self.max_normalize_traces {
+            Some(v) if v >= 1.0 && v.is_finite() => v.min(u32::MAX as f64) as usize,
             _ => 0,
         }
     }

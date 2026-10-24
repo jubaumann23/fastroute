@@ -36,13 +36,6 @@ use super::selection_filter::{ItemSelectionFilter, SelectableChoices};
 /// Java `BasicBoard.MAX_NORMALIZE_ITERATIONS`.
 pub const MAX_NORMALIZE_ITERATIONS: i32 = 2000;
 
-/// pcbkit: `normalize_traces` leaves a net alone when it has more polyline traces than this. A healthy net has a few dozen
-/// (rp2040env, usbsense: under 60); a net that rip-up cycles fragmented into hundreds of pieces makes one normalization
-/// round cost minutes (cubic in the piece count: 315 pieces 2.6 s, 761 pieces 68 s, 953 pieces 163 s, rp2040env energy-15
-/// with the pairs held), long past the budget, and normalization cannot join those pieces anyway. A count of items, so the
-/// outcome does not depend on the machine or its load.
-pub const MAX_NORMALIZE_TRACES: usize = 400;
-
 /// State of `RoutingBoard.additionalUpdateAfterChange` while the autoroute engine maintains its
 /// database (`autorouteEngine.maintainDatabase`). Filled by the board, drained by the
 /// autorouter.
@@ -77,6 +70,11 @@ pub struct BasicBoard {
     pub(crate) items: ItemRepository,
     pub(crate) search_trees: SearchTreeManager,
     pub(crate) normalize_suppressed_net_nos: BTreeSet<NetNo>,
+    /// `router.max_normalize_traces`: `normalize_traces` leaves a net with more traces alone; 0 = no cap.
+    pub normalize_trace_cap: usize,
+    /// The stop token of the `normalize_traces_stoppable` call in progress. `split_trace` checks it per overlapping entry: one
+    /// trace of a net fragmented into hundreds of pieces takes minutes to split.
+    pub(crate) normalize_stop: Option<StopToken>,
     pub(crate) revision: i32,
     /// pcbkit hook H2b: pieces of a split trace inherit the parent's fixed state (default off).
     pub keep_fixed_on_split: bool,
@@ -183,6 +181,8 @@ impl BasicBoard {
             items: ItemRepository::new(),
             search_trees: SearchTreeManager::default(),
             normalize_suppressed_net_nos: BTreeSet::new(),
+            normalize_trace_cap: 0,
+            normalize_stop: None,
             revision: 0,
             keep_fixed_on_split: false,
             split_fixed_traces: false,
@@ -1591,9 +1591,20 @@ impl BasicBoard {
     }
 
     /// [`Self::normalize_traces`] that ends early, with the board consistent, once `stop` is requested (the wall budget of
-    /// a client `route`) and that leaves a net of more than [`MAX_NORMALIZE_TRACES`] traces alone.
+    /// a client `route`) and that leaves a net of more than `normalize_trace_cap` traces alone (when set).
     pub fn normalize_traces_stoppable(&mut self, net_number: NetNo, stop: Option<&StopToken>) -> bool {
-        let stopped = || stop.is_some_and(|s| s.is_stop_requested());
+        self.normalize_stop = stop.cloned();
+        let result = self.normalize_traces_inner(net_number);
+        self.normalize_stop = None;
+        result
+    }
+
+    /// True once the stop token of the running `normalize_traces_stoppable` is requested.
+    pub(crate) fn normalize_stopped(&self) -> bool {
+        self.normalize_stop.as_ref().is_some_and(|s| s.is_stop_requested())
+    }
+
+    fn normalize_traces_inner(&mut self, net_number: NetNo) -> bool {
         if self.normalize_suppressed_net_nos.contains(&net_number) {
             log::debug!("BasicBoard.normalizeTraces: skipping net {net_number} because normalization already hit the oscillation cap");
             return false;
@@ -1610,15 +1621,16 @@ impl BasicBoard {
             }
             something_changed = false;
             let net_traces = self.net_polyline_traces(net_number);
-            if net_traces.len() > MAX_NORMALIZE_TRACES {
+            if self.normalize_trace_cap > 0 && net_traces.len() > self.normalize_trace_cap {
                 log::warn!(
-                    "BasicBoard.normalizeTraces: net {net_number} has {} traces (more than {MAX_NORMALIZE_TRACES}), not normalized",
-                    net_traces.len()
+                    "BasicBoard.normalizeTraces: net {net_number} has {} traces (more than {}), not normalized",
+                    net_traces.len(),
+                    self.normalize_trace_cap
                 );
                 break;
             }
             for trace in net_traces {
-                if stopped() {
+                if self.normalize_stopped() {
                     return result;
                 }
                 if self.item(trace).is_on_board() {
