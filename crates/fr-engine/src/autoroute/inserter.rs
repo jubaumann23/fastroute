@@ -5,6 +5,7 @@ use fr_geom::{IntPoint, Point, Polyline};
 
 use crate::board::actions::forced_via_inserter;
 use crate::board::{ForcedTraceEnd, ItemKey, ItemSelectionFilter, RoutingBoard, SelectableChoices};
+use crate::datastructures::StopToken;
 use crate::ids::{LayerNo, NetNo};
 
 use super::control::AutorouteControl;
@@ -32,6 +33,16 @@ impl FoundConnectionInserter {
     /// Java `FoundConnectionInserter.getInstance(connection, board, ctrl)`: inserts the connection.
     /// `None` if the insertion did not succeed.
     pub fn get_instance(connection: &FoundConnectionLocator, board: &mut RoutingBoard, ctrl: &AutorouteControl) -> Option<FoundConnectionInserter> {
+        Self::get_instance_stoppable(connection, board, ctrl, None)
+    }
+
+    /// [`Self::get_instance`] whose final normalization of the net ends early once `stop` is requested.
+    pub fn get_instance_stoppable(
+        connection: &FoundConnectionLocator,
+        board: &mut RoutingBoard,
+        ctrl: &AutorouteControl,
+        stop: Option<&StopToken>,
+    ) -> Option<FoundConnectionInserter> {
         let mut current_layer = connection.target_layer;
         let mut new_instance = FoundConnectionInserter::default();
         for current_new_item in &connection.connection_items {
@@ -68,7 +79,7 @@ impl FoundConnectionInserter {
                 }
             }
         }
-        board.normalize_traces(ctrl.net_number);
+        board.normalize_traces_stoppable(ctrl.net_number, stop);
         Some(new_instance)
     }
 

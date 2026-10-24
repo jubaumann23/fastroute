@@ -38,7 +38,7 @@ pub mod shape_trace_entries;
 pub mod trace_ops;
 pub mod undo;
 
-pub use basic_board::{AutorouteMaintenance, BasicBoard, JavaVariant, MAX_NORMALIZE_ITERATIONS};
+pub use basic_board::{AutorouteMaintenance, BasicBoard, JavaVariant, MAX_NORMALIZE_ITERATIONS, MAX_NORMALIZE_TRACES};
 pub use item::{
     BoardItemType, BoardOutline, ComponentOutline, ConductionArea, Item, ItemKey, ItemKind, ObstacleArea, ObstacleKind, Pin,
     PolylineTrace, StopConnectionOption, Via,

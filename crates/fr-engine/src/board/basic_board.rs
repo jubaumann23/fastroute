@@ -20,7 +20,7 @@ use fr_geom::{
 };
 
 use crate::autoroute::rooms::RoomKey;
-use crate::datastructures::IdGenerator;
+use crate::datastructures::{IdGenerator, StopToken};
 use crate::ids::{ClearanceClassNo, ComponentNo, FixedState, ItemId, LayerNo, NetNo, PadstackNo};
 use crate::library::BoardLibrary;
 use crate::rules::{BoardRules, Nets};
@@ -35,6 +35,13 @@ use super::selection_filter::{ItemSelectionFilter, SelectableChoices};
 
 /// Java `BasicBoard.MAX_NORMALIZE_ITERATIONS`.
 pub const MAX_NORMALIZE_ITERATIONS: i32 = 2000;
+
+/// pcbkit: `normalize_traces` leaves a net alone when it has more polyline traces than this. A healthy net has a few dozen
+/// (rp2040env, usbsense: under 60); a net that rip-up cycles fragmented into hundreds of pieces makes one normalization
+/// round cost minutes (cubic in the piece count: 315 pieces 2.6 s, 761 pieces 68 s, 953 pieces 163 s, rp2040env energy-15
+/// with the pairs held), long past the budget, and normalization cannot join those pieces anyway. A count of items, so the
+/// outcome does not depend on the machine or its load.
+pub const MAX_NORMALIZE_TRACES: usize = 400;
 
 /// State of `RoutingBoard.additionalUpdateAfterChange` while the autoroute engine maintains its
 /// database (`autorouteEngine.maintainDatabase`). Filled by the board, drained by the
@@ -1580,6 +1587,13 @@ impl BasicBoard {
 
     /// Java `normalizeTraces(netNumber)`.
     pub fn normalize_traces(&mut self, net_number: NetNo) -> bool {
+        self.normalize_traces_stoppable(net_number, None)
+    }
+
+    /// [`Self::normalize_traces`] that ends early, with the board consistent, once `stop` is requested (the wall budget of
+    /// a client `route`) and that leaves a net of more than [`MAX_NORMALIZE_TRACES`] traces alone.
+    pub fn normalize_traces_stoppable(&mut self, net_number: NetNo, stop: Option<&StopToken>) -> bool {
+        let stopped = || stop.is_some_and(|s| s.is_stop_requested());
         if self.normalize_suppressed_net_nos.contains(&net_number) {
             log::debug!("BasicBoard.normalizeTraces: skipping net {net_number} because normalization already hit the oscillation cap");
             return false;
@@ -1596,7 +1610,17 @@ impl BasicBoard {
             }
             something_changed = false;
             let net_traces = self.net_polyline_traces(net_number);
+            if net_traces.len() > MAX_NORMALIZE_TRACES {
+                log::warn!(
+                    "BasicBoard.normalizeTraces: net {net_number} has {} traces (more than {MAX_NORMALIZE_TRACES}), not normalized",
+                    net_traces.len()
+                );
+                break;
+            }
             for trace in net_traces {
+                if stopped() {
+                    return result;
+                }
                 if self.item(trace).is_on_board() {
                     // Java: `if (normalize(null)) {..} else if (!isUserFixed() && removeIfCycle(..)) {..}`
                     if self.normalize_trace(trace, None) || (!self.item(trace).is_user_fixed() && self.remove_if_cycle(trace)) {

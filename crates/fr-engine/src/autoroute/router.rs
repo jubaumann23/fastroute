@@ -172,7 +172,7 @@ impl AutorouteEngine {
         for net in changed_nets {
             board.remove_trace_tails(net, stop_connection_option);
         }
-        if FoundConnectionInserter::get_instance(&autoroute_result, board, ctrl).is_none() {
+        if FoundConnectionInserter::get_instance_stoppable(&autoroute_result, board, ctrl, self.stop.as_ref()).is_none() {
             return AutorouteAttemptResult::with_details(
                 AutorouteAttemptState::Failed,
                 "Failed to route connection, because the new connection could not be inserted.",
