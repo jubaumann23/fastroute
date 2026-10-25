@@ -290,6 +290,8 @@ common --router.* settings (numbers, true/false, comma-separated lists):
   --router.chain_prune=true                 a chain variant ends at its first ripped connection that cannot be re-routed
   --router.split_fixed_traces=true          a via, pin or trace end on the inside of a (type fix) trace splits it there,
                                             so it is connected (Freerouting never splits a fixed trace)
+  --router.active_layer_ends=true           the maze search does not end on a power-plane layer it may not end on
+                                            (Freerouting fails the connection after such a search)
   --router.max_tighten_rounds=N             stop one pull-tight pass after N rounds (0 = no cap)
   --router.max_normalize_traces=N           leave a net with more than N traces un-normalized (0 = no cap)
   --router.tighten_min_move_um=U            pull-tight: do not apply a change that moves the trace

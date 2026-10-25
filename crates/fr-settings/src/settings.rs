@@ -273,6 +273,12 @@ pub struct RouterSettings {
     /// in the contact model although the maze search reaches it, so the connection is "routed" and stays open in every
     /// pass. false/unset = fixed traces are never split (Java behaviour).
     pub split_fixed_traces: Option<bool>,
+    /// pcbkit F4: the maze search does not take a destination it reaches on a layer the connection may not end on (a
+    /// power-plane layer, unless the item is the net's own plane with plane connections on). Freerouting rejects such a
+    /// found connection only after the search ("some of their layers are disabled") and fails the connection, so two
+    /// through vias of a non-plane net in one free area of a plane layer are never joined on a signal layer (rp2040env
+    /// s48: U5.5's escape via and J1's link via). false/unset = Java behaviour.
+    pub active_layer_ends: Option<bool>,
     /// pcbkit negotiated rip-up (not in Freerouting): percent added to the rip-up cost of a net for every autorouter
     /// pass that ended with that net still incomplete (a net that keeps losing its routes becomes costlier to rip
     /// again, so the passes stop flipping the same few nets back and forth). 0/unset = off (Java behaviour).
@@ -534,6 +540,7 @@ impl RouterSettings {
         copy(&mut self.chain_reverse, &s.chain_reverse, &mut n);
         copy(&mut self.chain_prune, &s.chain_prune, &mut n);
         copy(&mut self.split_fixed_traces, &s.split_fixed_traces, &mut n);
+        copy(&mut self.active_layer_ends, &s.active_layer_ends, &mut n);
         copy(&mut self.ripup_history, &s.ripup_history, &mut n);
         copy(&mut self.strict_drc, &s.strict_drc, &mut n);
         copy(&mut self.job_timeout_string, &s.job_timeout_string, &mut n);
@@ -671,6 +678,11 @@ impl RouterSettings {
     /// pcbkit F3, see [`RouterSettings::split_fixed_traces`].
     pub fn is_split_fixed_traces(&self) -> bool {
         self.split_fixed_traces == Some(true)
+    }
+
+    /// pcbkit F4, see [`RouterSettings::active_layer_ends`].
+    pub fn is_active_layer_ends(&self) -> bool {
+        self.active_layer_ends == Some(true)
     }
 
     /// pcbkit recovery work cap, see [`RouterSettings::recover_max_routes`]; 0 = no cap.

@@ -302,6 +302,10 @@ impl<'a> MazeSearchEngine<'a> {
         }
         if let Expandable::Target(t) = list_element.door {
             if self.eng.is_destination_door(t) {
+                if self.ctrl.active_layer_ends && !self.target_end_ok(t) {
+                    // pcbkit F4: autoroute_connection would reject this end after the search: keep searching
+                    return true;
+                }
                 // The destination is reached.
                 self.destination_door = Some(list_element.door);
                 self.section_no_of_destination_door = list_element.section_no_of_door;
@@ -325,6 +329,17 @@ impl<'a> MazeSearchEngine<'a> {
         }
         self.eng.element_mut(list_element.door, list_element.section_no_of_door).is_occupied = true;
         true
+    }
+
+    /// pcbkit F4: the end test of `AutorouteEngine::autoroute_connection` (router.rs `end_ok`) for a destination door:
+    /// its layer is active, or it is the net's own plane with plane connections on.
+    fn target_end_ok(&self, t: super::engine::TargetDoorId) -> bool {
+        let td = self.eng.target_door(t);
+        let layer = self.room_layer(td.room) as usize;
+        self.ctrl.layer_active[layer]
+            || (self.ctrl.connect_to_planes
+                && !self.board.layer_structure.layers[layer].is_signal
+                && self.board.item(td.item).is_conduction_area())
     }
 
     fn room_layer(&self, r: RoomId) -> LayerNo {

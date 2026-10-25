@@ -101,6 +101,9 @@ pub struct AutorouteControl {
     pub remove_unconnected_vias: bool,
     /// fastroute: accept connections that end in a via into the net's plane on a power layer.
     pub connect_to_planes: bool,
+    /// pcbkit F4 (`router.active_layer_ends`): a destination reached on a layer the connection may not end on is
+    /// not taken (the search goes on), see [`fr_settings::RouterSettings::active_layer_ends`].
+    pub active_layer_ends: bool,
     /// The possible (partial) vias (Java `viaRule`, a copy of the net class rule).
     pub via_rule: ViaRule,
     pub net_number: NetNo,
@@ -205,6 +208,7 @@ impl AutorouteControl {
             fanout_start_pin_layer: -1,
             remove_unconnected_vias: true,
             connect_to_planes: false,
+            active_layer_ends: settings.is_active_layer_ends(),
             via_rule: ViaRule::empty(),
             net_number: 0,
             via_clearance_class: 0,
